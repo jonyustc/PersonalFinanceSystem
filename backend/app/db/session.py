@@ -13,7 +13,7 @@ class Base(DeclarativeBase):
 
 
 engine = create_async_engine(
-    str(settings.DATABASE_URL),
+    settings.database_url,
     pool_pre_ping=True,
     poolclass=NullPool,
     connect_args={
@@ -21,7 +21,8 @@ engine = create_async_engine(
         "prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__",
     },
 )
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+AsyncSessionLocal = async_sessionmaker(
+    engine, expire_on_commit=False, autoflush=False)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

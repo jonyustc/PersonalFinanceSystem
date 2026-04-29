@@ -32,6 +32,16 @@ class Settings(BaseSettings):
     )
 
     @property
+    def database_url(self) -> str:
+        """Normalize Render-style DATABASE_URL values for the async engine."""
+        raw_url = str(self.DATABASE_URL)
+        if raw_url.startswith("postgres://"):
+            return raw_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        if raw_url.startswith("postgresql://"):
+            return raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return raw_url
+
+    @property
     def cors_origins(self) -> list[str]:
         """Parse and normalize CORS origins from comma-separated string."""
         if not self.BACKEND_CORS_ORIGINS:

@@ -14,7 +14,12 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    return str(settings.DATABASE_URL).replace("+asyncpg", "+psycopg").replace("ssl=require", "sslmode=require")
+    raw_url = str(settings.DATABASE_URL)
+    if raw_url.startswith("postgres://"):
+        raw_url = raw_url.replace("postgres://", "postgresql+psycopg://", 1)
+    elif raw_url.startswith("postgresql://"):
+        raw_url = raw_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return raw_url.replace("+asyncpg", "+psycopg").replace("ssl=require", "sslmode=require")
 
 
 def run_migrations_offline() -> None:
@@ -32,9 +37,11 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section, {})
     configuration["sqlalchemy.url"] = get_url()
-    connectable = engine_from_config(configuration, prefix="sqlalchemy.", poolclass=pool.NullPool)
+    connectable = engine_from_config(
+        configuration, prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+        context.configure(connection=connection,
+                          target_metadata=target_metadata, compare_type=True)
         with context.begin_transaction():
             context.run_migrations()
 
