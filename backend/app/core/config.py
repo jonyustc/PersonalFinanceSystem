@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AnyHttpUrl, Field, PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,31 +13,37 @@ class Settings(BaseSettings):
     DATABASE_URL: PostgresDsn = Field(
         default="postgresql+asyncpg://finance:finance@localhost:5432/personal_finance"
     )
-    JWT_SECRET_KEY: str = Field(default="change-me-in-production", min_length=16)
+    JWT_SECRET_KEY: str = Field(
+        default="change-me-in-production", min_length=16)
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 14
 
-    BACKEND_CORS_ORIGINS: list[AnyHttpUrl | str] = [
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-    ]
+    # Store as string for env parsing, convert to list in property
+    BACKEND_CORS_ORIGINS: str = Field(
+        default="http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173"
+    )
     RATE_LIMIT_DEFAULT: str = "100/minute"
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)
-
-    @field_validator("BACKEND_CORS_ORIGINS", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, value):
-        if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+    )
 
     @property
     def cors_origins(self) -> list[str]:
-        return [str(origin).rstrip("/") for origin in self.BACKEND_CORS_ORIGINS]
+        """Parse and normalize CORS origins from comma-separated string."""
+        if not self.BACKEND_CORS_ORIGINS:
+            return []
+        # Split by comma and strip whitespace
+        origins = [origin.strip() for origin in self.BACKEND_CORS_ORIGINS.split(
+            ",") if origin.strip()]
+        if not origins:
+            raise ValueError(
+                "BACKEND_CORS_ORIGINS must contain at least one URL")
+        # Remove trailing slashes for consistency
+        return [origin.rstrip("/") for origin in origins]
 
 
 @lru_cache
