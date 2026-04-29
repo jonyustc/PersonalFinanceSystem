@@ -1,6 +1,7 @@
 import enum
 from datetime import date
 from decimal import Decimal
+from typing import Optional
 
 from sqlalchemy import Date, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
@@ -21,7 +22,7 @@ class Stock(UUIDMixin, TimestampMixin, Base):
     symbol: Mapped[str] = mapped_column(
         String(20), unique=True, index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    exchange: Mapped[str | None] = mapped_column(String(80))
+    exchange: Mapped[Optional[str]] = mapped_column(String(80))
     currency: Mapped[str] = mapped_column(
         String(3), default="USD", nullable=False)
     last_price: Mapped[Decimal] = mapped_column(
@@ -77,6 +78,6 @@ class Dividend(UUIDMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("stocks.id", ondelete="CASCADE"), index=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     payment_date: Mapped[date] = mapped_column(Date, nullable=False)
-    notes: Mapped[str | None] = mapped_column(String(255))
+    notes: Mapped[Optional[str]] = mapped_column(String(255))
 
     stock = relationship("Stock")
