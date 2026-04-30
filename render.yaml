@@ -1,3 +1,4 @@
+# Cache buster: 2026-04-30 - Force clean rebuild with Optional type fixes
 services:
   - type: web
     name: personal-finance-api
