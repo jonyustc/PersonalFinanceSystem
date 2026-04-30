@@ -1,6 +1,7 @@
 import { getAccessToken } from "@/services/token-store";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
 type RequestOptions = RequestInit & {
   auth?: boolean;
@@ -17,7 +18,10 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+export async function apiRequest<T>(
+  path: string,
+  options: RequestOptions = {},
+): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
 
@@ -28,7 +32,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
-    headers
+    headers,
   });
 
   if (!response.ok) {
@@ -39,7 +43,9 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       body = await response.text();
     }
     const message =
-      typeof body === "object" && body && "detail" in body ? String(body.detail) : "Request failed";
+      typeof body === "object" && body && "detail" in body
+        ? String(body.detail)
+        : "Request failed";
     throw new ApiError(response.status, message, body);
   }
 
