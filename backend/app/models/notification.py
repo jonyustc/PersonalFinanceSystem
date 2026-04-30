@@ -15,7 +15,8 @@ class Notification(UUIDMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    scheduled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True)
     is_read: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False)
 
