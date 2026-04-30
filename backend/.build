@@ -1,0 +1,2 @@
+# Build cache buster - forces Render to do a clean rebuild
+# Updated: 2026-04-30 - Ensure SQLAlchemy Optional type fixes are deployed
