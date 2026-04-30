@@ -1,4 +1,5 @@
 # Cache buster: 2026-04-30 - Force clean rebuild with Optional type fixes
+# Updated: 2026-04-30 - Git config updated for deployment
 services:
   - type: web
     name: personal-finance-api
