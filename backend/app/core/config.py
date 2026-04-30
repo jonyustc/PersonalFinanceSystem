@@ -34,12 +34,25 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """Normalize Render-style DATABASE_URL values for the async engine."""
-        raw_url = str(self.DATABASE_URL)
-        if raw_url.startswith("postgres://"):
-            return raw_url.replace("postgres://", "postgresql+asyncpg://", 1)
-        if raw_url.startswith("postgresql://"):
-            return raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-        return raw_url
+        import sys
+        try:
+            raw_url = str(self.DATABASE_URL)
+            print(f"[CONFIG] Raw DATABASE_URL: {raw_url[:60]}...", file=sys.stderr)
+            
+            if raw_url.startswith("postgres://"):
+                normalized = raw_url.replace("postgres://", "postgresql+asyncpg://", 1)
+                print(f"[CONFIG] Normalized postgres:// to asyncpg", file=sys.stderr)
+                return normalized
+            if raw_url.startswith("postgresql://"):
+                normalized = raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+                print(f"[CONFIG] Normalized postgresql:// to asyncpg", file=sys.stderr)
+                return normalized
+            
+            print(f"[CONFIG] DATABASE_URL already normalized", file=sys.stderr)
+            return raw_url
+        except Exception as e:
+            print(f"[CONFIG ERROR] Failed to normalize DATABASE_URL: {e}", file=sys.stderr)
+            raise
 
     @property
     def cors_origins(self) -> list[str]:

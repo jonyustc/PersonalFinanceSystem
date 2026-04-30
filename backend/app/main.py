@@ -1,3 +1,4 @@
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,7 +15,14 @@ from app.core.rate_limit import limiter
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    configure_logging()
+    try:
+        configure_logging()
+        print(f"[STARTUP] App initialized successfully", file=sys.stderr)
+        print(f"[STARTUP] Database URL normalized to: {settings.database_url[:50]}...", file=sys.stderr)
+        print(f"[STARTUP] CORS origins: {settings.cors_origins}", file=sys.stderr)
+    except Exception as e:
+        print(f"[STARTUP ERROR] {type(e).__name__}: {str(e)}", file=sys.stderr)
+        raise
     yield
 
 

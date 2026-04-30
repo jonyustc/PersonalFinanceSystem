@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: personal-finance-api
+    runtime: python
+    pythonVersion: 3.14
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14
+      - key: DATABASE_URL
+        scope: build
+        sync: false
+      - key: JWT_SECRET_KEY
+        scope: build
+        sync: false
+      - key: BACKEND_CORS_ORIGINS
+        scope: build
+        sync: false
