@@ -1,6 +1,5 @@
 import enum
 from decimal import Decimal
-from typing import Optional
 
 from sqlalchemy import Boolean, ForeignKey, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
@@ -31,7 +30,7 @@ class Account(UUIDMixin, TimestampMixin, Base):
         Numeric(14, 2), default=0, nullable=False)
     currency: Mapped[str] = mapped_column(
         String(3), default="USD", nullable=False)
-    notes: Mapped[Optional[str]] = mapped_column(Text)
+    notes: Mapped[str] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False)
 
