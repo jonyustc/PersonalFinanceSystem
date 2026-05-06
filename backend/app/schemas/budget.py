@@ -1,30 +1,59 @@
-from decimal import Decimal
+# app/schemas/budget.py
+
 from uuid import UUID
+from decimal import Decimal
+from typing import List
+from pydantic import BaseModel, Field, field_validator
+import re
 
-from pydantic import BaseModel, Field
 
-from app.schemas.common import Timestamped
-
-
+# =========================
+# CREATE
+# =========================
 class BudgetCreate(BaseModel):
     category_id: UUID
-    month: int = Field(ge=1, le=12)
-    year: int = Field(ge=2000, le=2100)
-    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    amount: Decimal = Field(gt=0)
+    month: str  # "YYYY-MM"
+
+    @field_validator("month")
+    @classmethod
+    def validate_month(cls, v):
+        if not re.match(r"^\d{4}-\d{2}$", v):
+            raise ValueError("month must be in YYYY-MM format")
+        return v
 
 
+# =========================
+# UPDATE
+# =========================
 class BudgetUpdate(BaseModel):
-    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    amount: Decimal = Field(gt=0)
 
 
-class BudgetResponse(Timestamped):
+# =========================
+# RESPONSE
+# =========================
+class BudgetResponse(BaseModel):
+    id: UUID
     category_id: UUID
-    month: int
-    year: int
     amount: Decimal
+    month: str
+
+    class Config:
+        from_attributes = True
 
 
-class BudgetComparison(BudgetResponse):
-    spent: Decimal
-    remaining: Decimal
-    overspending: bool
+# =========================
+# 🔥 BUDGET VS ACTUAL (IMPORTANT)
+# =========================
+class BudgetSummaryItem(BaseModel):
+    category_id: UUID
+    category_name: str
+    budget: float
+    spent: float
+
+
+class BudgetSummaryResponse(BaseModel):
+    month: str
+    income: float
+    categories: List[BudgetSummaryItem]

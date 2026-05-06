@@ -1,128 +1,238 @@
-from datetime import datetime
-from decimal import Decimal
 from uuid import UUID
+from typing import Optional
+from datetime import date, timedelta
 
-from fastapi import HTTPException, status
-from sqlalchemy import extract, func, select
+from fastapi import HTTPException
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.transaction import Transaction
 from app.models.account import Account
-from app.models.transaction import Transaction, TransactionType
-from app.repositories.account import AccountRepository
-from app.repositories.category import CategoryRepository
-from app.repositories.transaction import TransactionRepository
-from app.schemas.transaction import MonthlySummary, TransactionCreate, TransactionListResponse, TransactionUpdate
+from app.schemas.transaction import TransactionCreate, TransactionUpdate
 
 
 class TransactionService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.transactions = TransactionRepository(db)
-        self.accounts = AccountRepository(db)
-        self.categories = CategoryRepository(db)
 
-    async def _account(self, user_id: UUID, account_id: UUID) -> Account:
-        account = await self.accounts.get_user_owned(user_id, account_id)
-        if not account:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
-        return account
+    # ================= CREATE =================
 
-    async def _validate_category(self, user_id: UUID, category_id: UUID | None) -> None:
-        if category_id and not await self.categories.get_user_owned(user_id, category_id):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    async def create(self, user_id: UUID, payload: TransactionCreate):
+        from_acc = await self._get_account(user_id, payload.account_id)
+        to_acc = None
 
-    def _apply_balance(self, account: Account, txn_type: TransactionType, amount: Decimal, reverse: bool = False) -> None:
-        multiplier = Decimal("-1") if reverse else Decimal("1")
-        if txn_type == TransactionType.EXPENSE:
-            account.current_balance -= amount * multiplier
-        elif txn_type == TransactionType.INCOME:
-            account.current_balance += amount * multiplier
+        if payload.type == "transfer":
+            to_acc = await self._get_account(user_id, payload.transfer_account_id)
 
-    def _apply_transfer(self, source: Account, destination: Account, amount: Decimal, reverse: bool = False) -> None:
-        if reverse:
-            source.current_balance += amount
-            destination.current_balance -= amount
-        else:
-            source.current_balance -= amount
-            destination.current_balance += amount
+        await self._apply_balance(from_acc, to_acc, payload)
 
-    async def create(self, user_id: UUID, payload: TransactionCreate) -> Transaction:
-        account = await self._account(user_id, payload.account_id)
-        await self._validate_category(user_id, payload.category_id)
-        data = payload.model_dump()
-        data["user_id"] = user_id
-        if payload.txn_type == TransactionType.TRANSFER:
-            destination = await self._account(user_id, payload.transfer_account_id)
-            self._apply_transfer(account, destination, payload.amount)
-        else:
-            self._apply_balance(account, payload.txn_type, payload.amount)
-        transaction = await self.transactions.create(data)
+        trx = Transaction(
+            user_id=user_id,
+            account_id=payload.account_id,
+            transfer_account_id=payload.transfer_account_id,
+            category_id=payload.category_id,
+            type=payload.type,
+            payment_method=payload.payment_method,
+            amount=payload.amount,
+            txn_date=payload.txn_date,
+            is_emergency=payload.is_emergency,
+            description=payload.description,
+        )
+
+        self.db.add(trx)
         await self.db.commit()
-        return transaction
+        await self.db.refresh(trx)
+
+        return trx
+
+    # ================= LIST =================
 
     async def list(
         self,
         user_id: UUID,
-        start_date: datetime | None,
-        end_date: datetime | None,
-        account_id: UUID | None,
-        category_id: UUID | None,
-        limit: int,
-        offset: int,
-    ) -> TransactionListResponse:
-        stmt = self.transactions.filtered_query(user_id, start_date, end_date, account_id, category_id)
-        total = await self.transactions.count(stmt)
-        items = await self.transactions.list_filtered(stmt, limit, offset)
-        return TransactionListResponse(total=total, limit=limit, offset=offset, items=items)
+        limit: int = 50,
+        offset: int = 0,
+        search: Optional[str] = None,
+        type: Optional[str] = None,
+        category_id: Optional[UUID] = None,
+        account_id: Optional[UUID] = None,
+        from_date: Optional[date] = None,
+        to_date: Optional[date] = None,
+    ):
+        filters = [Transaction.user_id == user_id]
 
-    async def get(self, user_id: UUID, transaction_id: UUID) -> Transaction:
-        transaction = await self.transactions.get_user_owned(user_id, transaction_id)
-        if not transaction:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
-        return transaction
+        if search:
+            filters.append(Transaction.description.ilike(f"%{search}%"))
 
-    async def update(self, user_id: UUID, transaction_id: UUID, payload: TransactionUpdate) -> Transaction:
-        old = await self.get(user_id, transaction_id)
-        source = await self._account(user_id, old.account_id)
-        if old.txn_type == TransactionType.TRANSFER:
-            destination = await self._account(user_id, old.transfer_account_id)
-            self._apply_transfer(source, destination, old.amount, reverse=True)
-        else:
-            self._apply_balance(source, old.txn_type, old.amount, reverse=True)
+        if type:
+            filters.append(Transaction.type == type)
 
-        data = {**old.__dict__, **payload.model_dump(exclude_unset=True)}
-        new_payload = TransactionCreate(**{k: data[k] for k in TransactionCreate.model_fields})
-        await self._validate_category(user_id, new_payload.category_id)
-        new_source = await self._account(user_id, new_payload.account_id)
-        if new_payload.txn_type == TransactionType.TRANSFER:
-            new_destination = await self._account(user_id, new_payload.transfer_account_id)
-            self._apply_transfer(new_source, new_destination, new_payload.amount)
-        else:
-            self._apply_balance(new_source, new_payload.txn_type, new_payload.amount)
-        for field, value in new_payload.model_dump().items():
-            setattr(old, field, value)
-        await self.db.commit()
-        await self.db.refresh(old)
-        return old
+        if category_id:
+            filters.append(Transaction.category_id == category_id)
 
-    async def delete(self, user_id: UUID, transaction_id: UUID) -> None:
-        transaction = await self.get(user_id, transaction_id)
-        account = await self._account(user_id, transaction.account_id)
-        if transaction.txn_type == TransactionType.TRANSFER:
-            destination = await self._account(user_id, transaction.transfer_account_id)
-            self._apply_transfer(account, destination, transaction.amount, reverse=True)
-        else:
-            self._apply_balance(account, transaction.txn_type, transaction.amount, reverse=True)
-        await self.transactions.delete(transaction)
-        await self.db.commit()
+        if account_id:
+            filters.append(Transaction.account_id == account_id)
 
-    async def monthly_summary(self, user_id: UUID, month: int, year: int) -> MonthlySummary:
-        result = await self.db.execute(
-            select(Transaction.txn_type, func.coalesce(func.sum(Transaction.amount), 0))
-            .where(Transaction.user_id == user_id, extract("month", Transaction.txn_date) == month, extract("year", Transaction.txn_date) == year)
-            .group_by(Transaction.txn_type)
+        if from_date:
+            filters.append(Transaction.txn_date >= from_date)
+
+        if to_date:
+            filters.append(Transaction.txn_date < to_date + timedelta(days=1))
+
+        stmt = (
+            select(Transaction)
+            .where(and_(*filters))
+            .order_by(Transaction.txn_date.desc())
+            .limit(limit)
+            .offset(offset)
         )
-        totals = {row[0]: row[1] for row in result.all()}
-        income = totals.get(TransactionType.INCOME, Decimal("0"))
-        expense = totals.get(TransactionType.EXPENSE, Decimal("0"))
-        return MonthlySummary(month=month, year=year, total_income=income, total_expense=expense, savings=income - expense)
+
+        result = await self.db.execute(stmt)
+        items = result.scalars().all()
+
+        count_stmt = select(func.count()).select_from(
+            Transaction).where(and_(*filters))
+        total = await self.db.scalar(count_stmt)
+
+        return items, total
+
+    # ================= UPDATE =================
+
+    async def update(self, user_id: UUID, transaction_id: UUID, payload: TransactionUpdate):
+        trx = await self.db.get(Transaction, transaction_id)
+
+        if not trx or trx.user_id != user_id:
+            return None
+
+        # 🔄 reverse old
+        old_from = await self._get_account(user_id, trx.account_id)
+        old_to = None
+
+        if trx.type == "transfer":
+            old_to = await self._get_account(user_id, trx.transfer_account_id)
+
+        await self._reverse_balance(old_from, old_to, trx)
+
+        # apply new values
+        update_data = payload.dict(exclude_unset=True)
+
+        for field, value in update_data.items():
+            setattr(trx, field, value)
+
+        new_from = await self._get_account(user_id, trx.account_id)
+        new_to = None
+
+        if trx.type == "transfer":
+            new_to = await self._get_account(user_id, trx.transfer_account_id)
+
+        await self._apply_balance(new_from, new_to, trx)
+
+        await self.db.commit()
+        await self.db.refresh(trx)
+
+        return trx
+
+    # ================= DELETE =================
+
+    async def delete(self, user_id: UUID, transaction_id: UUID):
+        trx = await self.db.get(Transaction, transaction_id)
+
+        if not trx or trx.user_id != user_id:
+            return False
+
+        from_acc = await self._get_account(user_id, trx.account_id)
+        to_acc = None
+
+        if trx.type == "transfer":
+            to_acc = await self._get_account(user_id, trx.transfer_account_id)
+
+        await self._reverse_balance(from_acc, to_acc, trx)
+
+        await self.db.delete(trx)
+        await self.db.commit()
+
+        return True
+
+    # ================= BALANCE ENGINE =================
+
+    async def _apply_balance(self, from_acc: Account, to_acc: Optional[Account], trx):
+        is_card_from = from_acc.type == "card"
+        is_card_to = to_acc.type == "card" if to_acc else False
+
+        # EXPENSE
+        if trx.type == "expense":
+            if is_card_from:
+                from_acc.balance -= trx.amount
+            else:
+                if from_acc.balance < trx.amount:
+                    raise HTTPException(400, "Insufficient balance")
+                from_acc.balance -= trx.amount
+
+        # INCOME
+        elif trx.type == "income":
+            from_acc.balance += trx.amount
+
+        # TRANSFER
+        elif trx.type == "transfer":
+            if not to_acc:
+                raise HTTPException(400, "Transfer account required")
+
+            # BANK → CARD (payment)
+            if not is_card_from and is_card_to:
+                if from_acc.balance < trx.amount:
+                    raise HTTPException(400, "Insufficient balance")
+
+                from_acc.balance -= trx.amount
+                to_acc.balance += trx.amount
+
+            # CARD → BANK
+            elif is_card_from and not is_card_to:
+                from_acc.balance -= trx.amount
+                to_acc.balance += trx.amount
+
+            # NORMAL
+            else:
+                if from_acc.balance < trx.amount:
+                    raise HTTPException(400, "Insufficient balance")
+
+                from_acc.balance -= trx.amount
+                to_acc.balance += trx.amount
+
+    async def _reverse_balance(self, from_acc: Account, to_acc: Optional[Account], trx):
+        is_card_from = from_acc.type == "card"
+        is_card_to = to_acc.type == "card" if to_acc else False
+
+        if trx.type == "expense":
+            from_acc.balance += trx.amount
+
+        elif trx.type == "income":
+            from_acc.balance -= trx.amount
+
+        elif trx.type == "transfer":
+            if not to_acc:
+                return
+
+            # BANK → CARD
+            if not is_card_from and is_card_to:
+                from_acc.balance += trx.amount
+                to_acc.balance -= trx.amount
+
+            # CARD → BANK
+            elif is_card_from and not is_card_to:
+                from_acc.balance += trx.amount
+                to_acc.balance -= trx.amount
+
+            # NORMAL
+            else:
+                from_acc.balance += trx.amount
+                to_acc.balance -= trx.amount
+
+    # ================= HELPERS =================
+
+    async def _get_account(self, user_id: UUID, account_id: UUID) -> Account:
+        acc = await self.db.get(Account, account_id)
+
+        if not acc or acc.user_id != user_id:
+            raise HTTPException(404, "Account not found")
+
+        return acc

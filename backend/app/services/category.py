@@ -1,9 +1,7 @@
 from uuid import UUID
-
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.category import Category
 from app.repositories.category import CategoryRepository
 from app.schemas.category import CategoryCreate, CategoryUpdate
 
@@ -11,31 +9,102 @@ from app.schemas.category import CategoryCreate, CategoryUpdate
 class CategoryService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.categories = CategoryRepository(db)
+        self.repo = CategoryRepository(db)
 
-    async def create(self, user_id: UUID, payload: CategoryCreate) -> Category:
-        category = await self.categories.create({"user_id": user_id, **payload.model_dump()})
-        await self.db.commit()
-        return category
+    # =========================
+    # HELPER (🔥 KEY FIX)
+    # =========================
+    def to_dict(self, c):
+        return {
+            "id": c.id,
+            "name": c.name,
+            "type": c.type,
+            "parent_id": c.parent_id,
+            "color": c.color,
+            "icon": c.icon,
+            "children": [],  # 🔥 IMPORTANT
+        }
 
-    async def list(self, user_id: UUID) -> list[Category]:
-        return await self.categories.list_by_user(user_id)
+    # =========================
+    # CREATE
+    # =========================
+    async def create(self, user_id: UUID, payload: CategoryCreate):
+        data = payload.model_dump()
+        data["user_id"] = user_id
 
-    async def get(self, user_id: UUID, category_id: UUID) -> Category:
-        category = await self.categories.get_user_owned(user_id, category_id)
-        if not category:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-        return category
+        category = await self.repo.create(data)
 
-    async def update(self, user_id: UUID, category_id: UUID, payload: CategoryUpdate) -> Category:
-        category = await self.get(user_id, category_id)
-        for field, value in payload.model_dump(exclude_unset=True).items():
-            setattr(category, field, value)
         await self.db.commit()
         await self.db.refresh(category)
-        return category
 
-    async def delete(self, user_id: UUID, category_id: UUID) -> None:
-        category = await self.get(user_id, category_id)
-        await self.categories.delete(category)
+        # 🔥 RETURN SAFE DICT
+        return self.to_dict(category)
+
+    # =========================
+    # LIST (FLAT)
+    # =========================
+    async def list(self, user_id: UUID):
+        categories = await self.repo.list_by_user(user_id)
+        return [self.to_dict(c) for c in categories]
+
+    # =========================
+    # TREE (SAFE VERSION)
+    # =========================
+    async def tree(self, user_id: UUID):
+        categories = await self.repo.list_by_user(user_id)
+
+        items = [self.to_dict(c) for c in categories]
+
+        item_map = {str(item["id"]): item for item in items}
+
+        tree = []
+
+        for item in items:
+            if item["parent_id"]:
+                parent = item_map.get(str(item["parent_id"]))
+                if parent:
+                    parent["children"].append(item)
+            else:
+                tree.append(item)
+
+        return tree
+
+    # =========================
+    # GET
+    # =========================
+    async def get(self, user_id: UUID, category_id: UUID):
+        category = await self.repo.get_user_owned(user_id, category_id)
+
+        if not category:
+            raise HTTPException(404, "Category not found")
+
+        return self.to_dict(category)
+
+    # =========================
+    # UPDATE
+    # =========================
+    async def update(self, user_id: UUID, category_id: UUID, payload: CategoryUpdate):
+        category = await self.repo.get_user_owned(user_id, category_id)
+
+        if not category:
+            raise HTTPException(404, "Category not found")
+
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            setattr(category, k, v)
+
+        await self.db.commit()
+        await self.db.refresh(category)
+
+        return self.to_dict(category)
+
+    # =========================
+    # DELETE
+    # =========================
+    async def delete(self, user_id: UUID, category_id: UUID):
+        category = await self.repo.get_user_owned(user_id, category_id)
+
+        if not category:
+            raise HTTPException(404, "Category not found")
+
+        await self.repo.delete(category)
         await self.db.commit()

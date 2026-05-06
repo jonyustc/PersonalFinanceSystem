@@ -58,10 +58,11 @@ export type Category = {
   id: string;
   name: string;
   type: "expense" | "income";
+  parent_id?: string | null;
   color?: string | null;
   icon?: string | null;
-  created_at: string;
-  updated_at: string;
+
+  children?: Category[];
 };
 
 export type CategoryType = Category["type"];
@@ -91,13 +92,17 @@ export type TransactionType = Transaction["txn_type"];
 
 export type TransactionCreatePayload = {
   account_id: string;
-  category_id?: string | null;
   transfer_account_id?: string | null;
-  txn_type: TransactionType;
+  category_id?: string | null;
+
+  type: "expense" | "income" | "transfer";
+  payment_method?: "cash" | "bank" | "card";
+
   amount: number;
-  txn_date: string;
-  description?: string | null;
-  tags: string[];
+  txn_date?: string;
+
+  is_emergency?: boolean;
+  description?: string;
 };
 
 export type TransactionUpdatePayload = Partial<TransactionCreatePayload>;

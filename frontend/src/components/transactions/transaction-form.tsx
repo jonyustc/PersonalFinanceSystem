@@ -1,166 +1,308 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save } from "lucide-react";
-import { useMemo } from "react";
+import { ArrowLeftRight, Save } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { Account, Category, Transaction, TransactionCreatePayload, TransactionUpdatePayload } from "@/types/api";
+import { formatCurrency } from "@/lib/utils";
+import { CategoryTreeSelect } from "./category-tree-select";
 
-const schema = z.object({
-  txn_type: z.enum(["income", "expense"]),
-  account_id: z.string().min(1, "Choose an account"),
-  category_id: z.string().min(1, "Choose a category"),
-  amount: z.coerce.number().gt(0, "Amount must be greater than zero"),
-  txn_date: z.string().min(1, "Choose a date"),
-  description: z.string().optional(),
-  tags: z.string().optional()
-});
+import type { Account, Category, TransactionCreatePayload } from "@/types/api";
+
+/* ================= SCHEMA ================= */
+
+const schema = z
+  .object({
+    type: z.enum(["income", "expense", "transfer"]),
+    account_id: z.string().min(1, "Account required"),
+    transfer_account_id: z.string().optional(),
+    category_id: z.string().optional(),
+    payment_method: z.string().optional(),
+    amount: z.coerce.number().gt(0, "Amount required"),
+    txn_date: z.string(),
+    is_emergency: z.boolean().optional(),
+    description: z.string().optional(),
+  })
+  .refine(
+    (data) =>
+      data.type !== "transfer" ||
+      (data.account_id &&
+        data.transfer_account_id &&
+        data.account_id !== data.transfer_account_id),
+    {
+      message: "From & To account must be different",
+      path: ["transfer_account_id"],
+    },
+  );
 
 type FormValues = z.infer<typeof schema>;
 
-type TransactionFormProps = {
-  transaction?: Transaction | null;
+type Props = {
   accounts: Account[];
   categories: Category[];
-  defaultType?: "income" | "expense";
-  onSubmit: (payload: TransactionCreatePayload | TransactionUpdatePayload) => Promise<void>;
+  transaction?: any;
+  selectedDate: string;
+  onSubmit: (payload: TransactionCreatePayload) => Promise<void>;
   onCancel: () => void;
 };
 
-function toDateTimeLocal(value?: string) {
-  const date = value ? new Date(value) : new Date();
-  const offsetMs = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
-}
-
 export function TransactionForm({
-  transaction,
   accounts,
   categories,
-  defaultType = "expense",
+  transaction,
+  selectedDate,
   onSubmit,
-  onCancel
-}: TransactionFormProps) {
-  const isEditing = Boolean(transaction);
+  onCancel,
+}: Props) {
+  const [localCategories, setLocalCategories] = useState<Category[]>([]);
+
+  useEffect(() => {
+    setLocalCategories(categories || []);
+  }, [categories]);
+
   const {
     register,
     handleSubmit,
     control,
-    formState: { errors, isSubmitting }
+    setValue,
+    watch,
+    formState: { isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
-      txn_type: transaction?.txn_type === "income" ? "income" : transaction?.txn_type === "expense" ? "expense" : defaultType,
+      type: transaction?.type ?? "expense",
       account_id: transaction?.account_id ?? "",
+      transfer_account_id: transaction?.transfer_account_id ?? "",
       category_id: transaction?.category_id ?? "",
+      payment_method: transaction?.payment_method ?? "",
       amount: Number(transaction?.amount ?? 0),
-      txn_date: toDateTimeLocal(transaction?.txn_date),
+      txn_date: transaction?.txn_date
+        ? new Date(transaction.txn_date).toISOString().slice(0, 16)
+        : selectedDate + "T12:00",
+      is_emergency: transaction?.is_emergency ?? false,
       description: transaction?.description ?? "",
-      tags: transaction?.tags?.join(", ") ?? ""
-    }
+    },
   });
 
-  const selectedType = useWatch({ control, name: "txn_type" });
-  const filteredCategories = useMemo(
-    () => categories.filter((category) => category.type === selectedType),
-    [categories, selectedType]
+  const type = useWatch({ control, name: "type" });
+  const amount = useWatch({ control, name: "amount" });
+  const fromId = useWatch({ control, name: "account_id" });
+  const toId = useWatch({ control, name: "transfer_account_id" });
+
+  const isTransfer = type === "transfer";
+
+  /* ================= RESET ================= */
+
+  useEffect(() => {
+    if (type === "transfer") {
+      setValue("category_id", "");
+    } else {
+      setValue("transfer_account_id", "");
+    }
+  }, [type, setValue]);
+
+  /* ================= ACCOUNTS ================= */
+
+  const fromAccount = useMemo(
+    () => accounts.find((a) => a.id === fromId),
+    [accounts, fromId],
   );
 
-  async function submit(values: FormValues) {
-    const payload: TransactionCreatePayload = {
-      account_id: values.account_id,
-      category_id: values.category_id,
-      transfer_account_id: null,
-      txn_type: values.txn_type,
-      amount: values.amount,
-      txn_date: new Date(values.txn_date).toISOString(),
-      description: values.description?.trim() ? values.description.trim() : null,
-      tags: values.tags
-        ? values.tags
-            .split(",")
-            .map((tag) => tag.trim())
-            .filter(Boolean)
-        : []
-    };
-    await onSubmit(payload);
+  const toAccount = useMemo(
+    () => accounts.find((a) => a.id === toId),
+    [accounts, toId],
+  );
+
+  const fromBalance = Number(fromAccount?.balance || 0);
+  const toBalance = Number(toAccount?.balance || 0);
+
+  const isFromCard = fromAccount?.type === "card";
+  const isToCard = toAccount?.type === "card";
+
+  /* ================= BALANCE PREVIEW ================= */
+
+  let previewFrom = fromBalance;
+  let previewTo = toBalance;
+
+  if (amount > 0) {
+    if (type === "expense") {
+      previewFrom = fromBalance - amount; // card → more negative
+    }
+
+    if (type === "transfer") {
+      // 🔥 BANK → CARD (payment)
+      if (!isFromCard && isToCard) {
+        previewFrom = fromBalance - amount;
+        previewTo = toBalance + amount; // reduce debt
+      }
+
+      // 🔥 CARD → BANK (cash advance)
+      else if (isFromCard && !isToCard) {
+        previewFrom = fromBalance - amount; // more negative
+        previewTo = toBalance + amount;
+      }
+
+      // normal transfer
+      else {
+        previewFrom = fromBalance - amount;
+        previewTo = toBalance + amount;
+      }
+    }
   }
 
+  /* ================= INSUFFICIENT ================= */
+
+  const insufficient =
+    !isFromCard &&
+    (type === "expense" || isTransfer) &&
+    amount > 0 &&
+    fromBalance < amount;
+
+  /* ================= SWAP ================= */
+
+  function handleSwap() {
+    const from = watch("account_id");
+    const to = watch("transfer_account_id");
+
+    setValue("account_id", to || "");
+    setValue("transfer_account_id", from || "");
+  }
+
+  /* ================= SUBMIT ================= */
+
+  async function submit(values: FormValues) {
+    await onSubmit({
+      account_id: values.account_id,
+      transfer_account_id:
+        values.type === "transfer" ? values.transfer_account_id || null : null,
+      category_id:
+        values.type !== "transfer" ? values.category_id || null : null,
+      type: values.type,
+      payment_method: values.payment_method || null,
+      amount: values.amount,
+      txn_date: new Date(values.txn_date).toISOString(),
+      is_emergency: values.is_emergency || false,
+      description: values.description || null,
+    });
+  }
+
+  /* ================= UI ================= */
+
   return (
-    <form className="space-y-4" onSubmit={handleSubmit(submit)}>
-      <div className="grid grid-cols-2 gap-2 rounded-md bg-surface p-1">
-        <label className="cursor-pointer">
-          <input className="peer sr-only" type="radio" value="expense" {...register("txn_type")} />
-          <span className="block rounded-md px-3 py-2 text-center text-sm font-semibold text-muted peer-checked:bg-white peer-checked:text-ink peer-checked:shadow-sm">
-            Expense
-          </span>
-        </label>
-        <label className="cursor-pointer">
-          <input className="peer sr-only" type="radio" value="income" {...register("txn_type")} />
-          <span className="block rounded-md px-3 py-2 text-center text-sm font-semibold text-muted peer-checked:bg-white peer-checked:text-ink peer-checked:shadow-sm">
-            Income
-          </span>
-        </label>
-      </div>
+    <form onSubmit={handleSubmit(submit)} className="space-y-5">
+      {/* TYPE */}
+      <select {...register("type")} className="input">
+        <option value="expense">Expense</option>
+        <option value="income">Income</option>
+        <option value="transfer">Transfer</option>
+      </select>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="block">
-          <span className="mb-2 block text-sm font-medium text-ink">Account</span>
-          <select
-            className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm outline-none transition focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
-            {...register("account_id")}
-          >
-            <option value="">Select account</option>
-            {accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
+      {/* ACCOUNT */}
+      <div className="bg-gray-50 p-3 rounded-lg space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          <select {...register("account_id")} className="input">
+            <option value="">From</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} ({formatCurrency(a.balance)})
               </option>
             ))}
           </select>
-          {errors.account_id ? <span className="mt-1 block text-xs text-red-600">{errors.account_id.message}</span> : null}
-        </label>
 
-        <label className="block">
-          <span className="mb-2 block text-sm font-medium text-ink">Category</span>
-          <select
-            className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm outline-none transition focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
-            {...register("category_id")}
+          {isTransfer && (
+            <select {...register("transfer_account_id")} className="input">
+              <option value="">To</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({formatCurrency(a.balance)})
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {isTransfer && (
+          <button
+            type="button"
+            onClick={handleSwap}
+            className="text-xs text-blue-600 flex items-center gap-1"
           >
-            <option value="">Select category</option>
-            {filteredCategories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </select>
-          {errors.category_id ? <span className="mt-1 block text-xs text-red-600">{errors.category_id.message}</span> : null}
-        </label>
+            <ArrowLeftRight size={14} />
+            Swap
+          </button>
+        )}
+
+        {/* BALANCE PREVIEW */}
+        {fromAccount && amount > 0 && (
+          <div className="text-xs space-y-1">
+            <div>
+              From: {formatCurrency(fromBalance)} →{" "}
+              <span className={insufficient ? "text-red-500" : ""}>
+                {formatCurrency(previewFrom)}
+              </span>
+            </div>
+
+            {isTransfer && toAccount && (
+              <div>
+                To: {formatCurrency(toBalance)} →{" "}
+                <span className="text-green-600">
+                  {formatCurrency(previewTo)}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {insufficient && (
+          <p className="text-red-500 text-xs">⚠️ Insufficient balance</p>
+        )}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Input label="Amount" type="number" min="0.01" step="0.01" error={errors.amount?.message} {...register("amount")} />
-        <Input label="Date" type="datetime-local" error={errors.txn_date?.message} {...register("txn_date")} />
-      </div>
+      {/* CATEGORY */}
+      {!isTransfer && (
+        <CategoryTreeSelect
+          categories={localCategories}
+          type={type}
+          value={watch("category_id")}
+          onChange={(id: string) =>
+            setValue("category_id", id, { shouldDirty: true })
+          }
+          onCreated={(cat: Category) =>
+            setLocalCategories((prev) => [...prev, cat])
+          }
+        />
+      )}
 
-      <Input label="Description" error={errors.description?.message} {...register("description")} />
-      <Input label="Tags" placeholder="food, salary, bills" error={errors.tags?.message} {...register("tags")} />
+      {/* AMOUNT */}
+      <Input type="number" placeholder="Amount" {...register("amount")} />
 
-      {!accounts.length || !filteredCategories.length ? (
-        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          Add at least one account and one {selectedType} category before saving.
-        </p>
-      ) : null}
+      {/* DATE */}
+      <Input type="datetime-local" {...register("txn_date")} />
 
-      <div className="flex justify-end gap-3 pt-2">
-        <Button type="button" variant="secondary" onClick={onCancel}>
+      {/* PAYMENT */}
+      <select {...register("payment_method")} className="input">
+        <option value="">Payment</option>
+        <option value="cash">Cash</option>
+        <option value="bank">Bank</option>
+        <option value="card">Card</option>
+      </select>
+
+      {/* DESCRIPTION */}
+      <Input placeholder="Note..." {...register("description")} />
+
+      {/* ACTION */}
+      <div className="flex justify-end gap-2">
+        <Button type="button" onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="submit" disabled={isSubmitting || !accounts.length || !filteredCategories.length}>
-          <Save className="h-4 w-4" aria-hidden />
-          {isSubmitting ? "Saving..." : isEditing ? "Save changes" : "Add transaction"}
+
+        <Button type="submit" disabled={isSubmitting}>
+          <Save className="h-4 w-4" />
+          Save
         </Button>
       </div>
     </form>

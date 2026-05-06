@@ -10,13 +10,7 @@ import type {
   CategoryCreatePayload,
   CategoryUpdatePayload,
   DashboardResponse,
-  DividendCreatePayload,
-  DividendResponse,
   MonthlyExpenseReport,
-  MonthlySummary,
-  PortfolioSummary,
-  PortfolioTransactionCreatePayload,
-  PortfolioTransactionResponse,
   ReportRow,
   Transaction,
   TransactionCreatePayload,
@@ -25,6 +19,133 @@ import type {
   TrendPoint,
 } from "@/types/api";
 
+/* =========================
+   UTILS
+========================= */
+
+function buildQuery(params: Record<string, any>) {
+  const query = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      query.set(key, String(value));
+    }
+  });
+
+  return query.toString();
+}
+
+/* =========================
+   DASHBOARD
+========================= */
+
+export const fetchDashboard = (month?: string) =>
+  apiRequest<DashboardResponse>(`/dashboard${month ? `?month=${month}` : ""}`);
+
+export const fetchDashboardFull = (month: string) =>
+  apiRequest<DashboardResponse>(`/dashboard/full-summary?month=${month}`);
+
+/* =========================
+   💳 CARD DASHBOARD (FIXED)
+========================= */
+
+export type CardDashboardResponse = {
+  total_outstanding: number;
+  monthly_spent: number;
+  payments: number;
+  utilization: number;
+  cards: {
+    id: string;
+    name: string;
+    balance: number;
+    limit: number;
+    utilization: number;
+  }[];
+};
+
+export const fetchCardDashboard = (month: string) =>
+  apiRequest<CardDashboardResponse>(`/dashboard/cards?month=${month}`);
+
+/* =========================
+   ACCOUNTS
+========================= */
+
+export const fetchAccounts = () => apiRequest<Account[]>("/accounts");
+
+export const createAccount = (payload: AccountCreatePayload) =>
+  apiRequest<Account>("/accounts", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const updateAccount = (id: string, payload: AccountUpdatePayload) =>
+  apiRequest<Account>(`/accounts/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
+export const deleteAccount = (id: string) =>
+  apiRequest<void>(`/accounts/${id}`, {
+    method: "DELETE",
+  });
+
+/* =========================
+   CATEGORIES
+========================= */
+
+export const fetchCategories = () => apiRequest<Category[]>("/categories");
+
+export const fetchCategoryTree = () =>
+  apiRequest<Category[]>("/categories/tree");
+
+export const createCategory = (payload: CategoryCreatePayload) =>
+  apiRequest<Category>("/categories", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const updateCategory = (id: string, payload: CategoryUpdatePayload) =>
+  apiRequest<Category>(`/categories/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
+export const deleteCategory = (id: string) =>
+  apiRequest<void>(`/categories/${id}`, {
+    method: "DELETE",
+  });
+
+/* =========================
+   BUDGETS
+========================= */
+
+export const fetchBudgets = (month: string) =>
+  apiRequest<Budget[]>(`/budgets?month=${month}`);
+
+export const createBudget = (payload: BudgetCreatePayload) =>
+  apiRequest<Budget>("/budgets", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const updateBudget = (id: string, payload: BudgetUpdatePayload) =>
+  apiRequest<Budget>(`/budgets/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
+export const deleteBudget = (id: string) =>
+  apiRequest<void>(`/budgets/${id}`, {
+    method: "DELETE",
+  });
+
+export const fetchBudgetSummary = (month: string) =>
+  apiRequest(`/budgets/summary?month=${month}`);
+
+/* =========================
+   TRANSACTIONS
+========================= */
+
 type TransactionList = {
   total: number;
   limit: number;
@@ -32,168 +153,67 @@ type TransactionList = {
   items: Transaction[];
 };
 
-export function fetchDashboard() {
-  return apiRequest<DashboardResponse>("/dashboard");
-}
+export const fetchTransactions = (filters: TransactionFilters = {}) => {
+  const query = buildQuery({
+    limit: filters.limit ?? 50,
+    offset: filters.offset ?? 0,
+    search: filters.search,
+    type: filters.type,
+    account_id: filters.account_id,
+    category_id: filters.category_id,
+    from_date: filters.from_date,
+    to_date: filters.to_date,
+  });
 
-export function fetchAccounts() {
-  return apiRequest<Account[]>("/accounts");
-}
+  return apiRequest<TransactionList>(`/transactions?${query}`);
+};
 
-export function createAccount(payload: AccountCreatePayload) {
-  return apiRequest<Account>("/accounts", {
+export const createTransaction = (payload: TransactionCreatePayload) =>
+  apiRequest<Transaction>("/transactions", {
     method: "POST",
     body: JSON.stringify(payload),
   });
-}
 
-export function updateAccount(
-  accountId: string,
-  payload: AccountUpdatePayload,
-) {
-  return apiRequest<Account>(`/accounts/${accountId}`, {
+export const updateTransaction = (
+  id: string,
+  payload: TransactionUpdatePayload,
+) =>
+  apiRequest<Transaction>(`/transactions/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
-}
 
-export function deleteAccount(accountId: string) {
-  return apiRequest<void>(`/accounts/${accountId}`, {
+export const deleteTransaction = (id: string) =>
+  apiRequest<void>(`/transactions/${id}`, {
     method: "DELETE",
   });
-}
 
-export function fetchCategories() {
-  return apiRequest<Category[]>("/categories");
-}
+/* =========================
+   REPORTS
+========================= */
 
-export function createCategory(payload: CategoryCreatePayload) {
-  return apiRequest<Category>("/categories", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function updateCategory(
-  categoryId: string,
-  payload: CategoryUpdatePayload,
-) {
-  return apiRequest<Category>(`/categories/${categoryId}`, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function deleteCategory(categoryId: string) {
-  return apiRequest<void>(`/categories/${categoryId}`, {
-    method: "DELETE",
-  });
-}
-
-export function fetchPortfolioSummary() {
-  return apiRequest<PortfolioSummary>("/portfolio/summary");
-}
-
-export function createTrade(payload: PortfolioTransactionCreatePayload) {
-  return apiRequest<PortfolioTransactionResponse>("/portfolio/transactions", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function addDividend(payload: DividendCreatePayload) {
-  return apiRequest<DividendResponse>("/portfolio/dividends", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function listDividends() {
-  return apiRequest<DividendResponse[]>("/portfolio/dividends");
-}
-
-export function fetchMonthlyExpenses(month: number, year: number) {
-  return apiRequest<MonthlyExpenseReport>(
+export const fetchMonthlyExpenses = (month: number, year: number) =>
+  apiRequest<MonthlyExpenseReport>(
     `/reports/monthly-expenses?month=${month}&year=${year}`,
   );
-}
 
-export function fetchCategorySpending() {
-  return apiRequest<ReportRow[]>("/reports/categories");
-}
+export const fetchCategorySpending = () =>
+  apiRequest<ReportRow[]>("/reports/categories");
 
-export function fetchIncomeReport(year: number) {
-  return apiRequest<ReportRow[]>(`/reports/income?year=${year}`);
-}
+export const fetchIncomeReport = (year: number) =>
+  apiRequest<ReportRow[]>(`/reports/income?year=${year}`);
 
-export function fetchNetWorthTrend() {
-  return apiRequest<TrendPoint[]>("/reports/net-worth-trend");
-}
+export const fetchNetWorthTrend = () =>
+  apiRequest<TrendPoint[]>("/reports/net-worth-trend");
 
-export function fetchBudgets(month?: number, year?: number) {
-  const params = new URLSearchParams();
-  if (month) params.set("month", String(month));
-  if (year) params.set("year", String(year));
-  const query = params.toString();
-  return apiRequest<Budget[]>(`/budgets${query ? `?${query}` : ""}`);
-}
+export const fetchMonthlyIncome = (month: string) =>
+  apiRequest<{ amount: number }>(`/budgets/income?month=${month}`);
 
-export function createBudget(payload: BudgetCreatePayload) {
-  return apiRequest<Budget>("/budgets", {
+export const saveMonthlyIncome = (payload: { month: string; amount: number }) =>
+  apiRequest("/budgets/income", {
     method: "POST",
     body: JSON.stringify(payload),
   });
-}
 
-export function updateBudget(budgetId: string, payload: BudgetUpdatePayload) {
-  return apiRequest<Budget>(`/budgets/${budgetId}`, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function deleteBudget(budgetId: string) {
-  return apiRequest<void>(`/budgets/${budgetId}`, {
-    method: "DELETE",
-  });
-}
-
-export function fetchTransactions(filters: TransactionFilters = {}) {
-  const params = new URLSearchParams();
-  params.set("limit", String(filters.limit ?? 50));
-  params.set("offset", String(filters.offset ?? 0));
-  if (filters.start_date) params.set("start_date", filters.start_date);
-  if (filters.end_date) params.set("end_date", filters.end_date);
-  if (filters.account_id) params.set("account_id", filters.account_id);
-  if (filters.category_id) params.set("category_id", filters.category_id);
-  return apiRequest<TransactionList>(`/transactions?${params.toString()}`);
-}
-
-export function createTransaction(payload: TransactionCreatePayload) {
-  return apiRequest<Transaction>("/transactions", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function updateTransaction(
-  transactionId: string,
-  payload: TransactionUpdatePayload,
-) {
-  return apiRequest<Transaction>(`/transactions/${transactionId}`, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function deleteTransaction(transactionId: string) {
-  return apiRequest<void>(`/transactions/${transactionId}`, {
-    method: "DELETE",
-  });
-}
-
-export function fetchMonthlySummary(month: number, year: number) {
-  return apiRequest<MonthlySummary>(
-    `/transactions/monthly-summary?month=${month}&year=${year}`,
-  );
-}
+export const fetchCardAnalytics = (month: string) =>
+  apiRequest(`/dashboard/card-analytics?month=${month}`);
