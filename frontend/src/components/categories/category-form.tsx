@@ -1,91 +1,171 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { Category, CategoryCreatePayload, CategoryUpdatePayload } from "@/types/api";
+
+import type {
+  Category,
+  CategoryCreatePayload,
+  CategoryUpdatePayload,
+} from "@/types/api";
+
+/* ================= SCHEMA ================= */
 
 const schema = z.object({
-  name: z.string().min(1, "Category name is required").max(120),
+  name: z.string().min(1, "Name required"),
   type: z.enum(["expense", "income"]),
-  color: z.string().max(20).optional(),
-  icon: z.string().max(80).optional()
+  parent_id: z.string().optional(),
+  color: z.string().optional(),
+  icon: z.string().optional(),
 });
 
-type FormValues = z.infer<typeof schema>;
+type FormData = z.infer<typeof schema>;
 
-type CategoryFormProps = {
+type Props = {
   category?: Category | null;
-  onSubmit: (payload: CategoryCreatePayload | CategoryUpdatePayload) => Promise<void>;
+  categories?: Category[];
+  onSubmit: (
+    data: CategoryCreatePayload | CategoryUpdatePayload,
+  ) => Promise<void>;
   onCancel: () => void;
 };
 
-export function CategoryForm({ category, onSubmit, onCancel }: CategoryFormProps) {
+export function CategoryForm({
+  category,
+  categories = [],
+  onSubmit,
+  onCancel,
+}: Props) {
+  const [open, setOpen] = useState(false);
+
   const {
     register,
     handleSubmit,
-    formState: { errors, isSubmitting }
-  } = useForm<FormValues>({
+    setValue,
+    watch,
+    formState: { isSubmitting },
+  } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      name: category?.name ?? "",
-      type: category?.type ?? "expense",
-      color: category?.color ?? "#1f9d7a",
-      icon: category?.icon ?? ""
-    }
+      name: category?.name || "",
+      type: category?.type || "expense",
+      parent_id: category?.parent_id || "",
+      color: category?.color || "#1f9d7a",
+      icon: category?.icon || "",
+    },
   });
 
-  async function submit(values: FormValues) {
+  const type = watch("type");
+  const selectedParent = watch("parent_id");
+
+  /* ===== ONLY PARENTS ===== */
+
+  const parents = useMemo(
+    () =>
+      categories.filter(
+        (c) =>
+          !c.parent_id &&
+          c.type === type &&
+          (!category || c.id !== category.id),
+      ),
+    [categories, type, category],
+  );
+
+  const selectedName =
+    parents.find((c) => c.id === selectedParent)?.name || "No Parent";
+
+  /* ===== SUBMIT ===== */
+
+  async function submit(data: FormData) {
     await onSubmit({
-      name: values.name.trim(),
-      type: values.type,
-      color: values.color?.trim() || null,
-      icon: values.icon?.trim() || null
+      name: data.name.trim(),
+      type: data.type,
+      parent_id: data.parent_id || null,
+      color: data.color || null,
+      icon: data.icon || null,
     });
   }
 
   return (
-    <form className="space-y-4" onSubmit={handleSubmit(submit)}>
-      <Input label="Category name" error={errors.name?.message} {...register("name")} />
+    <form onSubmit={handleSubmit(submit)} className="space-y-5">
+      {/* NAME */}
+      <Input placeholder="Category name" {...register("name")} />
 
-      <div className="grid grid-cols-2 gap-2 rounded-md bg-surface p-1">
-        <label className="cursor-pointer">
-          <input className="peer sr-only" type="radio" value="expense" {...register("type")} />
-          <span className="block rounded-md px-3 py-2 text-center text-sm font-semibold text-muted peer-checked:bg-white peer-checked:text-ink peer-checked:shadow-sm">
-            Expense
-          </span>
-        </label>
-        <label className="cursor-pointer">
-          <input className="peer sr-only" type="radio" value="income" {...register("type")} />
-          <span className="block rounded-md px-3 py-2 text-center text-sm font-semibold text-muted peer-checked:bg-white peer-checked:text-ink peer-checked:shadow-sm">
-            Income
-          </span>
-        </label>
+      {/* TYPE */}
+      <select {...register("type")} className="input">
+        <option value="expense">Expense</option>
+        <option value="income">Income</option>
+      </select>
+
+      {/* ===== SIMPLE PARENT SELECT ===== */}
+      <div className="relative">
+        <label className="text-sm font-medium">Parent Category</label>
+
+        <div
+          onClick={() => setOpen(!open)}
+          className="input cursor-pointer flex justify-between mt-1"
+        >
+          <span>{selectedName}</span>
+          <span>▾</span>
+        </div>
+
+        {open && (
+          <div className="absolute z-50 mt-1 bg-white border rounded-xl shadow-lg w-full max-h-64 overflow-y-auto">
+            {/* NO PARENT */}
+            <div
+              onClick={() => {
+                setValue("parent_id", "", {
+                  shouldValidate: true,
+                  shouldDirty: true,
+                });
+                setOpen(false);
+              }}
+              className="px-3 py-2 hover:bg-gray-100 cursor-pointer"
+            >
+              No Parent
+            </div>
+
+            {/* PARENTS ONLY */}
+            {parents.map((p) => (
+              <div
+                key={p.id}
+                onClick={() => {
+                  setValue("parent_id", p.id, {
+                    shouldValidate: true,
+                    shouldDirty: true,
+                  });
+                  setOpen(false);
+                }}
+                className={`px-3 py-2 cursor-pointer hover:bg-blue-100 ${
+                  selectedParent === p.id ? "bg-blue-50" : ""
+                }`}
+              >
+                {p.name}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-[120px_1fr]">
-        <label className="block">
-          <span className="mb-2 block text-sm font-medium text-ink">Color</span>
-          <input
-            className="h-11 w-full rounded-md border border-line bg-white px-2 outline-none transition focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
-            type="color"
-            {...register("color")}
-          />
-        </label>
-        <Input label="Icon" placeholder="shopping-bag, salary, food" error={errors.icon?.message} {...register("icon")} />
-      </div>
+      {/* COLOR */}
+      <input type="color" {...register("color")} />
 
-      <div className="flex justify-end gap-3 pt-2">
-        <Button type="button" variant="secondary" onClick={onCancel}>
+      {/* ICON */}
+      <Input placeholder="Icon (optional)" {...register("icon")} />
+
+      {/* ACTION */}
+      <div className="flex justify-end gap-2">
+        <Button type="button" onClick={onCancel}>
           Cancel
         </Button>
+
         <Button type="submit" disabled={isSubmitting}>
-          <Save className="h-4 w-4" aria-hidden />
-          {isSubmitting ? "Saving..." : "Save category"}
+          {isSubmitting ? "Saving..." : "Save"}
         </Button>
       </div>
     </form>

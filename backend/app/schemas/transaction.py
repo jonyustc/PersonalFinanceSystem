@@ -1,68 +1,67 @@
-from datetime import datetime
-from decimal import Decimal
 from uuid import UUID
+from decimal import Decimal
+from datetime import datetime
+from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
-
-from app.models.transaction import TransactionType
-from app.schemas.common import Timestamped
+from pydantic import BaseModel, Field
 
 
-class TransactionBase(BaseModel):
+# ================= TYPES =================
+
+TransactionType = Literal["expense", "income", "transfer"]
+PaymentMethod = Literal["cash", "bank", "card"]
+
+
+# ================= CREATE =================
+
+class TransactionCreate(BaseModel):
     account_id: UUID
-    category_id: UUID | None = None
-    transfer_account_id: UUID | None = None
-    txn_type: TransactionType
-    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
-    txn_date: datetime
-    description: str | None = None
-    tags: list[str] = Field(default_factory=list)
+    transfer_account_id: Optional[UUID] = None
+    category_id: Optional[UUID] = None
 
-    @model_validator(mode="after")
-    def validate_transfer(self):
-        if self.txn_type == TransactionType.TRANSFER and not self.transfer_account_id:
-            raise ValueError("transfer_account_id is required for transfers")
-        if self.txn_type != TransactionType.TRANSFER and self.category_id is None:
-            raise ValueError("category_id is required for income and expense transactions")
-        return self
+    type: TransactionType
+    payment_method: Optional[PaymentMethod] = None
+
+    amount: Decimal = Field(gt=0)
+    txn_date: datetime = Field(default_factory=datetime.utcnow)
+
+    is_emergency: bool = False
+    description: Optional[str] = None
 
 
-class TransactionCreate(TransactionBase):
-    pass
-
+# ================= UPDATE =================
 
 class TransactionUpdate(BaseModel):
-    account_id: UUID | None = None
-    category_id: UUID | None = None
-    transfer_account_id: UUID | None = None
-    txn_type: TransactionType | None = None
-    amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
-    txn_date: datetime | None = None
-    description: str | None = None
-    tags: list[str] | None = None
+    account_id: Optional[UUID] = None
+    transfer_account_id: Optional[UUID] = None
+    category_id: Optional[UUID] = None
+
+    type: Optional[TransactionType] = None
+    payment_method: Optional[PaymentMethod] = None
+
+    amount: Optional[Decimal] = Field(default=None, gt=0)
+    txn_date: Optional[datetime] = None
+
+    is_emergency: Optional[bool] = None
+    description: Optional[str] = None
 
 
-class TransactionResponse(Timestamped):
+# ================= RESPONSE =================
+
+class TransactionResponse(BaseModel):
+    id: UUID
     account_id: UUID
-    category_id: UUID | None
-    transfer_account_id: UUID | None
-    txn_type: TransactionType
+    transfer_account_id: Optional[UUID]
+    category_id: Optional[UUID]
+
+    type: TransactionType
+    payment_method: Optional[PaymentMethod]
+
     amount: Decimal
     txn_date: datetime
-    description: str | None
-    tags: list[str]
 
+    is_emergency: bool
+    description: Optional[str]
 
-class TransactionListResponse(BaseModel):
-    total: int
-    limit: int
-    offset: int
-    items: list[TransactionResponse]
-
-
-class MonthlySummary(BaseModel):
-    month: int
-    year: int
-    total_income: Decimal
-    total_expense: Decimal
-    savings: Decimal
+    class Config:
+        from_attributes = True
