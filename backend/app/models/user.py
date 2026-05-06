@@ -9,9 +9,13 @@ class User(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
     # ===============================
-    # 🔹 BASIC FIELDS
+    # BASIC FIELDS
     # ===============================
-    full_name: Mapped[str] = mapped_column(String(120), nullable=False)
+
+    full_name: Mapped[str] = mapped_column(
+        String(120),
+        nullable=False,
+    )
 
     email: Mapped[str] = mapped_column(
         String(255),
@@ -38,46 +42,48 @@ class User(UUIDMixin, TimestampMixin, Base):
     )
 
     # ===============================
-    # 🔹 RELATIONSHIPS
+    # RELATIONSHIPS
     # ===============================
-    accounts = relationship(
+
+    accounts: Mapped[list["Account"]] = relationship(
         "Account",
         back_populates="user",
         cascade="all, delete-orphan",
     )
 
-    categories = relationship(
+    categories: Mapped[list["Category"]] = relationship(
         "Category",
         back_populates="user",
         cascade="all, delete-orphan",
     )
 
-    transactions = relationship(
+    transactions: Mapped[list["Transaction"]] = relationship(
         "Transaction",
         back_populates="user",
         cascade="all, delete-orphan",
     )
 
-    budgets = relationship(
+    budgets: Mapped[list["Budget"]] = relationship(
         "Budget",
         back_populates="user",
         cascade="all, delete-orphan",
     )
 
-    notifications = relationship(
+    notifications: Mapped[list["Notification"]] = relationship(
         "Notification",
         back_populates="user",
         cascade="all, delete-orphan",
     )
 
-    monthly_incomes = relationship(
+    monthly_incomes: Mapped[list["MonthlyIncome"]] = relationship(
         "MonthlyIncome",
         back_populates="user",
         cascade="all, delete-orphan",
     )
 
     # ===============================
-    # 🔹 DEBUG
+    # DEBUG
     # ===============================
-    def __repr__(self):
+
+    def __repr__(self) -> str:
         return f"<User {self.email}>"

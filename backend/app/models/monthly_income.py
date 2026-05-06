@@ -1,5 +1,8 @@
 from decimal import Decimal
+from uuid import UUID
+
 from sqlalchemy import ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -17,18 +20,15 @@ class MonthlyIncome(UUIDMixin, TimestampMixin, Base):
         ),
     )
 
-    # ================= RELATION =================
-
-    user_id: Mapped[str] = mapped_column(
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        index=True,
         nullable=False,
+        index=True,
     )
 
-    # ================= DATA =================
-
     month: Mapped[str] = mapped_column(
-        String(7),  # format: YYYY-MM
+        String(7),
         nullable=False,
     )
 
@@ -37,6 +37,7 @@ class MonthlyIncome(UUIDMixin, TimestampMixin, Base):
         nullable=False,
     )
 
-    # ================= RELATIONSHIP =================
-
-    user = relationship("User", back_populates="monthly_incomes")
+    user: Mapped["User"] = relationship(
+        "User",
+        back_populates="monthly_incomes",
+    )

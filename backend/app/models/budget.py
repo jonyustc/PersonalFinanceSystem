@@ -1,7 +1,8 @@
-# app/models/budget.py
-
 from decimal import Decimal
+from uuid import UUID
+
 from sqlalchemy import ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -20,23 +21,24 @@ class Budget(UUIDMixin, TimestampMixin, Base):
         ),
     )
 
-    user_id: Mapped[str] = mapped_column(
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        index=True,
         nullable=False,
+        index=True,
     )
 
-    category_id: Mapped[str] = mapped_column(
+    category_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
         ForeignKey("categories.id", ondelete="CASCADE"),
-        index=True,
         nullable=False,
+        index=True,
     )
 
-    # ✅ NEW: actual month (IMPORTANT FIX)
     month: Mapped[str] = mapped_column(
-        String(7),  # "2026-05"
-        index=True,
+        String(7),
         nullable=False,
+        index=True,
     )
 
     amount: Mapped[Decimal] = mapped_column(
@@ -44,5 +46,12 @@ class Budget(UUIDMixin, TimestampMixin, Base):
         nullable=False,
     )
 
-    user = relationship("User", back_populates="budgets")
-    category = relationship("Category", back_populates="budgets")
+    user: Mapped["User"] = relationship(
+        "User",
+        back_populates="budgets",
+    )
+
+    category: Mapped["Category"] = relationship(
+        "Category",
+        back_populates="budgets",
+    )
