@@ -1,7 +1,9 @@
 import { apiRequest } from "@/services/api";
 import type {
   Account,
+  AccountAnalytics,
   AccountCreatePayload,
+  AccountSummary,
   AccountUpdatePayload,
   Budget,
   BudgetCreatePayload,
@@ -13,9 +15,11 @@ import type {
   MonthlyExpenseReport,
   ReportRow,
   Transaction,
+  TransactionAnalytics,
   TransactionCreatePayload,
   TransactionFilters,
   TransactionUpdatePayload,
+  TransferPayload,
   TrendPoint,
 } from "@/types/api";
 
@@ -72,6 +76,17 @@ export const fetchCardDashboard = (month: string) =>
 
 export const fetchAccounts = () => apiRequest<Account[]>("/accounts");
 
+export const fetchAccountSummary = () =>
+  apiRequest<AccountSummary>("/accounts/summary");
+
+export const fetchAccountAnalytics = () =>
+  apiRequest<AccountAnalytics>("/accounts/analytics");
+
+export const fetchAccountNetWorthTrend = () =>
+  apiRequest<{ date: string; net_worth: string }[]>(
+    "/accounts/net-worth-trend",
+  );
+
 export const createAccount = (payload: AccountCreatePayload) =>
   apiRequest<Account>("/accounts", {
     method: "POST",
@@ -87,6 +102,12 @@ export const updateAccount = (id: string, payload: AccountUpdatePayload) =>
 export const deleteAccount = (id: string) =>
   apiRequest<void>(`/accounts/${id}`, {
     method: "DELETE",
+  });
+
+export const createTransfer = (payload: TransferPayload) =>
+  apiRequest("/transfers", {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 
 /* =========================
@@ -150,6 +171,7 @@ type TransactionList = {
   total: number;
   limit: number;
   offset: number;
+  next_offset?: number | null;
   items: Transaction[];
 };
 
@@ -161,11 +183,27 @@ export const fetchTransactions = (filters: TransactionFilters = {}) => {
     type: filters.type,
     account_id: filters.account_id,
     category_id: filters.category_id,
+    merchant: filters.merchant,
+    tags: filters.tags,
+    recurring_only: filters.recurring_only,
+    transfer_only: filters.transfer_only,
+    min_amount: filters.min_amount,
+    max_amount: filters.max_amount,
     from_date: filters.from_date,
     to_date: filters.to_date,
   });
 
   return apiRequest<TransactionList>(`/transactions?${query}`);
+};
+
+export const fetchTransactionAnalytics = (filters: TransactionFilters = {}) => {
+  const query = buildQuery({
+    from_date: filters.from_date,
+    to_date: filters.to_date,
+  });
+  return apiRequest<TransactionAnalytics>(
+    `/transactions/analytics${query ? `?${query}` : ""}`,
+  );
 };
 
 export const createTransaction = (payload: TransactionCreatePayload) =>
@@ -197,8 +235,21 @@ export const fetchMonthlyExpenses = (month: number, year: number) =>
     `/reports/monthly-expenses?month=${month}&year=${year}`,
   );
 
-export const fetchCategorySpending = () =>
-  apiRequest<ReportRow[]>("/reports/categories");
+export const fetchCategorySpending = (params?: {
+  from_date?: string;
+  to_date?: string;
+}) => {
+  const query = params
+    ? `?${new URLSearchParams(
+        Object.entries(params).filter(([, value]) => Boolean(value)) as [
+          string,
+          string,
+        ][],
+      ).toString()}`
+    : "";
+
+  return apiRequest<ReportRow[]>(`/reports/categories${query}`);
+};
 
 export const fetchIncomeReport = (year: number) =>
   apiRequest<ReportRow[]>(`/reports/income?year=${year}`);

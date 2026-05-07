@@ -1,6 +1,6 @@
 import { formatCurrency } from "@/lib/utils";
 
-export function RecentTransactions({ data }: any[]) {
+export function RecentTransactions({ data }: { data: any[] }) {
   return (
     <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
       <h3 className="mb-3 font-semibold">Recent Transactions</h3>
@@ -9,7 +9,7 @@ export function RecentTransactions({ data }: any[]) {
         <p className="text-sm text-gray-500">No transactions</p>
       )}
 
-      {data.map((t) => (
+      {data.map((t: any) => (
         <div
           key={t.id}
           className="flex justify-between items-center py-3 border-b last:border-none"

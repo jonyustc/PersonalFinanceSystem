@@ -1,5 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 
+import { formatCurrency } from "@/lib/utils";
+
 type StatCardProps = {
   label: string;
   value: string;

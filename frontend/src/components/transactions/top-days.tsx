@@ -2,7 +2,7 @@
 
 import { formatCurrency } from "@/lib/utils";
 
-export function TopDays({ data }: any[]) {
+export function TopDays({ data }: { data: any[] }) {
   if (!data?.length) return null;
 
   const sorted = [...data].sort((a, b) => b.amount - a.amount).slice(0, 5);

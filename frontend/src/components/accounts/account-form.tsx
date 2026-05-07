@@ -1,12 +1,13 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save } from "lucide-react";
+import { CreditCard, Landmark, Palette, Save, Wallet } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 import type {
   Account,
@@ -14,149 +15,200 @@ import type {
   AccountUpdatePayload,
 } from "@/types/api";
 
-// ✅ FIXED TYPES (backend aligned)
 const accountTypes = [
-  { value: "cash", label: "Cash" },
-  { value: "bank", label: "Bank" },
-  { value: "card", label: "Card" },
+  { value: "cash", label: "Cash", icon: Wallet },
+  { value: "bank", label: "Bank", icon: Landmark },
+  { value: "card", label: "Card", icon: CreditCard },
 ] as const;
 
-const schema = z.object({
-  name: z.string().min(1, "Account name is required").max(120),
+const iconOptions = ["wallet", "landmark", "credit-card", "piggy-bank", "building-2"];
+const colorOptions = ["#137f65", "#2563eb", "#7c3aed", "#d97706", "#dc2626", "#0f766e"];
 
-  // ✅ FIX
-  type: z.enum(["cash", "bank", "card"]),
-
-  opening_balance: z.coerce
-    .number()
-    .min(0, "Opening balance cannot be negative"),
-
-  currency: z.string().min(3, "Use 3-letter code").max(3, "Use 3-letter code"),
-
-  notes: z.string().optional(),
-  is_active: z.boolean(),
-});
+const schema = z
+  .object({
+    name: z.string().min(1, "Account name is required").max(120),
+    type: z.enum(["cash", "bank", "card"]),
+    opening_balance: z.coerce.number(),
+    currency: z.string().min(3, "Use 3-letter code").max(3, "Use 3-letter code"),
+    institution_name: z.string().max(120).optional(),
+    account_subtype: z.string().max(30).optional(),
+    color: z.string().optional(),
+    icon: z.string().optional(),
+    notes: z.string().optional(),
+    is_active: z.boolean(),
+    credit_limit: z.coerce.number().min(0).optional(),
+    statement_day: z.coerce.number().min(1).max(31).optional().or(z.literal("").transform(() => undefined)),
+    due_day: z.coerce.number().min(1).max(31).optional().or(z.literal("").transform(() => undefined)),
+  })
+  .superRefine((values, ctx) => {
+    if (values.type !== "card" && values.opening_balance < 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["opening_balance"],
+        message: "Only cards can start with a negative balance",
+      });
+    }
+  });
 
 type FormValues = z.infer<typeof schema>;
 
 type Props = {
   account?: Account | null;
-  onSubmit: (
-    data: AccountCreatePayload | AccountUpdatePayload,
-  ) => Promise<void>;
+  onSubmit: (data: AccountCreatePayload | AccountUpdatePayload) => Promise<void>;
   onCancel: () => void;
 };
 
 export function AccountForm({ account, onSubmit, onCancel }: Props) {
   const isEditing = Boolean(account);
-
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-
     defaultValues: {
       name: account?.name ?? "",
       type: account?.type ?? "cash",
-
-      // ✅ FIX (use balance)
-      opening_balance: Number(account?.balance ?? 0),
-
+      opening_balance: Number(account?.opening_balance ?? account?.balance ?? 0),
       currency: account?.currency ?? "USD",
+      institution_name: account?.institution_name ?? "",
+      account_subtype: account?.account_subtype ?? "",
+      color: account?.color ?? colorOptions[0],
+      icon: account?.icon ?? "wallet",
       notes: account?.notes ?? "",
       is_active: account?.is_active ?? true,
+      credit_limit: Number(account?.card_details?.credit_limit ?? 0),
+      statement_day: account?.card_details?.statement_day ?? undefined,
+      due_day: account?.card_details?.due_day ?? undefined,
     },
   });
 
+  const selectedType = watch("type");
+
   async function submit(values: FormValues) {
-    const payload = {
-      ...values,
+    const basePayload = {
+      name: values.name.trim(),
+      type: values.type,
       currency: values.currency.toUpperCase(),
+      institution_name: values.institution_name?.trim() || null,
+      account_subtype: values.account_subtype?.trim() || null,
+      color: values.color || null,
+      icon: values.icon || null,
       notes: values.notes?.trim() || null,
+      is_active: values.is_active,
+      card_details:
+        values.type === "card"
+          ? {
+              credit_limit: Number(values.credit_limit ?? 0),
+              statement_day: values.statement_day ? Number(values.statement_day) : null,
+              due_day: values.due_day ? Number(values.due_day) : null,
+            }
+          : null,
     };
 
     if (isEditing) {
-      // ✅ FIX: opening_balance NOT sent in update
-      const updatePayload: AccountUpdatePayload = {
-        name: payload.name,
-        type: payload.type,
-        currency: payload.currency,
-        notes: payload.notes,
-        is_active: payload.is_active,
-      };
-
-      await onSubmit(updatePayload);
+      await onSubmit(basePayload);
       return;
     }
 
-    await onSubmit(payload);
+    await onSubmit({ ...basePayload, opening_balance: values.opening_balance });
   }
 
   return (
-    <form className="space-y-4" onSubmit={handleSubmit(submit)}>
-      {/* NAME */}
-      <Input
-        label="Account name"
-        error={errors.name?.message}
-        {...register("name")}
-      />
+    <form className="space-y-5" onSubmit={handleSubmit(submit)}>
+      <Input label="Account name" error={errors.name?.message} {...register("name")} />
 
-      {/* TYPE */}
-      <label className="block">
-        <span className="mb-2 block text-sm font-medium">Account type</span>
+      <div>
+        <span className="mb-2 block text-sm font-medium text-ink">Account type</span>
+        <div className="grid grid-cols-3 gap-2">
+          {accountTypes.map((type) => {
+            const Icon = type.icon;
+            const active = selectedType === type.value;
+            return (
+              <label
+                key={type.value}
+                className={cn(
+                  "flex h-11 cursor-pointer items-center justify-center gap-2 rounded-md border text-sm font-semibold",
+                  active ? "border-brand-600 bg-brand-50 text-brand-700" : "border-line bg-white text-muted",
+                )}
+              >
+                <input className="sr-only" type="radio" value={type.value} {...register("type")} />
+                <Icon className="h-4 w-4" />
+                {type.label}
+              </label>
+            );
+          })}
+        </div>
+      </div>
 
-        <select className="input" {...register("type")}>
-          {accountTypes.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      {/* BALANCE + CURRENCY */}
       <div className="grid gap-4 sm:grid-cols-2">
         <Input
           label="Opening balance"
           type="number"
           step="0.01"
-          min="0"
           disabled={isEditing}
           error={errors.opening_balance?.message}
           {...register("opening_balance")}
         />
-
-        <Input
-          label="Currency"
-          maxLength={3}
-          error={errors.currency?.message}
-          {...register("currency")}
-        />
+        <Input label="Currency" maxLength={3} error={errors.currency?.message} {...register("currency")} />
       </div>
 
-      {/* NOTES */}
-      <label className="block">
-        <span className="mb-2 block text-sm font-medium">Notes</span>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Input label="Institution" {...register("institution_name")} />
+        <Input label="Subtype" placeholder="Checking, savings, rewards" {...register("account_subtype")} />
+      </div>
 
-        <textarea className="input" {...register("notes")} />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-2 flex items-center gap-2 text-sm font-medium text-ink">
+            <Palette className="h-4 w-4" />
+            Color
+          </span>
+          <select className="input h-11" {...register("color")}>
+            {colorOptions.map((color) => (
+              <option key={color} value={color}>
+                {color}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-2 block text-sm font-medium text-ink">Icon</span>
+          <select className="input h-11" {...register("icon")}>
+            {iconOptions.map((icon) => (
+              <option key={icon} value={icon}>
+                {icon}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {selectedType === "card" ? (
+        <div className="grid gap-4 rounded-md border border-line bg-surface p-4 sm:grid-cols-3">
+          <Input label="Credit limit" type="number" step="0.01" min="0" {...register("credit_limit")} />
+          <Input label="Statement day" type="number" min="1" max="31" error={errors.statement_day?.message} {...register("statement_day")} />
+          <Input label="Due day" type="number" min="1" max="31" error={errors.due_day?.message} {...register("due_day")} />
+        </div>
+      ) : null}
+
+      <label className="block">
+        <span className="mb-2 block text-sm font-medium text-ink">Notes</span>
+        <textarea className="input min-h-24" {...register("notes")} />
       </label>
 
-      {/* ACTIVE */}
-      <label className="flex items-center gap-2">
+      <label className="flex items-center gap-2 text-sm font-medium text-ink">
         <input type="checkbox" {...register("is_active")} />
         Active account
       </label>
 
-      {/* ACTIONS */}
       <div className="flex justify-end gap-3">
         <Button type="button" variant="secondary" onClick={onCancel}>
           Cancel
         </Button>
-
         <Button type="submit" disabled={isSubmitting}>
-          <Save className="w-4 h-4" />
+          <Save className="h-4 w-4" />
           {isSubmitting ? "Saving..." : "Save"}
         </Button>
       </div>

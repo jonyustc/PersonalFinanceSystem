@@ -8,8 +8,9 @@ import {
 } from "recharts";
 
 import { formatCurrency } from "@/lib/utils";
+const currencyTooltip = (value: unknown) => formatCurrency(Number(value ?? 0));
 
-export function MonthlyTrend({ data }: any[]) {
+export function MonthlyTrend({ data }: { data: any[] }) {
   if (!data || data.length === 0) {
     return (
       <div className="bg-white p-4 rounded-2xl border border-gray-100">
@@ -28,7 +29,7 @@ export function MonthlyTrend({ data }: any[]) {
 
           <XAxis dataKey="month" tick={{ fontSize: 12 }} />
 
-          <Tooltip formatter={(v: number) => formatCurrency(v)} />
+          <Tooltip formatter={currencyTooltip} />
 
           <Line dataKey="income" stroke="#22c55e" strokeWidth={2} />
           <Line dataKey="expense" stroke="#ef4444" strokeWidth={2} />

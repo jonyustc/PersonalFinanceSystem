@@ -8,6 +8,7 @@ import {
   Tooltip,
   XAxis,
 } from "recharts";
+const currencyTooltip = (value: unknown) => formatCurrency(Number(value ?? 0));
 
 export function IncomeExpenseChart({ data }: any) {
   const chartData = [
@@ -29,7 +30,7 @@ export function IncomeExpenseChart({ data }: any) {
           <XAxis dataKey="name" tick={{ fontSize: 12 }} />
 
           <Tooltip
-            formatter={(v: number) => formatCurrency(v)}
+            formatter={currencyTooltip}
             contentStyle={{
               borderRadius: "8px",
               border: "1px solid #e5e7eb",

@@ -17,6 +17,7 @@ import { formatCurrency } from "@/lib/utils";
 type Props = {
   data: any[];
 };
+const currencyTooltip = (value: unknown) => formatCurrency(Number(value ?? 0));
 
 export function BudgetChart({ data }: Props) {
   if (!data || data.length === 0) {
@@ -41,7 +42,7 @@ export function BudgetChart({ data }: Props) {
           <XAxis dataKey="name" />
           <YAxis />
 
-          <Tooltip formatter={(value: number) => formatCurrency(value)} />
+          <Tooltip formatter={currencyTooltip} />
 
           <Legend />
 

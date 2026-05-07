@@ -5,11 +5,13 @@ from app.api.v1.endpoints import (
     accounts,
     auth,
     budgets,
+    cards,
     categories,
     dashboard,
     notifications,
     reports,
     transactions,
+    transfers,
     users,
     card,
 )
@@ -28,6 +30,8 @@ api_router.include_router(
 api_router.include_router(
     transactions.router, prefix="/transactions", tags=["transactions"])
 api_router.include_router(card.router, prefix="/card", tags=["card"])
+api_router.include_router(transfers.router, prefix="/transfers", tags=["transfers"])
+api_router.include_router(cards.router, prefix="/cards", tags=["cards"])
 
 # 🔹 Budget & Reports
 api_router.include_router(budgets.router, prefix="/budgets", tags=["budgets"])
