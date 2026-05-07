@@ -27,12 +27,18 @@ export type RegisterPayload = LoginPayload & {
 export type Account = {
   id: string;
   name: string;
-  type: "cash" | "bank" | "debit_card" | "credit_card" | "mobile_banking";
+  type: "cash" | "bank" | "card";
+  balance: string;
   opening_balance: string;
-  current_balance: string;
   currency: string;
   notes?: string | null;
   is_active: boolean;
+  account_subtype?: string | null;
+  institution_name?: string | null;
+  color?: string | null;
+  icon?: string | null;
+  archived: boolean;
+  card_details?: CreditCardDetails | null;
 };
 
 export type AccountType = Account["type"];
@@ -44,6 +50,12 @@ export type AccountCreatePayload = {
   currency: string;
   notes?: string | null;
   is_active: boolean;
+  account_subtype?: string | null;
+  institution_name?: string | null;
+  color?: string | null;
+  icon?: string | null;
+  archived?: boolean;
+  card_details?: CreditCardDetailsPayload | null;
 };
 
 export type AccountUpdatePayload = {
@@ -52,6 +64,58 @@ export type AccountUpdatePayload = {
   currency?: string;
   notes?: string | null;
   is_active?: boolean;
+  account_subtype?: string | null;
+  institution_name?: string | null;
+  color?: string | null;
+  icon?: string | null;
+  archived?: boolean;
+  card_details?: CreditCardDetailsPayload | null;
+};
+
+export type CreditCardDetails = {
+  account_id: string;
+  credit_limit: string;
+  available_credit: string;
+  statement_day?: number | null;
+  due_day?: number | null;
+  minimum_payment_percent: string;
+  annual_fee: string;
+  interest_rate: string;
+  auto_pay_enabled: boolean;
+};
+
+export type CreditCardDetailsPayload = {
+  credit_limit: number;
+  statement_day?: number | null;
+  due_day?: number | null;
+  minimum_payment_percent?: number;
+  annual_fee?: number;
+  interest_rate?: number;
+  auto_pay_enabled?: boolean;
+};
+
+export type AccountSummary = {
+  total_assets: string;
+  liabilities: string;
+  net_worth: string;
+  card_debt: string;
+  cash_balance: string;
+  credit_used: string;
+};
+
+export type AccountAnalytics = {
+  distribution: { type: AccountType; total: string; count: number }[];
+  debt_vs_assets: { label: string; amount: string }[];
+  balance_trend: { date: string; balance: string }[];
+  net_worth_trend: { date: string; net_worth: string }[];
+};
+
+export type TransferPayload = {
+  from_account_id: string;
+  to_account_id: string;
+  amount: number;
+  fee: number;
+  notes?: string | null;
 };
 
 export type Category = {
@@ -70,6 +134,7 @@ export type CategoryType = Category["type"];
 export type CategoryCreatePayload = {
   name: string;
   type: CategoryType;
+  parent_id?: string | null;
   color?: string | null;
   icon?: string | null;
 };
@@ -81,14 +146,26 @@ export type Transaction = {
   account_id: string;
   category_id?: string | null;
   transfer_account_id?: string | null;
-  txn_type: "expense" | "income" | "transfer";
+  type: "expense" | "income" | "transfer";
+  txn_type?: "expense" | "income" | "transfer";
+  payment_method?: string | null;
   amount: string;
   txn_date: string;
+  transaction_date?: string | null;
   description?: string | null;
+  merchant_name?: string | null;
   tags: string[];
+  location?: string | null;
+  attachment_url?: string | null;
+  recurring_rule?: string | null;
+  parent_transaction_id?: string | null;
+  is_split?: boolean;
+  is_recurring?: boolean;
+  transaction_status?: string;
+  reference_number?: string | null;
 };
 
-export type TransactionType = Transaction["txn_type"];
+export type TransactionType = Transaction["type"];
 
 export type TransactionCreatePayload = {
   account_id: string;
@@ -96,13 +173,21 @@ export type TransactionCreatePayload = {
   category_id?: string | null;
 
   type: "expense" | "income" | "transfer";
-  payment_method?: "cash" | "bank" | "card";
+  payment_method?: string | null;
 
   amount: number;
   txn_date?: string;
 
   is_emergency?: boolean;
-  description?: string;
+  description?: string | null;
+  merchant_name?: string | null;
+  tags?: string[];
+  location?: string | null;
+  attachment_url?: string | null;
+  recurring_rule?: "daily" | "weekly" | "monthly" | "yearly" | null;
+  is_recurring?: boolean;
+  transaction_status?: "posted" | "pending" | "void";
+  reference_number?: string | null;
 };
 
 export type TransactionUpdatePayload = Partial<TransactionCreatePayload>;
@@ -110,21 +195,46 @@ export type TransactionUpdatePayload = Partial<TransactionCreatePayload>;
 export type TransactionFilters = {
   start_date?: string;
   end_date?: string;
+  from_date?: string;
+  to_date?: string;
+  search?: string;
+  type?: TransactionType;
   account_id?: string;
   category_id?: string;
+  merchant?: string;
+  tags?: string;
+  recurring_only?: boolean;
+  transfer_only?: boolean;
+  min_amount?: number;
+  max_amount?: number;
   limit?: number;
   offset?: number;
 };
 
+export type TransactionAnalytics = {
+  total_income: string;
+  total_expense: string;
+  net_cashflow: string;
+  average_daily_spending: string;
+  top_categories: { label: string; amount: string }[];
+  top_merchants: { label: string; amount: string }[];
+  income_vs_expense: { label: string; amount: string }[];
+  spending_trend: { date: string; type: TransactionType; amount: string }[];
+  expense_heatmap: { date: string; type: TransactionType; amount: string }[];
+  account_breakdown: { label: string; amount: string }[];
+};
+
 export type MonthlySummary = {
   month: number;
-  year: number;
+  year?: number;
   total_income: string;
   total_expense: string;
   savings: string;
 };
 
 export type ReportRow = {
+  id?: string;
+  parent_id?: string;
   label: string;
   amount: string;
 };
@@ -156,8 +266,8 @@ export type Budget = {
 
 export type BudgetCreatePayload = {
   category_id: string;
-  month: number;
-  year: number;
+  month: number | string;
+  year?: number;
   amount: number;
 };
 

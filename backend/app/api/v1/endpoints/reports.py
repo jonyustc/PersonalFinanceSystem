@@ -16,8 +16,13 @@ async def monthly_expenses(month: int = Query(ge=1, le=12), year: int = Query(ge
 
 
 @router.get("/categories", response_model=list[ReportRow])
-async def category_report(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    return await ReportService(db).category_report(current_user.id)
+async def category_report(
+    from_date: str | None = Query(None),
+    to_date: str | None = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await ReportService(db).category_report(current_user.id, from_date, to_date)
 
 
 @router.get("/income", response_model=list[ReportRow])

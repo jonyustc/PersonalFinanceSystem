@@ -9,8 +9,9 @@ import {
   CartesianGrid,
 } from "recharts";
 import { formatCurrency } from "@/lib/utils";
+const currencyTooltip = (value: unknown) => formatCurrency(Number(value ?? 0));
 
-export function NetWorthLine({ data }: any[]) {
+export function NetWorthLine({ data }: { data: any[] }) {
   if (!data?.length) {
     return (
       <div className="bg-white p-4 rounded-2xl border border-gray-100">
@@ -19,7 +20,7 @@ export function NetWorthLine({ data }: any[]) {
     );
   }
 
-  const chartData = data.map((t) => ({
+  const chartData = data.map((t: any) => ({
     name: t.period, // e.g., "2026-05"
     value: Number(t.amount || 0),
   }));
@@ -32,7 +33,7 @@ export function NetWorthLine({ data }: any[]) {
         <LineChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
           <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-          <Tooltip formatter={(v: number) => formatCurrency(v)} />
+          <Tooltip formatter={currencyTooltip} />
           <Line dataKey="value" stroke="#3b82f6" strokeWidth={2} />
         </LineChart>
       </ResponsiveContainer>

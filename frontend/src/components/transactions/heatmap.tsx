@@ -2,7 +2,7 @@
 
 import { formatCurrency } from "@/lib/utils";
 
-export function Heatmap({ data }: any[]) {
+export function Heatmap({ data }: { data: any[] }) {
   if (!data?.length) return null;
 
   return (
@@ -10,7 +10,7 @@ export function Heatmap({ data }: any[]) {
       <h3 className="mb-3 font-semibold">Spending Heatmap</h3>
 
       <div className="grid grid-cols-7 gap-2">
-        {data.map((d, i) => (
+        {data.map((d: any, i: number) => (
           <div
             key={i}
             className="h-12 flex items-center justify-center text-xs rounded"

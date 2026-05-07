@@ -90,10 +90,16 @@ export default function CategoriesPage() {
 
   /* ================= CHART ================= */
 
-  const pieData = spending.map((c) => ({
-    label: getName(c.label),
-    value: Number(c.amount),
-  }));
+  const pieData = spending.map((c) => {
+    const label =
+      typeof c.label === "string" && c.label
+        ? c.label
+        : getName(String(c.id || ""));
+    return {
+      label,
+      value: Number(c.amount),
+    };
+  });
 
   const total = pieData.reduce((s, c) => s + c.value, 0);
 

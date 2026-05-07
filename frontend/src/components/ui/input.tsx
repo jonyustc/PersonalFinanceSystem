@@ -3,7 +3,7 @@ import type { InputHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 type InputProps = InputHTMLAttributes<HTMLInputElement> & {
-  label: string;
+  label?: string;
   error?: string;
 };
 
@@ -12,7 +12,7 @@ export function Input({ className, label, error, id, ...props }: InputProps) {
 
   return (
     <label className="block" htmlFor={inputId}>
-      <span className="mb-2 block text-sm font-medium text-ink">{label}</span>
+      {label ? <span className="mb-2 block text-sm font-medium text-ink">{label}</span> : null}
       <input
         id={inputId}
         className={cn(

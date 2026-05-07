@@ -9,8 +9,9 @@ import {
   CartesianGrid,
 } from "recharts";
 import { formatCurrency } from "@/lib/utils";
+const currencyTooltip = (value: unknown) => formatCurrency(Number(value ?? 0));
 
-export function DailyTrend({ data }: any[]) {
+export function DailyTrend({ data }: { data: any[] }) {
   if (!data?.length) {
     return <p className="text-sm text-gray-500">No data</p>;
   }
@@ -23,7 +24,7 @@ export function DailyTrend({ data }: any[]) {
         <LineChart data={data}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
           <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-          <Tooltip formatter={(v: number) => formatCurrency(v)} />
+          <Tooltip formatter={currencyTooltip} />
           <Line dataKey="amount" stroke="#ef4444" strokeWidth={2} />
         </LineChart>
       </ResponsiveContainer>

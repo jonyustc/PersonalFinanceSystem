@@ -87,3 +87,13 @@ class User(UUIDMixin, TimestampMixin, Base):
 
     def __repr__(self) -> str:
         return f"<User {self.email}>"
+
+
+# Ensure string-based relationships are registered before SQLAlchemy configures
+# mappers in API paths that import User without importing every feature module.
+from app.models.account import Account  # noqa: E402,F401
+from app.models.budget import Budget  # noqa: E402,F401
+from app.models.category import Category  # noqa: E402,F401
+from app.models.monthly_income import MonthlyIncome  # noqa: E402,F401
+from app.models.notification import Notification  # noqa: E402,F401
+from app.models.transaction import Transaction  # noqa: E402,F401

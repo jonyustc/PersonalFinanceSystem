@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { QueryProvider } from "@/components/providers/query-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,7 +17,9 @@ export default function RootLayout({
     <html lang="en">
       <body className="min-h-screen bg-gray-50 text-gray-900 antialiased">
         {/* Global wrapper only */}
-        <div className="min-h-screen">{children}</div>
+        <QueryProvider>
+          <div className="min-h-screen">{children}</div>
+        </QueryProvider>
       </body>
     </html>
   );

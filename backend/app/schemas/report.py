@@ -4,6 +4,8 @@ from pydantic import BaseModel
 
 
 class ReportRow(BaseModel):
+    id: str | None = None
+    parent_id: str | None = None
     label: str
     amount: Decimal
 

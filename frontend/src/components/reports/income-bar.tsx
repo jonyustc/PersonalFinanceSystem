@@ -9,6 +9,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { formatCurrency } from "@/lib/utils";
+const currencyTooltip = (value: unknown) => formatCurrency(Number(value ?? 0));
 
 const months = [
   "Jan",
@@ -36,7 +37,7 @@ function mapIncome(data: any[]) {
   });
 }
 
-export function IncomeBar({ data }: any[]) {
+export function IncomeBar({ data }: { data: any[] }) {
   if (!data?.length) {
     return (
       <div className="bg-white p-4 rounded-2xl border border-gray-100">
@@ -55,7 +56,7 @@ export function IncomeBar({ data }: any[]) {
         <BarChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
           <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-          <Tooltip formatter={(v: number) => formatCurrency(v)} />
+          <Tooltip formatter={currencyTooltip} />
           <Bar dataKey="amount" fill="#22c55e" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>

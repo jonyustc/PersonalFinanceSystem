@@ -32,3 +32,9 @@ select,
 textarea {
   font: inherit;
 }
+
+@layer components {
+  .input {
+    @apply w-full rounded-md border border-line bg-white px-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-600 focus:ring-4 focus:ring-brand-100;
+  }
+}

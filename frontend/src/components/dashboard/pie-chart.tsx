@@ -1,10 +1,11 @@
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 import { formatCurrency } from "@/lib/utils";
+const currencyTooltip = (value: unknown) => formatCurrency(Number(value ?? 0));
 
 const COLORS = ["#6366f1", "#22c55e", "#f97316", "#ef4444", "#06b6d4"];
 
-export function CategoryPie({ data }: any[]) {
+export function CategoryPie({ data }: { data: any[] }) {
   if (!data || data.length === 0) {
     return (
       <div className="bg-white p-4 rounded-2xl border border-gray-100">
@@ -25,7 +26,7 @@ export function CategoryPie({ data }: any[]) {
             ))}
           </Pie>
 
-          <Tooltip formatter={(v: number) => formatCurrency(v)} />
+          <Tooltip formatter={currencyTooltip} />
         </PieChart>
       </ResponsiveContainer>
     </div>

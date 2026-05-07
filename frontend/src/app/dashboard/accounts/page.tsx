@@ -1,54 +1,72 @@
 "use client";
 
-import { Edit3, Plus, RefreshCw, Trash2 } from "lucide-react";
+import {
+  ArrowRightLeft,
+  CreditCard,
+  Edit3,
+  Landmark,
+  Plus,
+  RefreshCw,
+  Trash2,
+  Wallet,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { AccountAnalyticsCharts } from "@/components/accounts/account-analytics";
 import { AccountForm } from "@/components/accounts/account-form";
+import { TransferModal } from "@/components/accounts/transfer-modal";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import {
   createAccount,
+  createTransfer,
   deleteAccount,
+  fetchAccountAnalytics,
+  fetchAccountSummary,
   fetchAccounts,
   updateAccount,
 } from "@/services/finance-service";
 
 import type {
   Account,
+  AccountAnalytics,
   AccountCreatePayload,
+  AccountSummary,
   AccountUpdatePayload,
+  TransferPayload,
 } from "@/types/api";
 
-// ✅ FIXED TYPES (backend aligned)
-const typeLabels: Record<Account["type"], string> = {
-  cash: "Cash",
-  bank: "Bank",
-  card: "Card",
-};
+const groups = [
+  { key: "cash", label: "Cash", icon: Wallet },
+  { key: "bank", label: "Bank", icon: Landmark },
+  { key: "card", label: "Cards", icon: CreditCard },
+  { key: "inactive", label: "Inactive", icon: Wallet },
+] as const;
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [summary, setSummary] = useState<AccountSummary | null>(null);
+  const [analytics, setAnalytics] = useState<AccountAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const [modalOpen, setModalOpen] = useState(false);
+  const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  // ✅ FIX: balance
-  const totalBalance = useMemo(
-    () => accounts.reduce((total, acc) => total + Number(acc.balance || 0), 0),
-    [accounts],
-  );
 
   const loadAccounts = useCallback(async () => {
     setLoading(true);
     setError(null);
-
     try {
-      const data = await fetchAccounts();
-      setAccounts(data);
+      const [accountData, summaryData, analyticsData] = await Promise.all([
+        fetchAccounts(),
+        fetchAccountSummary(),
+        fetchAccountAnalytics(),
+      ]);
+      setAccounts(accountData);
+      setSummary(summaryData);
+      setAnalytics(analyticsData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load accounts");
     } finally {
@@ -60,48 +78,62 @@ export default function AccountsPage() {
     loadAccounts();
   }, [loadAccounts]);
 
+  const groupedAccounts = useMemo(() => {
+    return {
+      cash: accounts.filter((account) => account.type === "cash" && account.is_active && !account.archived),
+      bank: accounts.filter((account) => account.type === "bank" && account.is_active && !account.archived),
+      card: accounts.filter((account) => account.type === "card" && account.is_active && !account.archived),
+      inactive: accounts.filter((account) => !account.is_active || account.archived),
+    };
+  }, [accounts]);
+
   function openCreateModal() {
     setEditingAccount(null);
-    setModalOpen(true);
+    setAccountModalOpen(true);
   }
 
   function openEditModal(account: Account) {
     setEditingAccount(account);
-    setModalOpen(true);
+    setAccountModalOpen(true);
   }
 
-  function closeModal() {
-    setModalOpen(false);
+  function closeAccountModal() {
+    setAccountModalOpen(false);
     setEditingAccount(null);
   }
 
-  async function handleSave(
-    payload: AccountCreatePayload | AccountUpdatePayload,
-  ) {
+  async function handleSave(payload: AccountCreatePayload | AccountUpdatePayload) {
     try {
       if (editingAccount) {
         await updateAccount(editingAccount.id, payload as AccountUpdatePayload);
       } else {
         await createAccount(payload as AccountCreatePayload);
       }
-
-      closeModal();
+      closeAccountModal();
       await loadAccounts();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
     }
   }
 
+  async function handleTransfer(payload: TransferPayload) {
+    try {
+      await createTransfer(payload);
+      setTransferModalOpen(false);
+      await loadAccounts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Transfer failed");
+    }
+  }
+
   async function handleDelete(account: Account) {
-    if (!confirm(`Delete "${account.name}"?`)) return;
-
+    if (!confirm(`Archive "${account.name}"?`)) return;
     setDeletingId(account.id);
-
     try {
       await deleteAccount(account.id);
       await loadAccounts();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete failed");
+      setError(err instanceof Error ? err.message : "Archive failed");
     } finally {
       setDeletingId(null);
     }
@@ -109,96 +141,188 @@ export default function AccountsPage() {
 
   return (
     <div className="space-y-6">
-      {/* HEADER */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Accounts</h1>
-          <p className="text-sm text-gray-500">Manage your accounts</p>
+          <h1 className="text-2xl font-semibold text-ink">Accounts</h1>
+          <p className="text-sm text-muted">Balances, credit exposure, transfers, and net worth in one place.</p>
         </div>
-
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button onClick={loadAccounts} variant="secondary">
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="h-4 w-4" />
+            Refresh
           </Button>
-
+          <Button onClick={() => setTransferModalOpen(true)} variant="secondary">
+            <ArrowRightLeft className="h-4 w-4" />
+            Transfer
+          </Button>
           <Button onClick={openCreateModal}>
-            <Plus className="w-4 h-4" />
-            Add
+            <Plus className="h-4 w-4" />
+            Add Account
           </Button>
         </div>
       </div>
 
-      {/* STATS */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="card">
-          <p>Total</p>
-          <h2>{accounts.length}</h2>
-        </div>
+      {error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
-        <div className="card">
-          <p>Active</p>
-          <h2>{accounts.filter((a) => a.is_active).length}</h2>
-        </div>
-
-        <div className="card">
-          <p>Balance</p>
-          <h2>{formatCurrency(totalBalance)}</h2>
-        </div>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard label="Net worth" value={summary?.net_worth} tone="brand" />
+        <SummaryCard label="Total assets" value={summary?.total_assets} tone="blue" />
+        <SummaryCard label="Total liabilities" value={summary?.liabilities} tone="amber" />
+        <SummaryCard label="Credit used" value={summary?.credit_used} suffix="%" tone="violet" />
       </div>
 
-      {/* ERROR */}
-      {error && <div className="text-red-500 text-sm">{error}</div>}
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+        <div className="space-y-5">
+          {loading ? <p className="text-sm text-muted">Loading accounts...</p> : null}
+          {!loading && accounts.length === 0 ? <p className="text-sm text-muted">No accounts found.</p> : null}
 
-      {/* LIST */}
-      <div className="space-y-3">
-        {loading && <p>Loading...</p>}
+          {groups.map((group) => {
+            const items = groupedAccounts[group.key];
+            if (items.length === 0) return null;
+            const Icon = group.icon;
+            return (
+              <section key={group.key} className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+                    <Icon className="h-4 w-4 text-brand-600" />
+                    {group.label}
+                  </div>
+                  <span className="text-xs font-medium text-muted">{items.length} accounts</span>
+                </div>
+                <div className="grid gap-3">
+                  {items.map((account) => (
+                    <AccountRow
+                      key={account.id}
+                      account={account}
+                      deleting={deletingId === account.id}
+                      onEdit={() => openEditModal(account)}
+                      onDelete={() => handleDelete(account)}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+        </div>
 
-        {!loading && accounts.length === 0 && <p>No accounts found</p>}
-
-        {accounts.map((acc) => (
-          <div
-            key={acc.id}
-            className="border p-4 rounded flex justify-between items-center"
-          >
-            <div>
-              <p className="font-medium">{acc.name}</p>
-              <p className="text-sm text-gray-500">
-                {typeLabels[acc.type]} • {acc.currency}
-              </p>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <span className="font-semibold">
-                {formatCurrency(acc.balance, acc.currency)}
-              </span>
-
-              <button onClick={() => openEditModal(acc)}>
-                <Edit3 className="w-4 h-4" />
-              </button>
-
-              <button
-                disabled={deletingId === acc.id}
-                onClick={() => handleDelete(acc)}
-              >
-                <Trash2 className="w-4 h-4 text-red-500" />
-              </button>
-            </div>
-          </div>
-        ))}
+        <AccountAnalyticsCharts analytics={analytics} />
       </div>
 
-      {/* MODAL */}
       <Modal
-        open={modalOpen}
-        onClose={closeModal}
+        open={accountModalOpen}
+        onClose={closeAccountModal}
         title={editingAccount ? "Edit Account" : "Add Account"}
       >
-        <AccountForm
-          account={editingAccount}
-          onSubmit={handleSave}
-          onCancel={closeModal}
-        />
+        <AccountForm account={editingAccount} onSubmit={handleSave} onCancel={closeAccountModal} />
+      </Modal>
+
+      <Modal open={transferModalOpen} onClose={() => setTransferModalOpen(false)} title="Transfer Money">
+        <TransferModal accounts={accounts} onSubmit={handleTransfer} onCancel={() => setTransferModalOpen(false)} />
       </Modal>
     </div>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+  suffix,
+  tone,
+}: {
+  label: string;
+  value?: string;
+  suffix?: string;
+  tone: "brand" | "blue" | "amber" | "violet";
+}) {
+  const tones = {
+    brand: "from-brand-600 to-teal-500",
+    blue: "from-blue-600 to-cyan-500",
+    amber: "from-amber-600 to-orange-500",
+    violet: "from-violet-600 to-fuchsia-500",
+  };
+
+  return (
+    <section className={cn("rounded-md bg-gradient-to-br p-4 text-white shadow-soft", tones[tone])}>
+      <p className="text-sm font-medium text-white/80">{label}</p>
+      <p className="mt-3 text-2xl font-semibold">{suffix ? `${Number(value ?? 0).toFixed(1)}${suffix}` : formatCurrency(value ?? 0)}</p>
+    </section>
+  );
+}
+
+function AccountRow({
+  account,
+  deleting,
+  onEdit,
+  onDelete,
+}: {
+  account: Account;
+  deleting: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const cardDetails = account.card_details;
+  const utilization =
+    account.type === "card" && cardDetails && Number(cardDetails.credit_limit) > 0
+      ? (Math.abs(Math.min(Number(account.balance), 0)) / Number(cardDetails.credit_limit)) * 100
+      : 0;
+
+  return (
+    <article className="rounded-md border border-line bg-white p-4 shadow-soft">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 gap-3">
+          <div
+            className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-white"
+            style={{ backgroundColor: account.color ?? "#137f65" }}
+          >
+            {account.type === "card" ? <CreditCard className="h-5 w-5" /> : account.type === "bank" ? <Landmark className="h-5 w-5" /> : <Wallet className="h-5 w-5" />}
+          </div>
+          <div className="min-w-0">
+            <h3 className="truncate font-semibold text-ink">{account.name}</h3>
+            <p className="text-sm text-muted">
+              {[account.institution_name, account.account_subtype, account.currency].filter(Boolean).join(" - ")}
+            </p>
+            {account.type === "card" && cardDetails ? (
+              <div className="mt-3 w-full max-w-sm">
+                <div className="mb-1 flex justify-between text-xs text-muted">
+                  <span>{formatCurrency(cardDetails.available_credit, account.currency)} available</span>
+                  <span>{utilization.toFixed(1)}% used</span>
+                </div>
+                <div className="h-2 rounded-full bg-slate-100">
+                  <div className="h-2 rounded-full bg-amber-500" style={{ width: `${Math.min(utilization, 100)}%` }} />
+                </div>
+                <p className="mt-2 text-xs text-muted">
+                  Limit {formatCurrency(cardDetails.credit_limit, account.currency)}
+                  {cardDetails.statement_day ? ` - Statement ${cardDetails.statement_day}` : ""}
+                  {cardDetails.due_day ? ` - Due ${cardDetails.due_day}` : ""}
+                </p>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 sm:justify-end">
+          <div className="text-right">
+            <p className={cn("text-lg font-semibold", Number(account.balance) < 0 ? "text-red-600" : "text-ink")}>
+              {formatCurrency(account.balance, account.currency)}
+            </p>
+            <p className="text-xs text-muted">Opening {formatCurrency(account.opening_balance, account.currency)}</p>
+          </div>
+          <div className="flex gap-1">
+            <button className="rounded-md p-2 text-muted hover:bg-surface hover:text-ink" onClick={onEdit} type="button" title="Edit account">
+              <Edit3 className="h-4 w-4" />
+            </button>
+            <button
+              className="rounded-md p-2 text-red-500 hover:bg-red-50"
+              disabled={deleting}
+              onClick={onDelete}
+              type="button"
+              title="Archive account"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </article>
   );
 }
