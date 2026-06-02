@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 # ================= TYPES =================
 
 TransactionType = Literal["expense", "income", "transfer"]
+TransactionKind = Literal["expense", "income", "transfer", "CARD_PAYMENT"]
 PaymentMethod = Literal["cash", "bank", "card"]
 TransactionStatus = Literal["posted", "pending", "void"]
 RecurringRule = Literal["daily", "weekly", "monthly", "yearly"]
@@ -22,6 +23,7 @@ class TransactionCreate(BaseModel):
     category_id: Optional[UUID] = None
 
     type: TransactionType
+    transaction_type: Optional[TransactionKind] = None
     payment_method: Optional[PaymentMethod] = None
 
     amount: Decimal = Field(gt=0)
@@ -47,6 +49,7 @@ class TransactionUpdate(BaseModel):
     category_id: Optional[UUID] = None
 
     type: Optional[TransactionType] = None
+    transaction_type: Optional[TransactionKind] = None
     payment_method: Optional[PaymentMethod] = None
 
     amount: Optional[Decimal] = Field(default=None, gt=0)

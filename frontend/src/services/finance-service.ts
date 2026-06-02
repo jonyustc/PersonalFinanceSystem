@@ -14,6 +14,7 @@ import type {
   DashboardResponse,
   MonthlyExpenseReport,
   ReportRow,
+  SimpleDashboardResponse,
   Transaction,
   TransactionAnalytics,
   TransactionCreatePayload,
@@ -48,6 +49,9 @@ export const fetchDashboard = (month?: string) =>
 
 export const fetchDashboardFull = (month: string) =>
   apiRequest<DashboardResponse>(`/dashboard/full-summary?month=${month}`);
+
+export const fetchSimpleDashboard = (month: string) =>
+  apiRequest<SimpleDashboardResponse>(`/dashboard/simple?month=${month}`);
 
 /* =========================
    💳 CARD DASHBOARD (FIXED)

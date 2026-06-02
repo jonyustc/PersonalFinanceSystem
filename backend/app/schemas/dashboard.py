@@ -79,3 +79,42 @@ class DashboardResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SimpleDashboardAccount(BaseModel):
+    id: str
+    name: str
+    type: str
+    balance: Decimal
+    currency: str
+
+
+class SimpleDashboardActiveBalance(BaseModel):
+    total_balance: Decimal
+    accounts: list[SimpleDashboardAccount]
+
+
+class SimpleDashboardCard(BaseModel):
+    id: str
+    name: str
+    credit_limit: Decimal
+    current_outstanding: Decimal
+    available_limit: Decimal
+    used_percentage: Decimal
+    monthly_spending: Decimal
+    monthly_payment: Decimal
+    billing_cycle_day: int | None
+    payment_due_day: int | None
+
+
+class SimpleDashboardCardSummary(BaseModel):
+    total_card_spending: Decimal
+    total_card_payment: Decimal
+    total_card_outstanding: Decimal
+    cards: list[SimpleDashboardCard]
+
+
+class SimpleDashboardResponse(BaseModel):
+    month: str
+    active_accounts_balance: SimpleDashboardActiveBalance
+    card_summary: SimpleDashboardCardSummary

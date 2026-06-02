@@ -12,7 +12,6 @@ import {
   ArrowUpRight,
   CalendarDays,
   CreditCard,
-  Filter,
   Plus,
   ReceiptText,
   Search,
@@ -32,7 +31,6 @@ import {
 
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { Button } from "@/components/ui/button";
-import { Modal } from "@/components/ui/modal";
 import { cn, formatCurrency } from "@/lib/utils";
 import {
   createTransaction,
@@ -51,22 +49,58 @@ import type {
 } from "@/types/api";
 
 const today = new Date();
-const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
-  .toISOString()
-  .slice(0, 10);
-const todayIso = today.toISOString().slice(0, 10);
+
+function toLocalDateInputValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+const monthStart = toLocalDateInputValue(new Date(today.getFullYear(), today.getMonth(), 1));
+const todayIso = toLocalDateInputValue(today);
+
+function isoDateWithOffset(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return toLocalDateInputValue(date);
+}
+
+function datePresetFromFilters(filters: TransactionFilters) {
+  if (!filters.from_date && !filters.to_date) return "all";
+  if (filters.from_date === todayIso && filters.to_date === todayIso) return "today";
+  const yesterday = isoDateWithOffset(-1);
+  if (filters.from_date === yesterday && filters.to_date === yesterday) return "yesterday";
+  if (filters.from_date === isoDateWithOffset(-6) && filters.to_date === todayIso) return "last_7";
+  return "this_month";
+}
+
+function applyDatePreset(filters: TransactionFilters, preset: string): TransactionFilters {
+  if (preset === "all") {
+    return { ...filters, from_date: undefined, to_date: undefined, offset: 0 };
+  }
+  if (preset === "today") {
+    return { ...filters, from_date: todayIso, to_date: todayIso, offset: 0 };
+  }
+  if (preset === "yesterday") {
+    const yesterday = isoDateWithOffset(-1);
+    return { ...filters, from_date: yesterday, to_date: yesterday, offset: 0 };
+  }
+  if (preset === "last_7") {
+    return { ...filters, from_date: isoDateWithOffset(-6), to_date: todayIso, offset: 0 };
+  }
+  return { ...filters, from_date: monthStart, to_date: todayIso, offset: 0 };
+}
 
 export function TransactionExperience() {
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<TransactionFilters>({
-    from_date: monthStart,
+    from_date: todayIso,
     to_date: todayIso,
     limit: 30,
   });
   const [searchDraft, setSearchDraft] = useState("");
-  const [modalOpen, setModalOpen] = useState(false);
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
 
   useEffect(() => {
@@ -104,23 +138,15 @@ export function TransactionExperience() {
 
   const accounts = accountsQuery.data ?? [];
   const categories = categoriesQuery.data ?? [];
+  const activeAccounts = useMemo(
+    () => accounts.filter((account) => account.is_active && !account.archived),
+    [accounts],
+  );
   const transactions =
     transactionQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const analytics = analyticsQuery.data;
   const grouped = useMemo(
     () => groupTransactions(transactions),
-    [transactions],
-  );
-
-  const recentMerchants = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          transactions
-            .map((transaction) => transaction.merchant_name)
-            .filter(Boolean) as string[],
-        ),
-      ).slice(0, 5),
     [transactions],
   );
 
@@ -137,57 +163,12 @@ export function TransactionExperience() {
   async function save(payload: any) {
     if (editing) await updateTransaction(editing.id, payload);
     else await createTransaction(payload);
-    setModalOpen(false);
+    setFormOpen(false);
     setEditing(null);
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["transactions"] }),
       queryClient.invalidateQueries({ queryKey: ["accounts"] }),
     ]);
-  }
-
-  async function quickSave(payload: any) {
-    const tempTransaction = {
-      ...payload,
-      id: `temp-${Date.now()}`,
-      amount: String(payload.amount),
-      txn_date: payload.txn_date || new Date().toISOString(),
-      merchant_name: payload.merchant_name || null,
-      tags: [],
-    };
-
-    const previous = queryClient.getQueryData<any>(["transactions", filters]);
-    queryClient.setQueryData(["transactions", filters], (current: any) => {
-      if (!current || !current.pages) return current;
-      return {
-        ...current,
-        pages: current.pages.map((page: any, index: number) =>
-          index === 0
-            ? { ...page, items: [tempTransaction, ...page.items] }
-            : page,
-        ),
-      };
-    });
-
-    try {
-      await createTransaction(payload);
-      setSheetOpen(false);
-    } catch (error) {
-      if (previous)
-        queryClient.setQueryData(["transactions", filters], previous);
-      throw error;
-    } finally {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["transactions", filters] }),
-        queryClient.invalidateQueries({
-          queryKey: [
-            "transactions",
-            "analytics",
-            filters.from_date,
-            filters.to_date,
-          ],
-        }),
-      ]);
-    }
   }
 
   async function remove(id: string) {
@@ -204,41 +185,78 @@ export function TransactionExperience() {
       />
 
       <section className="sticky top-14 z-20 -mx-4 border-y border-line bg-surface/95 px-4 py-3 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border">
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        <div className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_auto_auto_auto_auto]">
           <SmartSearchBar value={searchDraft} onChange={setSearchDraft} />
-          <button
-            className="inline-flex h-11 shrink-0 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold"
-            onClick={() => setFilterOpen(true)}
+
+          <select
+            className="input h-11 min-w-36 bg-white text-sm"
+            value={datePresetFromFilters(filters)}
+            onChange={(event) => setFilters((current) => applyDatePreset(current, event.target.value))}
           >
-            <Filter className="h-4 w-4" />
-            Filters
-          </button>
-          {(["expense", "income", "transfer"] as const).map((type) => (
-            <button
-              key={type}
-              className={cn(
-                "h-11 shrink-0 rounded-full border px-4 text-sm font-semibold capitalize",
-                filters.type === type
-                  ? "border-brand-600 bg-brand-50 text-brand-700"
-                  : "border-line bg-white text-muted",
-              )}
-              onClick={() =>
-                setFilters((current) => ({
-                  ...current,
-                  type: current.type === type ? undefined : type,
-                }))
-              }
-            >
-              {type}
-            </button>
-          ))}
+            <option value="this_month">This month</option>
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="last_7">Last 7 days</option>
+            <option value="all">All dates</option>
+          </select>
+
+          <select
+            className="input h-11 min-w-32 bg-white text-sm capitalize"
+            value={filters.type ?? ""}
+            onChange={(event) =>
+              setFilters((current) => ({
+                ...current,
+                type: (event.target.value || undefined) as TransactionFilters["type"],
+                offset: 0,
+              }))
+            }
+          >
+            <option value="">All types</option>
+            <option value="expense">Expense</option>
+            <option value="income">Income</option>
+            <option value="transfer">Transfer</option>
+          </select>
+
+          <select
+            className="input h-11 min-w-40 bg-white text-sm"
+            value={filters.account_id ?? ""}
+            onChange={(event) =>
+              setFilters((current) => ({
+                ...current,
+                account_id: event.target.value || undefined,
+                offset: 0,
+              }))
+            }
+          >
+            <option value="">All accounts</option>
+            {activeAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+
           <button
             type="button"
-            onClick={() => setSheetOpen(true)}
-            className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full border border-brand-600 bg-brand-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700"
+            onClick={() => {
+              setSearchDraft("");
+              setFilters({ from_date: todayIso, to_date: todayIso, limit: 30 });
+            }}
+            className="inline-flex h-11 items-center justify-center rounded-md border border-line bg-white px-3 text-sm font-semibold text-muted"
+          >
+            Clear
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(true);
+            }}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-brand-600 bg-brand-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700"
           >
             <Plus className="h-4 w-4" />
-            Add transaction
+            Add
           </button>
         </div>
       </section>
@@ -251,7 +269,7 @@ export function TransactionExperience() {
           loading={transactionQuery.isLoading}
           onEdit={(transaction: Transaction) => {
             setEditing(transaction);
-            setModalOpen(true);
+            setFormOpen(true);
           }}
           onDelete={remove}
         />
@@ -273,40 +291,20 @@ export function TransactionExperience() {
         </div>
       ) : null}
 
-      <QuickAddTransactionFAB onClick={() => setSheetOpen(true)} />
-      <QuickTransactionSheet
-        open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
-        accounts={accounts}
+      <TransactionSidePanel
+        open={formOpen}
+        title={editing ? "Edit transaction" : "Add transaction"}
+        onClose={() => {
+          setFormOpen(false);
+          setEditing(null);
+        }}
+        transaction={editing}
+        accounts={activeAccounts}
         categories={categories}
         selectedDate={filters.to_date ?? todayIso}
-        recentMerchants={recentMerchants}
         quickCategories={quickCategories}
-        onSubmit={quickSave}
+        onSubmit={save}
       />
-      <FilterDrawer
-        open={filterOpen}
-        filters={filters}
-        accounts={accounts}
-        categories={categories}
-        onClose={() => setFilterOpen(false)}
-        onChange={setFilters}
-      />
-
-      <Modal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        title={editing ? "Edit Transaction" : "Quick Add"}
-      >
-        <TransactionForm
-          transaction={editing}
-          accounts={accounts}
-          categories={categories}
-          selectedDate={filters.to_date ?? todayIso}
-          onSubmit={save}
-          onCancel={() => setModalOpen(false)}
-        />
-      </Modal>
     </div>
   );
 }
@@ -641,132 +639,24 @@ function MerchantInsightCard({ analytics }: any) {
   );
 }
 
-function FilterDrawer({
+function TransactionSidePanel({
   open,
-  filters,
-  accounts,
-  categories,
+  title,
   onClose,
-  onChange,
-}: any) {
-  return (
-    <AnimatePresence>
-      {open ? (
-        <motion.div
-          className="fixed inset-0 z-50 bg-ink/35"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-        >
-          <motion.aside
-            className="absolute bottom-0 right-0 max-h-[86vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 shadow-soft md:inset-y-0 md:max-h-none md:w-[420px] md:rounded-l-lg md:rounded-tr-none"
-            initial={{ y: 80 }}
-            animate={{ y: 0 }}
-            exit={{ y: 80 }}
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold">Smart Filters</h2>
-              <button onClick={onClose}>
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="mt-5 grid gap-4">
-              <FilterInput
-                label="From"
-                type="date"
-                value={filters.from_date ?? ""}
-                onChange={(value: string) =>
-                  onChange({ ...filters, from_date: value || undefined })
-                }
-              />
-              <FilterInput
-                label="To"
-                type="date"
-                value={filters.to_date ?? ""}
-                onChange={(value: string) =>
-                  onChange({ ...filters, to_date: value || undefined })
-                }
-              />
-              <FilterInput
-                label="Merchant"
-                value={filters.merchant ?? ""}
-                onChange={(value: string) =>
-                  onChange({ ...filters, merchant: value || undefined })
-                }
-              />
-              <select
-                className="input h-11"
-                value={filters.account_id ?? ""}
-                onChange={(e) =>
-                  onChange({
-                    ...filters,
-                    account_id: e.target.value || undefined,
-                  })
-                }
-              >
-                <option value="">All accounts</option>
-                {accounts.map((a: Account) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="input h-11"
-                value={filters.category_id ?? ""}
-                onChange={(e) =>
-                  onChange({
-                    ...filters,
-                    category_id: e.target.value || undefined,
-                  })
-                }
-              >
-                <option value="">All categories</option>
-                {categories.map((c: Category) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              <Button onClick={onClose}>Apply filters</Button>
-            </div>
-          </motion.aside>
-        </motion.div>
-      ) : null}
-    </AnimatePresence>
-  );
-}
-
-function FilterInput({ label, value, type = "text", onChange }: any) {
-  return (
-    <label>
-      <span className="mb-2 block text-sm font-medium text-ink">{label}</span>
-      <input
-        className="input h-11"
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    </label>
-  );
-}
-
-function QuickTransactionSheet({
-  open,
-  onClose,
+  transaction,
   accounts,
   categories,
   selectedDate,
-  recentMerchants,
   quickCategories,
   onSubmit,
 }: {
   open: boolean;
+  title: string;
   onClose: () => void;
+  transaction?: Transaction | null;
   accounts: Account[];
   categories: Category[];
   selectedDate: string;
-  recentMerchants: string[];
   quickCategories: Category[];
   onSubmit: (payload: any) => Promise<void>;
 }) {
@@ -774,25 +664,22 @@ function QuickTransactionSheet({
     <AnimatePresence>
       {open ? (
         <motion.div
-          className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/40 px-4 py-4 backdrop-blur-sm"
+          className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-sm"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
           <motion.section
-            className="w-full max-w-xl overflow-hidden rounded-t-3xl bg-white shadow-2xl ring-1 ring-slate-200 sm:rounded-3xl"
-            initial={{ y: 300 }}
-            animate={{ y: 0 }}
-            exit={{ y: 300 }}
-            transition={{ type: "spring", stiffness: 320, damping: 28 }}
+            className="absolute bottom-0 right-0 top-0 flex w-full flex-col bg-white shadow-2xl ring-1 ring-slate-200 sm:max-w-xl"
+            initial={{ x: 520 }}
+            animate={{ x: 0 }}
+            exit={{ x: 520 }}
+            transition={{ type: "spring", stiffness: 320, damping: 30 }}
           >
-            <div className="flex items-center justify-between border-b border-line px-5 py-4">
+            <div className="flex items-center justify-between border-b border-line px-5 py-3">
               <div>
                 <p className="text-sm font-semibold text-slate-900">
-                  Quick entry
-                </p>
-                <p className="text-sm text-slate-500">
-                  Add a transaction in seconds with amount-first entry.
+                  {title}
                 </p>
               </div>
               <button
@@ -804,12 +691,12 @@ function QuickTransactionSheet({
               </button>
             </div>
 
-            <div className="space-y-4 px-5 pb-5 pt-4">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-3 pt-3">
               <TransactionForm
+                transaction={transaction}
                 accounts={accounts}
                 categories={categories}
                 selectedDate={selectedDate}
-                recentMerchants={recentMerchants}
                 quickCategories={quickCategories}
                 autoFocusAmount
                 onSubmit={onSubmit}
@@ -820,17 +707,6 @@ function QuickTransactionSheet({
         </motion.div>
       ) : null}
     </AnimatePresence>
-  );
-}
-
-function QuickAddTransactionFAB({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="fixed bottom-5 right-5 z-30 inline-flex h-14 w-14 items-center justify-center rounded-full bg-brand-600 text-white shadow-soft transition hover:bg-brand-700 md:hidden"
-    >
-      <Plus className="h-6 w-6" />
-    </button>
   );
 }
 

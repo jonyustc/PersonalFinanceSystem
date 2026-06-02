@@ -14,6 +14,7 @@ from app.api.v1.endpoints import (
     transfers,
     users,
     card,
+    funds,
 )
 
 api_router = APIRouter()
@@ -30,7 +31,8 @@ api_router.include_router(
 api_router.include_router(
     transactions.router, prefix="/transactions", tags=["transactions"])
 api_router.include_router(card.router, prefix="/card", tags=["card"])
-api_router.include_router(transfers.router, prefix="/transfers", tags=["transfers"])
+api_router.include_router(
+    transfers.router, prefix="/transfers", tags=["transfers"])
 api_router.include_router(cards.router, prefix="/cards", tags=["cards"])
 
 # 🔹 Budget & Reports
@@ -42,6 +44,8 @@ api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 # 🔹 Notifications
 api_router.include_router(notifications.router,
                           prefix="/notifications", tags=["notifications"])
+
+api_router.include_router(funds.router, prefix="/accounts", tags=["funds"])
 
 
 api_router.include_router(

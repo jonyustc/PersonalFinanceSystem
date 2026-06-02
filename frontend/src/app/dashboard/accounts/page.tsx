@@ -4,12 +4,14 @@ import {
   ArrowRightLeft,
   CreditCard,
   Edit3,
+  Eye,
   Landmark,
   Plus,
   RefreshCw,
   Trash2,
   Wallet,
 } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AccountAnalyticsCharts } from "@/components/accounts/account-analytics";
@@ -40,9 +42,19 @@ import type {
 const groups = [
   { key: "cash", label: "Cash", icon: Wallet },
   { key: "bank", label: "Bank", icon: Landmark },
+  { key: "mobile", label: "Mobile Banking", icon: Wallet },
+  { key: "debit", label: "Debit Cards", icon: CreditCard },
   { key: "card", label: "Cards", icon: CreditCard },
   { key: "inactive", label: "Inactive", icon: Wallet },
 ] as const;
+
+function normalizedType(account: Account) {
+  return account.type.toLowerCase();
+}
+
+function isCreditCard(account: Account) {
+  return normalizedType(account) === "card" || normalizedType(account) === "credit_card";
+}
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -80,10 +92,29 @@ export default function AccountsPage() {
 
   const groupedAccounts = useMemo(() => {
     return {
-      cash: accounts.filter((account) => account.type === "cash" && account.is_active && !account.archived),
-      bank: accounts.filter((account) => account.type === "bank" && account.is_active && !account.archived),
-      card: accounts.filter((account) => account.type === "card" && account.is_active && !account.archived),
-      inactive: accounts.filter((account) => !account.is_active || account.archived),
+      cash: accounts.filter(
+        (account) =>
+          normalizedType(account) === "cash" && account.is_active && !account.archived,
+      ),
+      bank: accounts.filter(
+        (account) =>
+          normalizedType(account) === "bank" && account.is_active && !account.archived,
+      ),
+      mobile: accounts.filter(
+        (account) =>
+          normalizedType(account) === "mobile_banking" && account.is_active && !account.archived,
+      ),
+      debit: accounts.filter(
+        (account) =>
+          normalizedType(account) === "debit_card" && account.is_active && !account.archived,
+      ),
+      card: accounts.filter(
+        (account) =>
+          isCreditCard(account) && account.is_active && !account.archived,
+      ),
+      inactive: accounts.filter(
+        (account) => !account.is_active || account.archived,
+      ),
     };
   }, [accounts]);
 
@@ -102,7 +133,9 @@ export default function AccountsPage() {
     setEditingAccount(null);
   }
 
-  async function handleSave(payload: AccountCreatePayload | AccountUpdatePayload) {
+  async function handleSave(
+    payload: AccountCreatePayload | AccountUpdatePayload,
+  ) {
     try {
       if (editingAccount) {
         await updateAccount(editingAccount.id, payload as AccountUpdatePayload);
@@ -144,14 +177,19 @@ export default function AccountsPage() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-ink">Accounts</h1>
-          <p className="text-sm text-muted">Balances, credit exposure, transfers, and net worth in one place.</p>
+          <p className="text-sm text-muted">
+            Balances, credit exposure, transfers, and net worth in one place.
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button onClick={loadAccounts} variant="secondary">
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
-          <Button onClick={() => setTransferModalOpen(true)} variant="secondary">
+          <Button
+            onClick={() => setTransferModalOpen(true)}
+            variant="secondary"
+          >
             <ArrowRightLeft className="h-4 w-4" />
             Transfer
           </Button>
@@ -162,19 +200,44 @@ export default function AccountsPage() {
         </div>
       </div>
 
-      {error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+      {error ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Net worth" value={summary?.net_worth} tone="brand" />
-        <SummaryCard label="Total assets" value={summary?.total_assets} tone="blue" />
-        <SummaryCard label="Total liabilities" value={summary?.liabilities} tone="amber" />
-        <SummaryCard label="Credit used" value={summary?.credit_used} suffix="%" tone="violet" />
+        <SummaryCard
+          label="Net worth"
+          value={summary?.net_worth}
+          tone="brand"
+        />
+        <SummaryCard
+          label="Total assets"
+          value={summary?.total_assets}
+          tone="blue"
+        />
+        <SummaryCard
+          label="Total liabilities"
+          value={summary?.liabilities}
+          tone="amber"
+        />
+        <SummaryCard
+          label="Credit used"
+          value={summary?.credit_used}
+          suffix="%"
+          tone="violet"
+        />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
         <div className="space-y-5">
-          {loading ? <p className="text-sm text-muted">Loading accounts...</p> : null}
-          {!loading && accounts.length === 0 ? <p className="text-sm text-muted">No accounts found.</p> : null}
+          {loading ? (
+            <p className="text-sm text-muted">Loading accounts...</p>
+          ) : null}
+          {!loading && accounts.length === 0 ? (
+            <p className="text-sm text-muted">No accounts found.</p>
+          ) : null}
 
           {groups.map((group) => {
             const items = groupedAccounts[group.key];
@@ -187,7 +250,9 @@ export default function AccountsPage() {
                     <Icon className="h-4 w-4 text-brand-600" />
                     {group.label}
                   </div>
-                  <span className="text-xs font-medium text-muted">{items.length} accounts</span>
+                  <span className="text-xs font-medium text-muted">
+                    {items.length} accounts
+                  </span>
                 </div>
                 <div className="grid gap-3">
                   {items.map((account) => (
@@ -213,11 +278,23 @@ export default function AccountsPage() {
         onClose={closeAccountModal}
         title={editingAccount ? "Edit Account" : "Add Account"}
       >
-        <AccountForm account={editingAccount} onSubmit={handleSave} onCancel={closeAccountModal} />
+        <AccountForm
+          account={editingAccount}
+          onSubmit={handleSave}
+          onCancel={closeAccountModal}
+        />
       </Modal>
 
-      <Modal open={transferModalOpen} onClose={() => setTransferModalOpen(false)} title="Transfer Money">
-        <TransferModal accounts={accounts} onSubmit={handleTransfer} onCancel={() => setTransferModalOpen(false)} />
+      <Modal
+        open={transferModalOpen}
+        onClose={() => setTransferModalOpen(false)}
+        title="Transfer Money"
+      >
+        <TransferModal
+          accounts={accounts}
+          onSubmit={handleTransfer}
+          onCancel={() => setTransferModalOpen(false)}
+        />
       </Modal>
     </div>
   );
@@ -242,9 +319,18 @@ function SummaryCard({
   };
 
   return (
-    <section className={cn("rounded-md bg-gradient-to-br p-4 text-white shadow-soft", tones[tone])}>
+    <section
+      className={cn(
+        "rounded-md bg-gradient-to-br p-4 text-white shadow-soft",
+        tones[tone],
+      )}
+    >
       <p className="text-sm font-medium text-white/80">{label}</p>
-      <p className="mt-3 text-2xl font-semibold">{suffix ? `${Number(value ?? 0).toFixed(1)}${suffix}` : formatCurrency(value ?? 0)}</p>
+      <p className="mt-3 text-2xl font-semibold">
+        {suffix
+          ? `${Number(value ?? 0).toFixed(1)}${suffix}`
+          : formatCurrency(value ?? 0)}
+      </p>
     </section>
   );
 }
@@ -261,9 +347,15 @@ function AccountRow({
   onDelete: () => void;
 }) {
   const cardDetails = account.card_details;
+  const creditLimit = Number(account.credit_limit ?? cardDetails?.credit_limit ?? 0);
+  const currentOutstanding = Number(
+    account.current_outstanding ??
+      (isCreditCard(account) ? Math.abs(Number(account.opening_balance ?? account.balance ?? 0)) : 0),
+  );
+  const availableLimit = Math.max(creditLimit - currentOutstanding, 0);
   const utilization =
-    account.type === "card" && cardDetails && Number(cardDetails.credit_limit) > 0
-      ? (Math.abs(Math.min(Number(account.balance), 0)) / Number(cardDetails.credit_limit)) * 100
+    isCreditCard(account) && creditLimit > 0
+      ? (currentOutstanding / creditLimit) * 100
       : 0;
 
   return (
@@ -274,26 +366,50 @@ function AccountRow({
             className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-white"
             style={{ backgroundColor: account.color ?? "#137f65" }}
           >
-            {account.type === "card" ? <CreditCard className="h-5 w-5" /> : account.type === "bank" ? <Landmark className="h-5 w-5" /> : <Wallet className="h-5 w-5" />}
+            {isCreditCard(account) || normalizedType(account) === "debit_card" ? (
+              <CreditCard className="h-5 w-5" />
+            ) : normalizedType(account) === "bank" ? (
+              <Landmark className="h-5 w-5" />
+            ) : (
+              <Wallet className="h-5 w-5" />
+            )}
           </div>
           <div className="min-w-0">
             <h3 className="truncate font-semibold text-ink">{account.name}</h3>
             <p className="text-sm text-muted">
-              {[account.institution_name, account.account_subtype, account.currency].filter(Boolean).join(" - ")}
+              {[
+                account.institution_name,
+                account.account_subtype,
+                account.currency,
+              ]
+                .filter(Boolean)
+                .join(" - ")}
             </p>
-            {account.type === "card" && cardDetails ? (
+            {isCreditCard(account) && (cardDetails || account.credit_limit) ? (
               <div className="mt-3 w-full max-w-sm">
                 <div className="mb-1 flex justify-between text-xs text-muted">
-                  <span>{formatCurrency(cardDetails.available_credit, account.currency)} available</span>
+                  <span>
+                    {formatCurrency(
+                      availableLimit,
+                      account.currency,
+                    )}{" "}
+                    available
+                  </span>
                   <span>{utilization.toFixed(1)}% used</span>
                 </div>
                 <div className="h-2 rounded-full bg-slate-100">
-                  <div className="h-2 rounded-full bg-amber-500" style={{ width: `${Math.min(utilization, 100)}%` }} />
+                  <div
+                    className="h-2 rounded-full bg-amber-500"
+                    style={{ width: `${Math.min(utilization, 100)}%` }}
+                  />
                 </div>
                 <p className="mt-2 text-xs text-muted">
-                  Limit {formatCurrency(cardDetails.credit_limit, account.currency)}
-                  {cardDetails.statement_day ? ` - Statement ${cardDetails.statement_day}` : ""}
-                  {cardDetails.due_day ? ` - Due ${cardDetails.due_day}` : ""}
+                  Limit{" "}
+                  {formatCurrency(creditLimit, account.currency)}
+                  {account.billing_cycle_day ?? cardDetails?.statement_day
+                    ? ` - Statement ${account.billing_cycle_day ?? cardDetails?.statement_day}`
+                    : ""}
+                  {account.payment_due_day ?? cardDetails?.due_day ? ` - Due ${account.payment_due_day ?? cardDetails?.due_day}` : ""}
                 </p>
               </div>
             ) : null}
@@ -302,13 +418,35 @@ function AccountRow({
 
         <div className="flex items-center justify-between gap-4 sm:justify-end">
           <div className="text-right">
-            <p className={cn("text-lg font-semibold", Number(account.balance) < 0 ? "text-red-600" : "text-ink")}>
-              {formatCurrency(account.balance, account.currency)}
+            <p
+              className={cn(
+                "text-lg font-semibold",
+                Number(account.balance) < 0 ? "text-red-600" : "text-ink",
+              )}
+            >
+              {formatCurrency(isCreditCard(account) ? currentOutstanding : account.balance, account.currency)}
             </p>
-            <p className="text-xs text-muted">Opening {formatCurrency(account.opening_balance, account.currency)}</p>
+            <p className="text-xs text-muted">
+              {isCreditCard(account) ? "Outstanding " : "Opening "}
+              {formatCurrency(account.opening_balance, account.currency)}
+            </p>
           </div>
           <div className="flex gap-1">
-            <button className="rounded-md p-2 text-muted hover:bg-surface hover:text-ink" onClick={onEdit} type="button" title="Edit account">
+            {account.account_subtype === "fund" ? (
+              <Link
+                href={`/dashboard/funds/${account.id}`}
+                className="rounded-md p-2 text-muted hover:bg-surface hover:text-ink"
+                title="View fund details"
+              >
+                <Eye className="h-4 w-4" />
+              </Link>
+            ) : null}
+            <button
+              className="rounded-md p-2 text-muted hover:bg-surface hover:text-ink"
+              onClick={onEdit}
+              type="button"
+              title="Edit account"
+            >
               <Edit3 className="h-4 w-4" />
             </button>
             <button

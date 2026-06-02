@@ -6,7 +6,19 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-AccountType = Literal["cash", "bank", "card"]
+AccountType = Literal[
+    "cash",
+    "bank",
+    "card",
+    "mobile_banking",
+    "debit_card",
+    "credit_card",
+    "CASH",
+    "BANK",
+    "MOBILE_BANKING",
+    "DEBIT_CARD",
+    "CREDIT_CARD",
+]
 
 
 class CreditCardDetailsBase(BaseModel):
@@ -43,6 +55,10 @@ class AccountCreate(BaseModel):
     color: str | None = Field(default=None, max_length=20)
     icon: str | None = Field(default=None, max_length=50)
     archived: bool = False
+    credit_limit: Decimal | None = Field(default=None, ge=0)
+    current_outstanding: Decimal = Field(default=Decimal("0"), ge=0)
+    billing_cycle_day: int | None = Field(default=None, ge=1, le=31)
+    payment_due_day: int | None = Field(default=None, ge=1, le=31)
     card_details: CreditCardDetailsCreate | None = None
 
     @field_validator("currency")
@@ -52,7 +68,7 @@ class AccountCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_opening_balance(self) -> "AccountCreate":
-        if self.type != "card" and self.opening_balance < 0:
+        if self.type.lower() not in {"card", "credit_card"} and self.opening_balance < 0:
             raise ValueError("Only card accounts may have a negative opening balance")
         return self
 
@@ -68,6 +84,10 @@ class AccountUpdate(BaseModel):
     color: str | None = Field(default=None, max_length=20)
     icon: str | None = Field(default=None, max_length=50)
     archived: bool | None = None
+    credit_limit: Decimal | None = Field(default=None, ge=0)
+    current_outstanding: Decimal | None = Field(default=None, ge=0)
+    billing_cycle_day: int | None = Field(default=None, ge=1, le=31)
+    payment_due_day: int | None = Field(default=None, ge=1, le=31)
     card_details: CreditCardDetailsCreate | None = None
 
     @field_validator("currency")
@@ -90,6 +110,10 @@ class AccountResponse(BaseModel):
     color: str | None = None
     icon: str | None = None
     archived: bool = False
+    credit_limit: Decimal | None = None
+    current_outstanding: Decimal = Decimal("0")
+    billing_cycle_day: int | None = None
+    payment_due_day: int | None = None
     card_details: CreditCardDetailsResponse | None = None
 
     class Config:
@@ -130,6 +154,7 @@ class TransferCreate(BaseModel):
     fee: Decimal = Field(default=Decimal("0"), ge=0)
     notes: str | None = None
     transfer_date: datetime | None = None
+    is_card_payment: bool = False
 
     @model_validator(mode="after")
     def validate_distinct_accounts(self) -> "TransferCreate":

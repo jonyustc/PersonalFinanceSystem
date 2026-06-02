@@ -1,18 +1,25 @@
+from decimal import Decimal
+
 from sqlalchemy import select, func, and_, case, cast, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, date
 from uuid import UUID
 
 from app.services.budget import BudgetService
+from app.repositories.dashboard import DashboardRepository
 from app.models.account import Account
 from app.models.transaction import Transaction
 from app.models.category import Category
+
+
+ZERO = Decimal("0")
 
 
 class DashboardService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.budget_service = BudgetService(db)
+        self.dashboard_repo = DashboardRepository(db)
 
     # =========================
     # UTIL: MONTH RANGE
@@ -44,6 +51,60 @@ class DashboardService:
         return {
             **dashboard_data,
             "budget_summary": budget_summary,
+        }
+
+    async def get_simple_dashboard(self, user_id: UUID, month: str):
+        start_date, end_date = self._get_month_range(month)
+
+        active_accounts = await self.dashboard_repo.active_balance_accounts(user_id)
+        credit_cards = await self.dashboard_repo.credit_cards(user_id)
+        monthly_spending = await self.dashboard_repo.monthly_card_spending(user_id, start_date, end_date)
+        monthly_payments = await self.dashboard_repo.monthly_credit_card_payments(user_id, start_date, end_date)
+
+        total_balance = sum((account.balance for account in active_accounts), ZERO)
+        total_card_spending = sum(monthly_spending.values(), ZERO)
+        total_card_payment = sum(monthly_payments.values(), ZERO)
+        total_card_outstanding = sum((card.current_outstanding for card in credit_cards), ZERO)
+
+        return {
+            "month": month,
+            "active_accounts_balance": {
+                "total_balance": total_balance,
+                "accounts": [
+                    {
+                        "id": str(account.id),
+                        "name": account.name,
+                        "type": account.type.upper(),
+                        "balance": account.balance,
+                        "currency": account.currency,
+                    }
+                    for account in active_accounts
+                ],
+            },
+            "card_summary": {
+                "total_card_spending": total_card_spending,
+                "total_card_payment": total_card_payment,
+                "total_card_outstanding": total_card_outstanding,
+                "cards": [self._simple_card(card, monthly_spending, monthly_payments) for card in credit_cards],
+            },
+        }
+
+    def _simple_card(self, card: Account, monthly_spending: dict, monthly_payments: dict) -> dict:
+        credit_limit = card.credit_limit or ZERO
+        outstanding = card.current_outstanding or ZERO
+        available_limit = max(credit_limit - outstanding, ZERO)
+        used_percentage = (outstanding / credit_limit * Decimal("100")) if credit_limit > ZERO else ZERO
+        return {
+            "id": str(card.id),
+            "name": card.name,
+            "credit_limit": credit_limit,
+            "current_outstanding": outstanding,
+            "available_limit": available_limit,
+            "used_percentage": used_percentage.quantize(Decimal("0.01")),
+            "monthly_spending": monthly_spending.get(card.id, ZERO),
+            "monthly_payment": monthly_payments.get(card.id, ZERO),
+            "billing_cycle_day": card.billing_cycle_day,
+            "payment_due_day": card.payment_due_day,
         }
 
     # =========================
