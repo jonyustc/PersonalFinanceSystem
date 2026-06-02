@@ -14,7 +14,6 @@ import {
   ChevronLeft,
   ChevronRight,
   CreditCard,
-  Plus,
   ReceiptText,
   Search,
   Tag,
@@ -179,95 +178,72 @@ export function TransactionExperience() {
   return (
     <div className="min-h-[calc(100vh-7rem)] space-y-5 pb-28 md:pb-6">
       <section className="sticky top-14 z-20 -mx-4 border-y border-line bg-surface/95 px-4 py-3 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border">
-        <div className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_auto_auto_auto_auto]">
+        <div className="space-y-3">
           <SmartSearchBar value={searchDraft} onChange={setSearchDraft} />
 
-          <div className="flex h-11 items-center rounded-md border border-line bg-white">
+          <div className="flex gap-2">
+            <div className="flex h-11 flex-1 items-center rounded-md border border-line bg-white">
+              <button
+                type="button"
+                className="flex h-10 w-11 shrink-0 items-center justify-center text-muted hover:text-brand-700"
+                onClick={() => setTransactionDate(shiftIsoDate(filters.from_date, -1))}
+                title="Previous day"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className="min-w-0 flex-1 border-x border-line px-3 text-center text-sm font-semibold text-ink"
+                onClick={() => setTransactionDate(todayIso)}
+                title="Go to today"
+              >
+                <span className="block truncate leading-tight">{displayDateLabel(filters.from_date)}</span>
+                <span className="block truncate text-[11px] font-normal text-muted">{filters.from_date ?? todayIso}</span>
+              </button>
+              <button
+                type="button"
+                className="flex h-10 w-11 shrink-0 items-center justify-center text-muted hover:text-brand-700"
+                onClick={() => setTransactionDate(shiftIsoDate(filters.from_date, 1))}
+                title="Next day"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+
             <button
               type="button"
-              className="flex h-10 w-10 items-center justify-center text-muted hover:text-brand-700"
-              onClick={() => setTransactionDate(shiftIsoDate(filters.from_date, -1))}
-              title="Previous day"
+              onClick={() => {
+                setSearchDraft("");
+                setFilters({ from_date: todayIso, to_date: todayIso, limit: 30 });
+              }}
+              className="inline-flex h-11 shrink-0 items-center justify-center rounded-md border border-line bg-white px-3 text-xs font-semibold text-muted"
             >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              className="min-w-36 border-x border-line px-3 text-center text-sm font-semibold text-ink"
-              onClick={() => setTransactionDate(todayIso)}
-              title="Go to today"
-            >
-              <span className="block leading-tight">{displayDateLabel(filters.from_date)}</span>
-              <span className="block text-[11px] font-normal text-muted">{filters.from_date ?? todayIso}</span>
-            </button>
-            <button
-              type="button"
-              className="flex h-10 w-10 items-center justify-center text-muted hover:text-brand-700"
-              onClick={() => setTransactionDate(shiftIsoDate(filters.from_date, 1))}
-              title="Next day"
-            >
-              <ChevronRight className="h-4 w-4" />
+              Clear
             </button>
           </div>
 
-          <select
-            className="input h-11 min-w-32 bg-white text-sm capitalize"
-            value={filters.type ?? ""}
-            onChange={(event) =>
+          <TypeTabs
+            value={filters.type}
+            onChange={(type) =>
               setFilters((current) => ({
                 ...current,
-                type: (event.target.value || undefined) as TransactionFilters["type"],
+                type,
                 offset: 0,
               }))
             }
-          >
-            <option value="">All types</option>
-            <option value="expense">Expense</option>
-            <option value="income">Income</option>
-            <option value="transfer">Transfer</option>
-          </select>
+          />
 
-          <select
-            className="input h-11 min-w-40 bg-white text-sm"
-            value={filters.account_id ?? ""}
-            onChange={(event) =>
+          <AccountTabs
+            accounts={activeAccounts}
+            value={filters.account_id}
+            onChange={(account_id) =>
               setFilters((current) => ({
                 ...current,
-                account_id: event.target.value || undefined,
+                account_id,
                 offset: 0,
               }))
             }
-          >
-            <option value="">All accounts</option>
-            {activeAccounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
-              </option>
-            ))}
-          </select>
-
-          <button
-            type="button"
-            onClick={() => {
-              setSearchDraft("");
-              setFilters({ from_date: todayIso, to_date: todayIso, limit: 30 });
-            }}
-            className="inline-flex h-11 items-center justify-center rounded-md border border-line bg-white px-3 text-sm font-semibold text-muted"
-          >
-            Clear
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setEditing(null);
-              setFormOpen(true);
-            }}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-brand-600 bg-brand-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700"
-          >
-            <Plus className="h-4 w-4" />
-            Add
-          </button>
+          />
         </div>
       </section>
 
@@ -435,6 +411,94 @@ function SmartSearchBar({
         className="h-11 w-full rounded-full border border-line bg-white pl-10 pr-4 text-sm outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
       />
     </label>
+  );
+}
+
+function TypeTabs({
+  value,
+  onChange,
+}: {
+  value?: TransactionFilters["type"];
+  onChange: (value?: TransactionFilters["type"]) => void;
+}) {
+  const options: { label: string; value?: TransactionFilters["type"] }[] = [
+    { label: "All", value: undefined },
+    { label: "Expense", value: "expense" },
+    { label: "Income", value: "income" },
+    { label: "Transfer", value: "transfer" },
+  ];
+
+  return (
+    <div className="-mx-1 overflow-x-auto px-1">
+      <div className="flex min-w-max gap-2">
+        {options.map((option) => {
+          const active = value === option.value;
+          return (
+            <button
+              key={option.label}
+              type="button"
+              onClick={() => onChange(option.value)}
+              className={cn(
+                "h-10 rounded-full border px-4 text-sm font-semibold transition",
+                active
+                  ? "border-brand-600 bg-brand-600 text-white shadow-sm"
+                  : "border-line bg-white text-muted hover:border-brand-200 hover:text-brand-700",
+              )}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AccountTabs({
+  accounts,
+  value,
+  onChange,
+}: {
+  accounts: Account[];
+  value?: string;
+  onChange: (value?: string) => void;
+}) {
+  return (
+    <div className="-mx-1 overflow-x-auto px-1">
+      <div className="flex min-w-max gap-2">
+        <button
+          type="button"
+          onClick={() => onChange(undefined)}
+          className={cn(
+            "h-10 rounded-full border px-4 text-sm font-semibold transition",
+            !value
+              ? "border-ink bg-ink text-white shadow-sm"
+              : "border-line bg-white text-muted hover:border-brand-200 hover:text-brand-700",
+          )}
+        >
+          All accounts
+        </button>
+        {accounts.map((account) => {
+          const active = value === account.id;
+          return (
+            <button
+              key={account.id}
+              type="button"
+              onClick={() => onChange(account.id)}
+              className={cn(
+                "h-10 max-w-44 rounded-full border px-4 text-sm font-semibold transition",
+                active
+                  ? "border-ink bg-ink text-white shadow-sm"
+                  : "border-line bg-white text-muted hover:border-brand-200 hover:text-brand-700",
+              )}
+              title={account.name}
+            >
+              <span className="block truncate">{account.name}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
