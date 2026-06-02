@@ -11,23 +11,16 @@ import {
   ArrowRightLeft,
   ArrowUpRight,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   CreditCard,
   Plus,
   ReceiptText,
   Search,
-  Sparkles,
   Tag,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-} from "recharts";
 
 import { TransactionForm } from "@/components/transactions/transaction-form";
 import { Button } from "@/components/ui/button";
@@ -57,39 +50,36 @@ function toLocalDateInputValue(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-const monthStart = toLocalDateInputValue(new Date(today.getFullYear(), today.getMonth(), 1));
 const todayIso = toLocalDateInputValue(today);
 
-function isoDateWithOffset(days: number) {
-  const date = new Date();
+function dateFromIso(value?: string) {
+  if (!value) return new Date();
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function shiftIsoDate(value: string | undefined, days: number) {
+  const date = dateFromIso(value ?? todayIso);
   date.setDate(date.getDate() + days);
   return toLocalDateInputValue(date);
 }
 
-function datePresetFromFilters(filters: TransactionFilters) {
-  if (!filters.from_date && !filters.to_date) return "all";
-  if (filters.from_date === todayIso && filters.to_date === todayIso) return "today";
-  const yesterday = isoDateWithOffset(-1);
-  if (filters.from_date === yesterday && filters.to_date === yesterday) return "yesterday";
-  if (filters.from_date === isoDateWithOffset(-6) && filters.to_date === todayIso) return "last_7";
-  return "this_month";
-}
+function displayDateLabel(value?: string) {
+  const date = dateFromIso(value ?? todayIso);
+  const todayDate = dateFromIso(todayIso);
+  const yesterday = dateFromIso(todayIso);
+  yesterday.setDate(todayDate.getDate() - 1);
+  const tomorrow = dateFromIso(todayIso);
+  tomorrow.setDate(todayDate.getDate() + 1);
 
-function applyDatePreset(filters: TransactionFilters, preset: string): TransactionFilters {
-  if (preset === "all") {
-    return { ...filters, from_date: undefined, to_date: undefined, offset: 0 };
-  }
-  if (preset === "today") {
-    return { ...filters, from_date: todayIso, to_date: todayIso, offset: 0 };
-  }
-  if (preset === "yesterday") {
-    const yesterday = isoDateWithOffset(-1);
-    return { ...filters, from_date: yesterday, to_date: yesterday, offset: 0 };
-  }
-  if (preset === "last_7") {
-    return { ...filters, from_date: isoDateWithOffset(-6), to_date: todayIso, offset: 0 };
-  }
-  return { ...filters, from_date: monthStart, to_date: todayIso, offset: 0 };
+  if (date.toDateString() === todayDate.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  if (date.toDateString() === tomorrow.toDateString()) return "Tomorrow";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 export function TransactionExperience() {
@@ -177,28 +167,48 @@ export function TransactionExperience() {
     await queryClient.invalidateQueries({ queryKey: ["transactions"] });
   }
 
+  function setTransactionDate(date: string) {
+    setFilters((current) => ({
+      ...current,
+      from_date: date,
+      to_date: date,
+      offset: 0,
+    }));
+  }
+
   return (
     <div className="min-h-[calc(100vh-7rem)] space-y-5 pb-28 md:pb-6">
-      <StickyFinanceHeader
-        analytics={analytics}
-        loading={analyticsQuery.isLoading}
-      />
-
       <section className="sticky top-14 z-20 -mx-4 border-y border-line bg-surface/95 px-4 py-3 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border">
         <div className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_auto_auto_auto_auto]">
           <SmartSearchBar value={searchDraft} onChange={setSearchDraft} />
 
-          <select
-            className="input h-11 min-w-36 bg-white text-sm"
-            value={datePresetFromFilters(filters)}
-            onChange={(event) => setFilters((current) => applyDatePreset(current, event.target.value))}
-          >
-            <option value="this_month">This month</option>
-            <option value="today">Today</option>
-            <option value="yesterday">Yesterday</option>
-            <option value="last_7">Last 7 days</option>
-            <option value="all">All dates</option>
-          </select>
+          <div className="flex h-11 items-center rounded-md border border-line bg-white">
+            <button
+              type="button"
+              className="flex h-10 w-10 items-center justify-center text-muted hover:text-brand-700"
+              onClick={() => setTransactionDate(shiftIsoDate(filters.from_date, -1))}
+              title="Previous day"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              className="min-w-36 border-x border-line px-3 text-center text-sm font-semibold text-ink"
+              onClick={() => setTransactionDate(todayIso)}
+              title="Go to today"
+            >
+              <span className="block leading-tight">{displayDateLabel(filters.from_date)}</span>
+              <span className="block text-[11px] font-normal text-muted">{filters.from_date ?? todayIso}</span>
+            </button>
+            <button
+              type="button"
+              className="flex h-10 w-10 items-center justify-center text-muted hover:text-brand-700"
+              onClick={() => setTransactionDate(shiftIsoDate(filters.from_date, 1))}
+              title="Next day"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
 
           <select
             className="input h-11 min-w-32 bg-white text-sm capitalize"
@@ -261,23 +271,32 @@ export function TransactionExperience() {
         </div>
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <TransactionTimeline
-          accounts={accounts}
-          categories={categories}
-          grouped={grouped}
-          loading={transactionQuery.isLoading}
-          onEdit={(transaction: Transaction) => {
-            setEditing(transaction);
-            setFormOpen(true);
-          }}
-          onDelete={remove}
-        />
-        <aside className="hidden space-y-4 xl:block">
-          <CashflowWidget analytics={analytics} />
-          <MerchantInsightCard analytics={analytics} />
-        </aside>
-      </div>
+      <DaySummaryPanel
+        analytics={analytics}
+        loading={analyticsQuery.isLoading}
+        transactionCount={transactions.length}
+        selectedDate={filters.from_date ?? todayIso}
+        filters={filters}
+        accounts={activeAccounts}
+        onClearType={() =>
+          setFilters((current) => ({ ...current, type: undefined, offset: 0 }))
+        }
+        onClearAccount={() =>
+          setFilters((current) => ({ ...current, account_id: undefined, offset: 0 }))
+        }
+      />
+
+      <TransactionTimeline
+        accounts={accounts}
+        categories={categories}
+        grouped={grouped}
+        loading={transactionQuery.isLoading}
+        onEdit={(transaction: Transaction) => {
+          setEditing(transaction);
+          setFormOpen(true);
+        }}
+        onDelete={remove}
+      />
 
       {transactionQuery.hasNextPage ? (
         <div className="flex justify-center">
@@ -309,84 +328,71 @@ export function TransactionExperience() {
   );
 }
 
-function StickyFinanceHeader({
+function DaySummaryPanel({
   analytics,
   loading,
+  transactionCount,
+  selectedDate,
+  filters,
+  accounts,
+  onClearType,
+  onClearAccount,
 }: {
   analytics: any;
   loading: boolean;
+  transactionCount: number;
+  selectedDate: string;
+  filters: TransactionFilters;
+  accounts: Account[];
+  onClearType: () => void;
+  onClearAccount: () => void;
 }) {
-  const trend = (analytics?.spending_trend ?? []).map((point: any) => ({
-    date: String(point.date).slice(5),
-    amount: point.type === "expense" ? Number(point.amount) : 0,
-  }));
+  const account = accounts.find((item) => item.id === filters.account_id);
+  const chips = [
+    filters.type
+      ? { label: `Type: ${filters.type}`, onClear: onClearType }
+      : null,
+    account ? { label: `Account: ${account.name}`, onClear: onClearAccount } : null,
+  ].filter(Boolean) as { label: string; onClear: () => void }[];
 
   return (
-    <section className="rounded-md bg-ink p-4 text-white shadow-soft md:p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <section className="rounded-md border border-line bg-white p-3 shadow-sm">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <p className="flex items-center gap-2 text-sm font-medium text-white/70">
-            <Sparkles className="h-4 w-4" /> This month
+          <p className="text-sm font-semibold text-ink">
+            {displayDateLabel(selectedDate)}
           </p>
-          <h1 className="mt-1 text-2xl font-semibold">Transactions</h1>
-          <p className="text-sm text-white/60">
-            Your money timeline, insights, and quick actions.
+          <p className="text-xs text-muted">
+            {transactionCount} visible transactions
           </p>
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <Metric
-            label="Income"
-            value={analytics?.total_income}
-            tone="green"
-            loading={loading}
-          />
-          <Metric
-            label="Spent"
-            value={analytics?.total_expense}
-            tone="red"
-            loading={loading}
-          />
-          <Metric
-            label="Cashflow"
-            value={analytics?.net_cashflow}
-            tone="blue"
-            loading={loading}
-          />
+        <div className="grid grid-cols-3 gap-2 md:min-w-[420px]">
+          <SummaryMetric label="Income" value={analytics?.total_income} tone="income" loading={loading} />
+          <SummaryMetric label="Spent" value={analytics?.total_expense} tone="expense" loading={loading} />
+          <SummaryMetric label="Net" value={analytics?.net_cashflow} tone="net" loading={loading} />
         </div>
       </div>
-      <div className="mt-5 h-28">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={trend}>
-            <defs>
-              <linearGradient id="spendFill" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0" stopColor="#34d399" stopOpacity={0.35} />
-                <stop offset="1" stopColor="#34d399" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid stroke="rgba(255,255,255,.08)" vertical={false} />
-            <XAxis
-              dataKey="date"
-              tick={{ fill: "rgba(255,255,255,.55)", fontSize: 11 }}
-              axisLine={false}
-              tickLine={false}
-            />
-            <Tooltip
-              formatter={(value: unknown) => formatCurrency(Number(value ?? 0))}
-            />
-            <Area
-              dataKey="amount"
-              stroke="#34d399"
-              fill="url(#spendFill)"
-              strokeWidth={2}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+
+      {chips.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {chips.map((chip) => (
+            <button
+              key={chip.label}
+              type="button"
+              onClick={chip.onClear}
+              className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-muted hover:text-brand-700"
+            >
+              {chip.label}
+              <X className="h-3 w-3" />
+            </button>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
 
-function Metric({
+function SummaryMetric({
   label,
   value,
   tone,
@@ -394,18 +400,18 @@ function Metric({
 }: {
   label: string;
   value?: string;
-  tone: "green" | "red" | "blue";
+  tone: "income" | "expense" | "net";
   loading: boolean;
 }) {
   const colors = {
-    green: "text-emerald-300",
-    red: "text-rose-300",
-    blue: "text-sky-300",
+    income: "text-emerald-700",
+    expense: "text-rose-700",
+    net: "text-ink",
   };
   return (
-    <div className="rounded-md bg-white/8 p-3">
-      <p className="text-xs text-white/60">{label}</p>
-      <p className={cn("mt-1 text-lg font-semibold", colors[tone])}>
+    <div className="rounded-md bg-surface p-3">
+      <p className="text-xs font-medium text-muted">{label}</p>
+      <p className={cn("mt-1 truncate text-sm font-semibold", colors[tone])}>
         {loading ? "--" : formatCurrency(value ?? 0)}
       </p>
     </div>
@@ -442,8 +448,16 @@ function TransactionTimeline({
 }: any) {
   if (loading) return <SkeletonTimeline />;
   if (!grouped.length) return <EmptyState />;
+  const totalCount = grouped.reduce(
+    (sum: number, group: any) => sum + group.items.length,
+    0,
+  );
   return (
     <div className="space-y-5">
+      <div className="flex items-center justify-between px-1 text-xs text-muted">
+        <span>Timeline</span>
+        <span>{totalCount} transactions loaded</span>
+      </div>
       <AnimatePresence initial={false}>
         {grouped.map((group: any) => (
           <TransactionGroupSection
@@ -603,39 +617,6 @@ function Badge({ icon: Icon, children }: any) {
       <Icon className="h-3 w-3" />
       {children}
     </span>
-  );
-}
-
-function CashflowWidget({ analytics }: any) {
-  return (
-    <section className="rounded-md border border-line bg-white p-4 shadow-soft">
-      <h3 className="font-semibold text-ink">Habit Signal</h3>
-      <p className="mt-2 text-sm text-muted">Average daily spend</p>
-      <p className="mt-1 text-2xl font-semibold text-rose-600">
-        {formatCurrency(analytics?.average_daily_spending ?? 0)}
-      </p>
-    </section>
-  );
-}
-
-function MerchantInsightCard({ analytics }: any) {
-  const merchants = analytics?.top_merchants ?? [];
-  return (
-    <section className="rounded-md border border-line bg-white p-4 shadow-soft">
-      <h3 className="font-semibold text-ink">Top Merchants</h3>
-      <div className="mt-3 space-y-2">
-        {merchants.length ? (
-          merchants.map((m: any) => (
-            <div className="flex justify-between text-sm" key={m.label}>
-              <span className="truncate text-muted">{m.label}</span>
-              <span className="font-semibold">{formatCurrency(m.amount)}</span>
-            </div>
-          ))
-        ) : (
-          <p className="text-sm text-muted">No merchant patterns yet.</p>
-        )}
-      </div>
-    </section>
   );
 }
 
