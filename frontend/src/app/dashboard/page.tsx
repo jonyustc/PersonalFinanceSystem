@@ -1,13 +1,14 @@
 "use client";
 
-import { AlertCircle, Banknote, CalendarDays, CreditCard, Landmark, ReceiptText, RefreshCw, Wallet, X } from "lucide-react";
+import { AlertCircle, Banknote, CalendarDays, ChevronLeft, ChevronRight, CreditCard, Landmark, Pencil, ReceiptText, RefreshCw, Trash2, Wallet, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 
+import { TransactionForm } from "@/components/transactions/transaction-form";
 import { Button } from "@/components/ui/button";
 import { cn, formatCurrency } from "@/lib/utils";
-import { fetchAccounts, fetchSimpleDashboard, fetchTransactions } from "@/services/finance-service";
-import type { Account, SimpleDashboardResponse, Transaction } from "@/types/api";
+import { deleteTransaction, fetchAccounts, fetchCategories, fetchSimpleDashboard, fetchTransactions, updateTransaction } from "@/services/finance-service";
+import type { Account, Category, SimpleDashboardResponse, Transaction, TransactionCreatePayload } from "@/types/api";
 
 function getCurrentMonth() {
   const d = new Date();
@@ -34,6 +35,37 @@ function monthRange(month: string) {
   const format = (date: Date) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   return { from: format(firstDay), to: format(lastDay) };
+}
+
+function todayInputValue() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function dateFromIso(value?: string) {
+  if (!value || value === "all") return new Date();
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function shiftIsoDate(value: string | undefined, days: number) {
+  const date = dateFromIso(value);
+  date.setDate(date.getDate() + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function displayDateLabel(value: string) {
+  const today = dateFromIso(todayInputValue());
+  const date = dateFromIso(value);
+  const yesterday = dateFromIso(todayInputValue());
+  yesterday.setDate(today.getDate() - 1);
+  const tomorrow = dateFromIso(todayInputValue());
+  tomorrow.setDate(today.getDate() + 1);
+
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  if (date.toDateString() === tomorrow.toDateString()) return "Tomorrow";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function normalizedType(type?: string | null) {
@@ -65,12 +97,14 @@ export default function DashboardPage() {
   const [month, setMonth] = useState(getCurrentMonth());
   const [data, setData] = useState<SimpleDashboardResponse | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [monthTransactions, setMonthTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyView, setHistoryView] = useState<HistoryView | null>(null);
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 
   async function loadDashboard(selectedMonth = month) {
     setLoading(true);
@@ -89,11 +123,13 @@ export default function DashboardPage() {
     setHistoryError(null);
     try {
       const range = monthRange(selectedMonth);
-      const [accountData, transactionData] = await Promise.all([
+      const [accountData, categoryData, transactionData] = await Promise.all([
         fetchAccounts(),
+        fetchCategories(),
         fetchTransactions({ from_date: range.from, to_date: range.to, limit: 1000 }),
       ]);
       setAccounts(accountData);
+      setCategories(categoryData);
       setMonthTransactions(transactionData.items);
     } catch (err) {
       setHistoryError(err instanceof Error ? err.message : "Failed to load transaction history");
@@ -160,6 +196,24 @@ export default function DashboardPage() {
         transaction.transfer_account_id === card.id &&
         (transactionKind(transaction) === "CARD_PAYMENT" || transaction.type === "transfer"),
     });
+  }
+
+  async function refreshAll() {
+    await Promise.all([loadDashboard(month), loadHistoryData(month)]);
+    window.dispatchEvent(new Event("finance:data-mutated"));
+  }
+
+  async function saveHistoryEdit(payload: TransactionCreatePayload) {
+    if (!editingTransaction) return;
+    await updateTransaction(editingTransaction.id, payload);
+    setEditingTransaction(null);
+    await refreshAll();
+  }
+
+  async function removeHistoryTransaction(transaction: Transaction) {
+    if (!confirm("Delete this transaction and roll back its balance?")) return;
+    await deleteTransaction(transaction.id);
+    await refreshAll();
   }
 
   const topCards = useMemo(
@@ -430,6 +484,16 @@ export default function DashboardPage() {
         total={historyTotal}
         month={month}
         onClose={() => setHistoryView(null)}
+        onEdit={setEditingTransaction}
+        onDelete={removeHistoryTransaction}
+      />
+
+      <HistoryEditDrawer
+        transaction={editingTransaction}
+        accounts={accounts}
+        categories={categories}
+        onClose={() => setEditingTransaction(null)}
+        onSubmit={saveHistoryEdit}
       />
     </div>
   );
@@ -490,6 +554,8 @@ function HistoryDrawer({
   total,
   month,
   onClose,
+  onEdit,
+  onDelete,
 }: {
   open: boolean;
   loading: boolean;
@@ -502,7 +568,32 @@ function HistoryDrawer({
   total: number;
   month: string;
   onClose: () => void;
+  onEdit: (transaction: Transaction) => void;
+  onDelete: (transaction: Transaction) => void;
 }) {
+  const [selectedDate, setSelectedDate] = useState<string>(todayInputValue());
+
+  useEffect(() => {
+    setSelectedDate(todayInputValue());
+  }, [title, month]);
+
+  const visibleTransactions = useMemo(
+    () =>
+      selectedDate === "all"
+        ? transactions
+        : transactions.filter((transaction) => transaction.txn_date.slice(0, 10) === selectedDate),
+    [selectedDate, transactions],
+  );
+
+  const visibleTotal = useMemo(
+    () => visibleTransactions.reduce((sum, transaction) => sum + toNumber(transaction.amount), 0),
+    [visibleTransactions],
+  );
+
+  function moveHistoryDate(days: number) {
+    setSelectedDate((current) => shiftIsoDate(current === "all" ? todayInputValue() : current, days));
+  }
+
   if (!open) return null;
 
   return (
@@ -526,12 +617,61 @@ function HistoryDrawer({
           <div className="mt-4 grid grid-cols-2 gap-3">
             <div className="rounded-md bg-surface p-3">
               <p className="text-xs font-medium uppercase tracking-normal text-muted">Total</p>
-              <p className="mt-1 text-lg font-semibold text-ink">{formatCurrency(total, "BDT")}</p>
+              <p className="mt-1 text-lg font-semibold text-ink">
+                {formatCurrency(selectedDate === "all" ? total : visibleTotal, "BDT")}
+              </p>
             </div>
             <div className="rounded-md bg-surface p-3">
               <p className="text-xs font-medium uppercase tracking-normal text-muted">Transactions</p>
-              <p className="mt-1 text-lg font-semibold text-ink">{transactions.length}</p>
+              <p className="mt-1 text-lg font-semibold text-ink">{visibleTransactions.length}</p>
             </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <div className="flex h-11 items-center rounded-md border border-line bg-white">
+              <button
+                type="button"
+                onClick={() => moveHistoryDate(-1)}
+                className="flex h-10 w-10 items-center justify-center text-muted hover:text-brand-700"
+                title="Previous day"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedDate(todayInputValue())}
+                className="min-w-36 border-x border-line px-3 text-center text-sm font-semibold text-ink"
+                title="Go to today"
+              >
+                <span className="block leading-tight">
+                  {selectedDate === "all" ? "All dates" : displayDateLabel(selectedDate)}
+                </span>
+                <span className="block text-[11px] font-normal text-muted">
+                  {selectedDate === "all" ? `${transactions.length} transactions` : selectedDate}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => moveHistoryDate(1)}
+                className="flex h-10 w-10 items-center justify-center text-muted hover:text-brand-700"
+                title="Next day"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedDate("all")}
+              className={cn(
+                "h-11 rounded-md border px-3 text-xs font-semibold",
+                selectedDate === "all"
+                  ? "border-brand-600 bg-brand-50 text-brand-700"
+                  : "border-line bg-white text-muted",
+              )}
+            >
+              All dates
+              <span className="ml-2 font-normal">{transactions.length}</span>
+            </button>
           </div>
         </div>
 
@@ -546,18 +686,20 @@ function HistoryDrawer({
             <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
             </div>
-          ) : transactions.length === 0 ? (
+          ) : visibleTransactions.length === 0 ? (
             <div className="rounded-md border border-dashed border-line bg-surface px-4 py-8 text-center">
               <ReceiptText className="mx-auto h-8 w-8 text-muted" />
               <p className="mt-3 text-sm text-muted">{empty}</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {transactions.map((transaction) => (
+              {visibleTransactions.map((transaction) => (
                 <HistoryTransactionRow
                   key={transaction.id}
                   transaction={transaction}
                   accounts={accounts}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
                 />
               ))}
             </div>
@@ -575,9 +717,13 @@ function HistoryDrawer({
 function HistoryTransactionRow({
   transaction,
   accounts,
+  onEdit,
+  onDelete,
 }: {
   transaction: Transaction;
   accounts: Map<string, Account>;
+  onEdit: (transaction: Transaction) => void;
+  onDelete: (transaction: Transaction) => void;
 }) {
   const fromAccount = accounts.get(transaction.account_id);
   const toAccount = transaction.transfer_account_id
@@ -631,7 +777,72 @@ function HistoryTransactionRow({
           {formatCurrency(transaction.amount, fromAccount?.currency || "BDT")}
         </p>
       </div>
+
+      <div className="mt-3 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => onEdit(transaction)}
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-semibold text-muted hover:text-brand-700"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          Edit
+        </button>
+        <button
+          type="button"
+          onClick={() => onDelete(transaction)}
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 text-xs font-semibold text-red-700 hover:bg-red-100"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Delete
+        </button>
+      </div>
     </article>
+  );
+}
+
+function HistoryEditDrawer({
+  transaction,
+  accounts,
+  categories,
+  onClose,
+  onSubmit,
+}: {
+  transaction: Transaction | null;
+  accounts: Account[];
+  categories: Category[];
+  onClose: () => void;
+  onSubmit: (payload: TransactionCreatePayload) => Promise<void>;
+}) {
+  if (!transaction) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-sm">
+      <aside className="absolute bottom-0 right-0 top-0 flex w-full flex-col bg-white shadow-2xl ring-1 ring-slate-200 sm:max-w-xl">
+        <div className="flex items-center justify-between border-b border-line px-5 py-3">
+          <p className="text-sm font-semibold text-slate-900">Edit transaction</p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-2 text-slate-500 hover:bg-slate-100"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-3 pt-3">
+          <TransactionForm
+            transaction={transaction}
+            accounts={accounts}
+            categories={categories}
+            selectedDate={transaction.txn_date.slice(0, 10)}
+            quickCategories={categories
+              .filter((category) => category.type === "expense" && !category.parent_id)
+              .slice(0, 6)}
+            onSubmit={onSubmit}
+            onCancel={onClose}
+          />
+        </div>
+      </aside>
+    </div>
   );
 }
 
