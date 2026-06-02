@@ -17,6 +17,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { GlobalTransactionCta } from "@/components/transactions/global-transaction-cta";
 import { cn } from "@/lib/utils";
 import { logout } from "@/services/auth-service";
 import { getStoredUser } from "@/services/token-store";
@@ -128,6 +129,7 @@ export function DashboardShell({ children }: any) {
 
         {/* CONTENT */}
         <main className="p-4 md:p-6">{children}</main>
+        {user ? <GlobalTransactionCta /> : null}
       </div>
     </div>
   );

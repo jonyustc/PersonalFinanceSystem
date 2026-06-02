@@ -13,6 +13,10 @@ from sqlalchemy.orm import selectinload
 from app.models.account import Account, AccountBalanceHistory
 from app.models.transaction import Transaction
 from app.schemas.transaction import BulkTransactionUpdate, SplitTransactionCreate, TransactionCreate, TransactionUpdate
+from app.services.account import is_credit_card
+
+
+ZERO = Decimal("0")
 
 
 class TransactionService:
@@ -95,10 +99,12 @@ class TransactionService:
             await self._reverse_balance(old_from, old_to, trx)
             for field, value in payload.model_dump(exclude_unset=True).items():
                 setattr(trx, field, value)
-            trx.transaction_type = trx.type
+            if trx.transaction_type is None:
+                trx.transaction_type = trx.type
             trx.transaction_date = trx.txn_date
             new_from = await self._get_account(user_id, trx.account_id)
             new_to = await self._get_account(user_id, trx.transfer_account_id) if trx.type == "transfer" else None
+            self._normalize_transfer_type(new_from, new_to, trx)
             await self._apply_balance(new_from, new_to, trx)
             await self.db.commit()
             await self.db.refresh(trx)
@@ -206,28 +212,40 @@ class TransactionService:
 
     async def _apply_balance(self, from_acc: Account, to_acc: Optional[Account], trx):
         if trx.type == "expense":
-            if from_acc.type != "card" and from_acc.balance < trx.amount:
+            if is_credit_card(from_acc):
+                from_acc.current_outstanding += trx.amount
+            elif from_acc.balance < trx.amount:
                 raise HTTPException(400, "Insufficient balance")
-            from_acc.balance -= trx.amount
+            else:
+                from_acc.balance -= trx.amount
         elif trx.type == "income":
             from_acc.balance += trx.amount
         elif trx.type == "transfer":
             if not to_acc:
                 raise HTTPException(400, "Transfer account required")
-            if from_acc.type != "card" and from_acc.balance < trx.amount:
+            if not is_credit_card(from_acc) and from_acc.balance < trx.amount:
                 raise HTTPException(400, "Insufficient balance")
             from_acc.balance -= trx.amount
-            to_acc.balance += trx.amount
+            if is_credit_card(to_acc) and getattr(trx, "transaction_type", None) == "CARD_PAYMENT":
+                to_acc.current_outstanding = max(to_acc.current_outstanding - trx.amount, ZERO)
+            else:
+                to_acc.balance += trx.amount
         self._after_balance_change(from_acc, to_acc)
 
     async def _reverse_balance(self, from_acc: Account, to_acc: Optional[Account], trx):
         if trx.type == "expense":
-            from_acc.balance += trx.amount
+            if is_credit_card(from_acc):
+                from_acc.current_outstanding = max(from_acc.current_outstanding - trx.amount, ZERO)
+            else:
+                from_acc.balance += trx.amount
         elif trx.type == "income":
             from_acc.balance -= trx.amount
         elif trx.type == "transfer" and to_acc:
             from_acc.balance += trx.amount
-            to_acc.balance -= trx.amount
+            if is_credit_card(to_acc) and getattr(trx, "transaction_type", None) == "CARD_PAYMENT":
+                to_acc.current_outstanding += trx.amount
+            else:
+                to_acc.balance -= trx.amount
         self._after_balance_change(from_acc, to_acc)
 
     async def _get_account(self, user_id: UUID, account_id: UUID) -> Account:
@@ -241,6 +259,10 @@ class TransactionService:
     async def _build_and_apply(self, user_id: UUID, payload: TransactionCreate) -> Transaction:
         from_acc = await self._get_account(user_id, payload.account_id)
         to_acc = await self._get_account(user_id, payload.transfer_account_id) if payload.type == "transfer" else None
+        transaction_type = payload.transaction_type or payload.type
+        if payload.type == "transfer" and to_acc and is_credit_card(to_acc) and not is_credit_card(from_acc):
+            transaction_type = "CARD_PAYMENT"
+            payload.transaction_type = transaction_type
         await self._apply_balance(from_acc, to_acc, payload)
         trx = Transaction(
             user_id=user_id,
@@ -248,7 +270,7 @@ class TransactionService:
             transfer_account_id=payload.transfer_account_id,
             category_id=payload.category_id,
             type=payload.type,
-            transaction_type=payload.type,
+            transaction_type=transaction_type,
             payment_method=payload.payment_method,
             amount=payload.amount,
             txn_date=payload.txn_date,
@@ -268,12 +290,22 @@ class TransactionService:
         await self.db.flush()
         return trx
 
+    def _normalize_transfer_type(self, from_acc: Account, to_acc: Optional[Account], trx) -> None:
+        if trx.type != "transfer" or not to_acc:
+            return
+        if is_credit_card(to_acc) and not is_credit_card(from_acc):
+            trx.transaction_type = "CARD_PAYMENT"
+        elif trx.transaction_type == "CARD_PAYMENT":
+            trx.transaction_type = "transfer"
+
     def _after_balance_change(self, from_acc: Account, to_acc: Optional[Account]) -> None:
         for account in [from_acc, to_acc]:
             if not account:
                 continue
             details = getattr(account, "credit_card_details", None)
-            if account.type == "card" and details:
-                used = abs(account.balance) if account.balance < 0 else Decimal("0")
-                details.available_credit = max(details.credit_limit - used, Decimal("0"))
+            if is_credit_card(account) and details:
+                details.credit_limit = account.credit_limit or details.credit_limit
+                details.statement_day = account.billing_cycle_day
+                details.due_day = account.payment_due_day
+                details.available_credit = max(details.credit_limit - account.current_outstanding, Decimal("0"))
             self.db.add(AccountBalanceHistory(account_id=account.id, balance_date=datetime.now(UTC), closing_balance=account.balance))

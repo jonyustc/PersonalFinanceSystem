@@ -79,6 +79,27 @@ class Account(UUIDMixin, TimestampMixin, Base):
         nullable=False,
     )
 
+    credit_limit: Mapped[Decimal | None] = mapped_column(
+        Numeric(14, 2),
+        nullable=True,
+    )
+
+    current_outstanding: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2),
+        default=0,
+        nullable=False,
+    )
+
+    billing_cycle_day: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    payment_due_day: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
     archived: Mapped[bool] = mapped_column(
         Boolean,
         default=False,

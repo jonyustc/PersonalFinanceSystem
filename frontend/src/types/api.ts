@@ -27,7 +27,18 @@ export type RegisterPayload = LoginPayload & {
 export type Account = {
   id: string;
   name: string;
-  type: "cash" | "bank" | "card";
+  type:
+    | "cash"
+    | "bank"
+    | "card"
+    | "mobile_banking"
+    | "debit_card"
+    | "credit_card"
+    | "CASH"
+    | "BANK"
+    | "MOBILE_BANKING"
+    | "DEBIT_CARD"
+    | "CREDIT_CARD";
   balance: string;
   opening_balance: string;
   currency: string;
@@ -38,6 +49,10 @@ export type Account = {
   color?: string | null;
   icon?: string | null;
   archived: boolean;
+  credit_limit?: string | null;
+  current_outstanding?: string;
+  billing_cycle_day?: number | null;
+  payment_due_day?: number | null;
   card_details?: CreditCardDetails | null;
 };
 
@@ -55,6 +70,10 @@ export type AccountCreatePayload = {
   color?: string | null;
   icon?: string | null;
   archived?: boolean;
+  credit_limit?: number | null;
+  current_outstanding?: number;
+  billing_cycle_day?: number | null;
+  payment_due_day?: number | null;
   card_details?: CreditCardDetailsPayload | null;
 };
 
@@ -69,6 +88,10 @@ export type AccountUpdatePayload = {
   color?: string | null;
   icon?: string | null;
   archived?: boolean;
+  credit_limit?: number | null;
+  current_outstanding?: number | null;
+  billing_cycle_day?: number | null;
+  payment_due_day?: number | null;
   card_details?: CreditCardDetailsPayload | null;
 };
 
@@ -116,6 +139,7 @@ export type TransferPayload = {
   amount: number;
   fee: number;
   notes?: string | null;
+  is_card_payment?: boolean;
 };
 
 export type Category = {
@@ -149,6 +173,7 @@ export type Transaction = {
   type: "expense" | "income" | "transfer";
   txn_type?: "expense" | "income" | "transfer";
   payment_method?: string | null;
+  transaction_type?: "expense" | "income" | "transfer" | "CARD_PAYMENT" | null;
   amount: string;
   txn_date: string;
   transaction_date?: string | null;
@@ -173,6 +198,7 @@ export type TransactionCreatePayload = {
   category_id?: string | null;
 
   type: "expense" | "income" | "transfer";
+  transaction_type?: "expense" | "income" | "transfer" | "CARD_PAYMENT" | null;
   payment_method?: string | null;
 
   amount: number;
@@ -360,4 +386,39 @@ export type DashboardResponse = {
   recent_transactions: Transaction[];
   expense_by_category: { label: string; value: string }[];
   monthly_cashflow: { label: string; value: string }[];
+};
+
+export type SimpleDashboardAccount = {
+  id: string;
+  name: string;
+  type: "CASH" | "BANK" | "MOBILE_BANKING";
+  balance: string;
+  currency: string;
+};
+
+export type SimpleDashboardCard = {
+  id: string;
+  name: string;
+  credit_limit: string;
+  current_outstanding: string;
+  available_limit: string;
+  used_percentage: string;
+  monthly_spending: string;
+  monthly_payment: string;
+  billing_cycle_day?: number | null;
+  payment_due_day?: number | null;
+};
+
+export type SimpleDashboardResponse = {
+  month: string;
+  active_accounts_balance: {
+    total_balance: string;
+    accounts: SimpleDashboardAccount[];
+  };
+  card_summary: {
+    total_card_spending: string;
+    total_card_payment: string;
+    total_card_outstanding: string;
+    cards: SimpleDashboardCard[];
+  };
 };

@@ -5,6 +5,7 @@ from datetime import datetime
 from app.api.v1.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
+from app.schemas.dashboard import SimpleDashboardResponse
 from app.services.dashboard import DashboardService
 
 router = APIRouter()
@@ -54,6 +55,16 @@ async def get_full_summary(
         user_id=current_user.id,
         month=month,
     )
+
+
+@router.get("/simple", response_model=SimpleDashboardResponse, tags=["Dashboard"])
+async def simple_dashboard(
+    month: str = Query(..., pattern=r"^\d{4}-\d{2}$", example="2026-06"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    service = DashboardService(db)
+    return await service.get_simple_dashboard(current_user.id, month)
 
 
 @router.get("/cards", tags=["Dashboard"])

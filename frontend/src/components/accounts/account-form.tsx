@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CreditCard, Landmark, Palette, Save, Wallet } from "lucide-react";
+import { CreditCard, Landmark, Palette, Save, Smartphone, Wallet } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -18,16 +18,27 @@ import type {
 const accountTypes = [
   { value: "cash", label: "Cash", icon: Wallet },
   { value: "bank", label: "Bank", icon: Landmark },
-  { value: "card", label: "Card", icon: CreditCard },
+  { value: "mobile_banking", label: "Mobile", icon: Smartphone },
+  { value: "debit_card", label: "Debit", icon: CreditCard },
+  { value: "credit_card", label: "Credit", icon: CreditCard },
 ] as const;
 
 const iconOptions = ["wallet", "landmark", "credit-card", "piggy-bank", "building-2"];
 const colorOptions = ["#137f65", "#2563eb", "#7c3aed", "#d97706", "#dc2626", "#0f766e"];
 
+function normalizeFormType(type?: Account["type"]): FormValues["type"] {
+  const value = type?.toLowerCase();
+  if (value === "card" || value === "credit_card") return "credit_card";
+  if (value === "debit_card") return "debit_card";
+  if (value === "mobile_banking") return "mobile_banking";
+  if (value === "bank") return "bank";
+  return "cash";
+}
+
 const schema = z
   .object({
     name: z.string().min(1, "Account name is required").max(120),
-    type: z.enum(["cash", "bank", "card"]),
+    type: z.enum(["cash", "bank", "mobile_banking", "debit_card", "credit_card"]),
     opening_balance: z.coerce.number(),
     currency: z.string().min(3, "Use 3-letter code").max(3, "Use 3-letter code"),
     institution_name: z.string().max(120).optional(),
@@ -41,7 +52,7 @@ const schema = z
     due_day: z.coerce.number().min(1).max(31).optional().or(z.literal("").transform(() => undefined)),
   })
   .superRefine((values, ctx) => {
-    if (values.type !== "card" && values.opening_balance < 0) {
+    if (values.type !== "credit_card" && values.opening_balance < 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["opening_balance"],
@@ -69,7 +80,7 @@ export function AccountForm({ account, onSubmit, onCancel }: Props) {
     resolver: zodResolver(schema),
     defaultValues: {
       name: account?.name ?? "",
-      type: account?.type ?? "cash",
+      type: normalizeFormType(account?.type),
       opening_balance: Number(account?.opening_balance ?? account?.balance ?? 0),
       currency: account?.currency ?? "USD",
       institution_name: account?.institution_name ?? "",
@@ -78,9 +89,9 @@ export function AccountForm({ account, onSubmit, onCancel }: Props) {
       icon: account?.icon ?? "wallet",
       notes: account?.notes ?? "",
       is_active: account?.is_active ?? true,
-      credit_limit: Number(account?.card_details?.credit_limit ?? 0),
-      statement_day: account?.card_details?.statement_day ?? undefined,
-      due_day: account?.card_details?.due_day ?? undefined,
+      credit_limit: Number(account?.credit_limit ?? account?.card_details?.credit_limit ?? 0),
+      statement_day: account?.billing_cycle_day ?? account?.card_details?.statement_day ?? undefined,
+      due_day: account?.payment_due_day ?? account?.card_details?.due_day ?? undefined,
     },
   });
 
@@ -97,8 +108,11 @@ export function AccountForm({ account, onSubmit, onCancel }: Props) {
       icon: values.icon || null,
       notes: values.notes?.trim() || null,
       is_active: values.is_active,
+      credit_limit: values.type === "credit_card" ? Number(values.credit_limit ?? 0) : null,
+      billing_cycle_day: values.type === "credit_card" && values.statement_day ? Number(values.statement_day) : null,
+      payment_due_day: values.type === "credit_card" && values.due_day ? Number(values.due_day) : null,
       card_details:
-        values.type === "card"
+        values.type === "credit_card"
           ? {
               credit_limit: Number(values.credit_limit ?? 0),
               statement_day: values.statement_day ? Number(values.statement_day) : null,
@@ -121,7 +135,7 @@ export function AccountForm({ account, onSubmit, onCancel }: Props) {
 
       <div>
         <span className="mb-2 block text-sm font-medium text-ink">Account type</span>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
           {accountTypes.map((type) => {
             const Icon = type.icon;
             const active = selectedType === type.value;
@@ -144,7 +158,7 @@ export function AccountForm({ account, onSubmit, onCancel }: Props) {
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Input
-          label="Opening balance"
+          label={selectedType === "credit_card" ? "Opening available limit" : "Opening balance"}
           type="number"
           step="0.01"
           disabled={isEditing}
@@ -185,7 +199,7 @@ export function AccountForm({ account, onSubmit, onCancel }: Props) {
         </label>
       </div>
 
-      {selectedType === "card" ? (
+      {selectedType === "credit_card" ? (
         <div className="grid gap-4 rounded-md border border-line bg-surface p-4 sm:grid-cols-3">
           <Input label="Credit limit" type="number" step="0.01" min="0" {...register("credit_limit")} />
           <Input label="Statement day" type="number" min="1" max="31" error={errors.statement_day?.message} {...register("statement_day")} />
