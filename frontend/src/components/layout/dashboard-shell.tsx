@@ -107,7 +107,7 @@ export function DashboardShell({ children }: any) {
       )}
 
       {/* MAIN */}
-      <div className="flex-1 lg:ml-64 flex flex-col">
+      <div className="min-w-0 flex-1 lg:ml-64 flex flex-col">
         {/* HEADER */}
         <header className="bg-white border-b h-14 flex items-center justify-between px-4">
           <button onClick={() => setOpen(true)} className="lg:hidden">
@@ -128,7 +128,7 @@ export function DashboardShell({ children }: any) {
         </header>
 
         {/* CONTENT */}
-        <main className="p-4 md:p-6">{children}</main>
+        <main className="min-w-0 overflow-x-hidden p-4 md:p-6">{children}</main>
         {user ? <GlobalTransactionCta /> : null}
       </div>
     </div>

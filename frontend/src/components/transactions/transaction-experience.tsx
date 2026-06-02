@@ -176,12 +176,12 @@ export function TransactionExperience() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-7rem)] space-y-5 pb-28 md:pb-6">
-      <section className="sticky top-14 z-20 -mx-4 border-y border-line bg-surface/95 px-4 py-3 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border">
-        <div className="space-y-3">
+    <div className="w-full max-w-full overflow-x-hidden min-h-[calc(100vh-7rem)] space-y-4 pb-28 md:space-y-5 md:pb-6">
+      <section className="sticky top-14 z-20 -mx-4 overflow-hidden border-y border-line bg-surface/95 px-4 py-3 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border">
+        <div className="min-w-0 space-y-3">
           <SmartSearchBar value={searchDraft} onChange={setSearchDraft} />
 
-          <div className="flex gap-2">
+          <div className="flex min-w-0 gap-2">
             <div className="flex h-11 flex-1 items-center rounded-md border border-line bg-white">
               <button
                 type="button"
@@ -210,16 +210,18 @@ export function TransactionExperience() {
               </button>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                setSearchDraft("");
-                setFilters({ from_date: todayIso, to_date: todayIso, limit: 30 });
-              }}
-              className="inline-flex h-11 shrink-0 items-center justify-center rounded-md border border-line bg-white px-3 text-xs font-semibold text-muted"
-            >
-              Clear
-            </button>
+            {(searchDraft || filters.type || filters.account_id) ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchDraft("");
+                  setFilters({ from_date: todayIso, to_date: todayIso, limit: 30 });
+                }}
+                className="inline-flex h-11 shrink-0 items-center justify-center rounded-md border border-line bg-white px-3 text-xs font-semibold text-muted"
+              >
+                Clear
+              </button>
+            ) : null}
           </div>
 
           <TypeTabs
@@ -332,9 +334,9 @@ function DaySummaryPanel({
   ].filter(Boolean) as { label: string; onClear: () => void }[];
 
   return (
-    <section className="rounded-md border border-line bg-white p-3 shadow-sm">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
+    <section className="min-w-0 rounded-md border border-line bg-white p-3 shadow-sm">
+      <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="min-w-0">
           <p className="text-sm font-semibold text-ink">
             {displayDateLabel(selectedDate)}
           </p>
@@ -342,7 +344,7 @@ function DaySummaryPanel({
             {transactionCount} visible transactions
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-2 md:min-w-[420px]">
+        <div className="grid min-w-0 grid-cols-3 gap-2 md:min-w-[420px]">
           <SummaryMetric label="Income" value={analytics?.total_income} tone="income" loading={loading} />
           <SummaryMetric label="Spent" value={analytics?.total_expense} tone="expense" loading={loading} />
           <SummaryMetric label="Net" value={analytics?.net_cashflow} tone="net" loading={loading} />
@@ -385,7 +387,7 @@ function SummaryMetric({
     net: "text-ink",
   };
   return (
-    <div className="rounded-md bg-surface p-3">
+    <div className="min-w-0 rounded-md bg-surface p-2.5 sm:p-3">
       <p className="text-xs font-medium text-muted">{label}</p>
       <p className={cn("mt-1 truncate text-sm font-semibold", colors[tone])}>
         {loading ? "--" : formatCurrency(value ?? 0)}
@@ -402,7 +404,7 @@ function SmartSearchBar({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="relative min-w-0 flex-1">
+    <label className="relative block min-w-0">
       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
       <input
         value={value}
@@ -429,8 +431,11 @@ function TypeTabs({
   ];
 
   return (
-    <div className="-mx-1 overflow-x-auto px-1">
-      <div className="flex min-w-max gap-2">
+    <div
+      data-scroll-row="transaction-filter-tabs"
+      className="-mx-1 max-w-full overflow-x-auto overscroll-x-contain px-1"
+    >
+      <div className="inline-flex w-max max-w-none gap-2">
         {options.map((option) => {
           const active = value === option.value;
           return (
@@ -464,8 +469,11 @@ function AccountTabs({
   onChange: (value?: string) => void;
 }) {
   return (
-    <div className="-mx-1 overflow-x-auto px-1">
-      <div className="flex min-w-max gap-2">
+    <div
+      data-scroll-row="transaction-filter-tabs"
+      className="-mx-1 max-w-full overflow-x-auto overscroll-x-contain px-1"
+    >
+      <div className="inline-flex w-max max-w-none gap-2">
         <button
           type="button"
           onClick={() => onChange(undefined)}
@@ -517,10 +525,10 @@ function TransactionTimeline({
     0,
   );
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between px-1 text-xs text-muted">
+    <div className="min-w-0 space-y-5">
+      <div className="flex min-w-0 items-center justify-between gap-3 px-1 text-xs text-muted">
         <span>Timeline</span>
-        <span>{totalCount} transactions loaded</span>
+        <span className="shrink-0">{totalCount} transactions loaded</span>
       </div>
       <AnimatePresence initial={false}>
         {grouped.map((group: any) => (
@@ -546,10 +554,10 @@ function TransactionGroupSection({
   onDelete,
 }: any) {
   return (
-    <section className="space-y-2">
-      <div className="flex items-center justify-between px-1">
-        <h2 className="text-sm font-semibold text-ink">{group.label}</h2>
-        <span className="text-xs font-medium text-muted">
+    <section className="min-w-0 space-y-2">
+      <div className="flex min-w-0 items-center justify-between gap-3 px-1">
+        <h2 className="min-w-0 truncate text-sm font-semibold text-ink">{group.label}</h2>
+        <span className="shrink-0 text-xs font-medium text-muted">
           {formatCurrency(group.total)}
         </span>
       </div>
@@ -600,9 +608,9 @@ function TransactionCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index * 0.025, 0.18) }}
-      className="group rounded-md border border-line bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft"
+      className="group min-w-0 rounded-md border border-line bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft"
     >
-      <div className="flex items-start gap-3">
+      <div className="flex min-w-0 items-start gap-3">
         <div
           className={cn(
             "flex h-11 w-11 shrink-0 items-center justify-center rounded-md",
@@ -616,7 +624,7 @@ function TransactionCard({
           <Icon className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
             <div className="min-w-0">
               <p className="truncate font-semibold text-ink">{merchant}</p>
               <p className="truncate text-xs text-muted">
@@ -627,7 +635,7 @@ function TransactionCard({
             </div>
             <p
               className={cn(
-                "shrink-0 text-right text-base font-semibold",
+                "max-w-full truncate text-left text-base font-semibold sm:shrink-0 sm:text-right",
                 type === "income"
                   ? "text-emerald-600"
                   : type === "transfer"
