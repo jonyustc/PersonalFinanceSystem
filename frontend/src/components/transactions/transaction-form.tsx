@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeftRight, CalendarDays, Calculator, ChevronDown, ChevronUp, Save } from "lucide-react";
+import { ArrowLeftRight, CalendarDays, ChevronDown, ChevronUp, Save } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
@@ -409,24 +409,10 @@ export function TransactionForm({
 
       <div className="relative rounded-md border border-slate-200 bg-slate-50 p-3">
         <div className="flex items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => setCalculatorOpen(false)}
-            className="text-sm font-medium text-slate-500"
-          >
-            Amount
-          </button>
-          <button
-            type="button"
-            onClick={() => setCalculatorOpen((current) => !current)}
-            className={cn(
-              "inline-flex h-9 w-9 items-center justify-center rounded-md border border-line bg-white text-muted transition hover:text-brand-700",
-              calculatorOpen && "border-brand-600 bg-brand-50 text-brand-700",
-            )}
-            title={calculatorOpen ? "Hide calculator" : "Show calculator"}
-          >
-            <Calculator className="h-4 w-4" />
-          </button>
+          <span className="text-sm font-medium text-slate-500">Amount</span>
+          <span className="text-xs font-semibold text-muted">
+            Tap amount to {calculatorOpen ? "hide" : "calculate"}
+          </span>
         </div>
         <div className="mt-2 flex items-center gap-3">
           <span className="min-w-[120px] text-2xl font-semibold text-slate-900">
@@ -438,8 +424,7 @@ export function TransactionForm({
             inputMode="decimal"
             placeholder="1200+250"
             value={amountExpression}
-            onClick={() => setCalculatorOpen(true)}
-            onFocus={() => setCalculatorOpen(true)}
+            onClick={() => setCalculatorOpen((current) => !current)}
             onBlur={() => applyAmountExpression()}
             onChange={(event) => {
               setAmountExpression(event.target.value);

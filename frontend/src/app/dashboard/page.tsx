@@ -326,29 +326,6 @@ export default function DashboardPage() {
         <DashboardSkeleton />
       ) : data ? (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {topCards.map((card) => {
-              const Icon = card.icon;
-              return (
-                <button
-                  key={card.label}
-                  type="button"
-                  onClick={() => setHistoryView(card.view())}
-                  className="rounded-md border border-line bg-white p-4 text-left shadow-soft transition hover:border-brand-200 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-brand-100"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-muted">{card.label}</p>
-                    <span className={cn("flex h-9 w-9 items-center justify-center rounded-md", card.tone)}>
-                      <Icon className="h-4 w-4" />
-                    </span>
-                  </div>
-                  <p className="mt-4 text-2xl font-semibold text-ink">{formatCurrency(card.value ?? 0, "BDT")}</p>
-                  <p className="mt-2 text-xs font-medium text-brand-700">View history</p>
-                </button>
-              );
-            })}
-          </div>
-
           <section className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-ink">Active Accounts Balance</h2>
@@ -386,6 +363,29 @@ export default function DashboardPage() {
               </div>
             )}
           </section>
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {topCards.map((card) => {
+              const Icon = card.icon;
+              return (
+                <button
+                  key={card.label}
+                  type="button"
+                  onClick={() => setHistoryView(card.view())}
+                  className="rounded-md border border-line bg-white p-4 text-left shadow-soft transition hover:border-brand-200 hover:shadow-md focus:outline-none focus:ring-4 focus:ring-brand-100"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-muted">{card.label}</p>
+                    <span className={cn("flex h-9 w-9 items-center justify-center rounded-md", card.tone)}>
+                      <Icon className="h-4 w-4" />
+                    </span>
+                  </div>
+                  <p className="mt-4 text-2xl font-semibold text-ink">{formatCurrency(card.value ?? 0, "BDT")}</p>
+                  <p className="mt-2 text-xs font-medium text-brand-700">View history</p>
+                </button>
+              );
+            })}
+          </div>
 
           <section className="space-y-3">
             <div className="flex items-center justify-between">

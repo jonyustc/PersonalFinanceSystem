@@ -47,13 +47,22 @@ class BudgetResponse(BaseModel):
 # 🔥 BUDGET VS ACTUAL (IMPORTANT)
 # =========================
 class BudgetSummaryItem(BaseModel):
-    category_id: UUID
+    category_id: str
     category_name: str
     budget: float
     spent: float
+    remaining: float
+    used_percentage: float
+    overspending: bool
 
 
 class BudgetSummaryResponse(BaseModel):
     month: str
     income: float
+    opening_balance: float = 0
+    total_balance: float = 0
+    total_budget: float = 0
+    total_spent: float = 0
+    planned_balance: float = 0
+    actual_balance: float = 0
     categories: List[BudgetSummaryItem]

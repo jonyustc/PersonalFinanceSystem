@@ -1,4 +1,4 @@
-import { getAccessToken } from "@/services/token-store";
+import { clearAuthSession, getAccessToken } from "@/services/token-store";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ??
@@ -47,6 +47,14 @@ export async function apiRequest<T>(
       typeof body === "object" && body && "detail" in body
         ? String(body.detail)
         : "Request failed";
+
+    if (response.status === 401 && options.auth !== false) {
+      clearAuthSession();
+      if (typeof window !== "undefined" && window.location.pathname !== "/auth/login") {
+        window.location.assign("/auth/login");
+      }
+    }
+
     throw new ApiError(response.status, message, body);
   }
 

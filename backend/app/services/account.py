@@ -124,6 +124,13 @@ class AccountService:
     async def update(self, user_id: UUID, account_id: UUID, payload: AccountUpdate) -> Account:
         account = await self.get(user_id, account_id)
         data = payload.model_dump(exclude_unset=True, exclude={"card_details"})
+        opening_balance_updated = "opening_balance" in data
+        previous_opening_balance = account.opening_balance or ZERO
+        opening_balance_changed = (
+            opening_balance_updated
+            and (data.get("opening_balance") or ZERO) != previous_opening_balance
+        )
+        previous_type = account.type
 
         for field, value in data.items():
             if field == "currency" and value:
@@ -131,6 +138,20 @@ class AccountService:
             if field == "type" and value:
                 value = normalize_account_type(value)
             setattr(account, field, value)
+
+        if opening_balance_changed:
+            opening_balance = account.opening_balance or ZERO
+            if is_credit_card(account):
+                opening_available = max(opening_balance, ZERO)
+                account.balance = ZERO
+                account.current_outstanding = max(
+                    (account.credit_limit or ZERO) - opening_available,
+                    ZERO,
+                )
+            elif previous_type.lower() not in CREDIT_CARD_TYPES:
+                if opening_balance < ZERO:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only card accounts may have a negative opening balance")
+                account.balance = (account.balance or ZERO) + (opening_balance - previous_opening_balance)
 
         if payload.card_details is not None:
             if not is_credit_card(account):
@@ -149,6 +170,9 @@ class AccountService:
                 await self.accounts.create_card_details(details)
 
         if account.credit_card_details:
+            if opening_balance_changed and is_credit_card(account):
+                opening_available = max(account.opening_balance or ZERO, ZERO)
+                account.current_outstanding = max((account.credit_limit or ZERO) - opening_available, ZERO)
             account.credit_limit = account.credit_limit if account.credit_limit is not None else account.credit_card_details.credit_limit
             account.billing_cycle_day = account.billing_cycle_day or account.credit_card_details.statement_day
             account.payment_due_day = account.payment_due_day or account.credit_card_details.due_day

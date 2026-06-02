@@ -1,180 +1,380 @@
 "use client";
 
+import {
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Save,
+  Wallet,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+import { cn, formatCurrency } from "@/lib/utils";
 import {
-  createBudget,
+  deleteBudget,
   fetchBudgets,
-  fetchBudgetSummary, // ✅ IMPORTANT
+  fetchBudgetSummary,
   fetchCategories,
   fetchMonthlyIncome,
   saveMonthlyIncome,
-  updateBudget,
+  upsertBudget,
 } from "@/services/finance-service";
+import type { Category } from "@/types/api";
 
-import { BudgetChart } from "@/components/budgets/budget-chart";
+function monthKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
 
-/* ================= HELPERS ================= */
+function shiftMonth(month: string, offset: number) {
+  const [year, monthIndex] = month.split("-").map(Number);
+  const next = new Date(year, monthIndex - 1 + offset, 1);
+  return monthKey(next);
+}
 
-function getCurrentMonth() {
-  return new Date().toISOString().slice(0, 7);
+function monthLabel(month: string) {
+  const [year, monthIndex] = month.split("-").map(Number);
+  return new Date(year, monthIndex - 1, 1).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
 }
 
 function normalizeIncome(res: any) {
-  if (!res) return 0;
-  if (typeof res === "number") return res;
-  if (res.amount) return Number(res.amount);
-  return 0;
+  return {
+    amount: Number(res?.amount ?? 0),
+    opening_balance: Number(res?.opening_balance ?? 0),
+  };
+}
+
+function isExpenseParent(category: Category) {
+  return category.type?.toLowerCase() === "expense" && !category.parent_id;
 }
 
 export default function BudgetsPage() {
+  const [month, setMonth] = useState(monthKey());
   const [income, setIncome] = useState(0);
-  const [month] = useState(getCurrentMonth());
-
+  const [openingBalance, setOpeningBalance] = useState(0);
   const [budgets, setBudgets] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any>(null); // ✅ NEW
-  const [categories, setCategories] = useState<any[]>([]);
+  const [summary, setSummary] = useState<any>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [draft, setDraft] = useState<Record<string, number>>({});
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  /* ================= LOAD ================= */
-
   useEffect(() => {
     load();
-  }, []);
+  }, [month]);
 
   async function load() {
     try {
       setLoading(true);
+      const [budgetData, summaryData, categoryData, incomeData] =
+        await Promise.all([
+          fetchBudgets(month),
+          fetchBudgetSummary(month),
+          fetchCategories(),
+          fetchMonthlyIncome(month),
+        ]);
 
-      const [b, summaryData, c, inc] = await Promise.all([
-        fetchBudgets(month), // edit
-        fetchBudgetSummary(month), // chart ✅
-        fetchCategories(),
-        fetchMonthlyIncome(month),
-      ]);
-
-      const safeBudgets = Array.isArray(b) ? b : [];
-
-      setBudgets(safeBudgets);
-      setSummary(summaryData); // ✅ IMPORTANT
-      setCategories(Array.isArray(c) ? c : []);
-      setIncome(normalizeIncome(inc));
-
+      const safeBudgets = Array.isArray(budgetData) ? budgetData : [];
+      const monthlyIncome = normalizeIncome(incomeData);
       const map: Record<string, number> = {};
       safeBudgets.forEach((item: any) => {
         map[String(item.category_id)] = Number(item.amount);
       });
 
+      setBudgets(safeBudgets);
+      setSummary(summaryData);
+      setCategories(Array.isArray(categoryData) ? categoryData : []);
+      setIncome(monthlyIncome.amount);
+      setOpeningBalance(monthlyIncome.opening_balance);
       setDraft(map);
     } catch (err) {
-      console.error("LOAD ERROR:", err);
+      console.error("Failed to load budget data", err);
       alert("Failed to load budget data");
     } finally {
       setLoading(false);
     }
   }
 
-  /* ================= CATEGORY ================= */
+  const expenseParents = useMemo(
+    () => categories.filter(isExpenseParent),
+    [categories],
+  );
 
-  const expenseParents = useMemo(() => {
-    return (categories || []).filter(
-      (c) => c.type === "expense" && !c.parent_id,
-    );
-  }, [categories]);
+  const summaryByCategory = useMemo(
+    () =>
+      new Map<string, any>(
+        (summary?.categories ?? []).map((item: any) => [
+          String(item.category_id),
+          item,
+        ]),
+      ),
+    [summary],
+  );
 
-  /* ================= SAVE ================= */
+  const totalBudget = useMemo(
+    () =>
+      expenseParents.reduce(
+        (sum, category) => sum + Number(draft[category.id] ?? 0),
+        0,
+      ),
+    [draft, expenseParents],
+  );
+  const totalBalance = income + openingBalance;
+  const plannedBalance = totalBalance - totalBudget;
+  const totalSpent = Number(summary?.total_spent ?? 0);
+  const actualBalance = totalBalance - totalSpent;
 
   async function saveAll() {
     try {
       setSaving(true);
-
       await saveMonthlyIncome({
         month,
         amount: Number(income),
+        opening_balance: Number(openingBalance),
       });
 
-      for (const catId in draft) {
-        const amount = Number(draft[catId] || 0);
-        if (amount <= 0) continue;
-
+      for (const category of expenseParents) {
+        const amount = Number(draft[category.id] ?? 0);
         const existing = budgets.find(
-          (b) => String(b.category_id) === String(catId),
+          (budget) => String(budget.category_id) === String(category.id),
         );
 
-        if (existing) {
-          await updateBudget(existing.id, { amount });
-        } else {
-          await createBudget({
-            category_id: catId,
-            amount,
-            month,
-          });
+        if (amount > 0) {
+          await upsertBudget({ category_id: category.id, amount, month });
+        } else if (existing) {
+          await deleteBudget(existing.id);
         }
       }
 
-      alert("Budget saved successfully");
-      await load(); // refresh summary also
+      await load();
+      window.dispatchEvent(new Event("finance:data-mutated"));
     } catch (err) {
-      console.error(err);
+      console.error("Save failed", err);
       alert("Save failed");
     } finally {
       setSaving(false);
     }
   }
 
-  /* ================= UI ================= */
-
-  if (loading) return <p>Loading...</p>;
-
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Smart Budget Planner ({month})</h1>
-
-      {/* CATEGORY INPUT */}
-      <div className="bg-white p-4 rounded-xl border">
-        <h2 className="font-semibold mb-3">Category Budgets</h2>
-
-        {expenseParents.map((cat) => (
-          <div key={cat.id} className="flex justify-between py-2 border-b">
-            <span>{cat.name}</span>
-
-            <input
-              type="number"
-              value={draft[cat.id] || 0}
-              onChange={(e) =>
-                setDraft((prev) => ({
-                  ...prev,
-                  [cat.id]: Number(e.target.value),
-                }))
-              }
-              className="input w-32"
-            />
-          </div>
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        {Array.from({ length: 5 }).map((_, index) => (
+          <div key={index} className="h-24 animate-pulse rounded-md bg-white" />
         ))}
       </div>
+    );
+  }
 
-      {/* SAVE */}
-      <div className="flex justify-end">
-        <button
-          disabled={saving}
-          onClick={saveAll}
-          className="bg-blue-600 text-white px-5 py-2 rounded-lg"
-        >
-          {saving ? "Saving..." : "Save Budget"}
-        </button>
+  return (
+    <div className="-mt-4 space-y-4 pb-24 md:mt-0 md:space-y-5">
+      <section className="sticky top-14 z-20 -mx-4 border-y border-line bg-surface/95 px-4 py-3 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-white text-muted"
+            onClick={() => setMonth(shiftMonth(month, -1))}
+            title="Previous month"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className="flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink"
+            onClick={() => setMonth(monthKey())}
+            title="Go to current month"
+          >
+            <CalendarDays className="h-4 w-4 shrink-0 text-brand-700" />
+            <span className="truncate">{monthLabel(month)}</span>
+          </button>
+          <button
+            type="button"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-white text-muted"
+            onClick={() => setMonth(shiftMonth(month, 1))}
+            title="Next month"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      </section>
+
+      <section className="rounded-md border border-line bg-white p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase text-brand-700">
+              Monthly budget plan
+            </p>
+            <h1 className="mt-1 text-xl font-semibold text-ink">
+              Budget {monthLabel(month)}
+            </h1>
+            <p className="mt-1 text-sm text-muted">
+              Plan category cost, then compare with real expense in reports.
+            </p>
+          </div>
+          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+            <Wallet className="h-4 w-4" />
+          </span>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <MoneyInput
+            label="Total income"
+            value={income}
+            onChange={setIncome}
+          />
+          <MoneyInput
+            label="Last month balance"
+            value={openingBalance}
+            onChange={setOpeningBalance}
+          />
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <PlanMetric label="Total balance" value={totalBalance} />
+          <PlanMetric label="Total cost" value={totalBudget} />
+          <PlanMetric
+            label="Plan balance"
+            value={plannedBalance}
+            warn={plannedBalance < 0}
+          />
+          <PlanMetric
+            label="Actual balance"
+            value={actualBalance}
+            warn={actualBalance < 0}
+          />
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold text-ink">Category budgets</h2>
+          <span className="text-sm text-muted">
+            {expenseParents.length} categories
+          </span>
+        </div>
+
+        {expenseParents.length === 0 ? (
+          <div className="rounded-md border border-dashed border-line bg-white p-6 text-center text-sm text-muted">
+            Add parent expense categories like Needs, Want, Loan, Investment.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {expenseParents.map((category) => {
+              const planned = Number(draft[category.id] ?? 0);
+              const item = summaryByCategory.get(String(category.id));
+              const spent = Number(item?.spent ?? 0);
+              const used = planned > 0 ? Math.min((spent / planned) * 100, 999) : 0;
+              const over = planned > 0 && spent > planned;
+
+              return (
+                <article
+                  key={category.id}
+                  className={cn(
+                    "rounded-md border bg-white p-4 shadow-sm",
+                    over ? "border-rose-200" : "border-line",
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate font-semibold text-ink">
+                        {category.name}
+                      </h3>
+                      <p className="mt-1 text-xs text-muted">
+                        Spent {formatCurrency(spent)} of {formatCurrency(planned)}
+                      </p>
+                    </div>
+                    <input
+                      type="number"
+                      min={0}
+                      inputMode="decimal"
+                      value={draft[category.id] ?? ""}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          [category.id]: Number(event.target.value || 0),
+                        }))
+                      }
+                      className="h-10 w-32 rounded-md border border-line bg-surface px-3 text-right text-sm font-semibold outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
+                    />
+                  </div>
+                  <div className="mt-3 h-2 rounded-full bg-slate-100">
+                    <div
+                      className={cn(
+                        "h-2 rounded-full",
+                        over ? "bg-rose-500" : "bg-emerald-600",
+                      )}
+                      style={{ width: `${Math.min(used, 100)}%` }}
+                    />
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-xs">
+                    <span className={over ? "text-rose-600" : "text-muted"}>
+                      {used.toFixed(0)}% used
+                    </span>
+                    <span className={over ? "font-semibold text-rose-600" : "text-muted"}>
+                      Remaining {formatCurrency(planned - spent)}
+                    </span>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <div className="sticky bottom-0 z-20 -mx-4 border-t border-line bg-white/95 px-4 py-3 backdrop-blur md:mx-0 md:rounded-md md:border">
+        <Button className="w-full" disabled={saving} onClick={saveAll}>
+          <Save className="h-4 w-4" />
+          {saving ? "Saving..." : "Save monthly budget"}
+        </Button>
       </div>
+    </div>
+  );
+}
 
-      {/* 🔥 FIXED CHART */}
-      <BudgetChart
-        data={(summary?.categories || []).map((c: any) => ({
-          category_name: c.category_name,
-          budget: c.budget,
-          spent: c.spent, // ✅ THIS WAS MISSING
-        }))}
+function MoneyInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-xs font-semibold text-muted">
+        {label}
+      </span>
+      <input
+        type="number"
+        min={0}
+        inputMode="decimal"
+        value={value || ""}
+        onChange={(event) => onChange(Number(event.target.value || 0))}
+        className="h-11 w-full rounded-md border border-line bg-surface px-3 text-sm font-semibold text-ink outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
       />
+    </label>
+  );
+}
+
+function PlanMetric({
+  label,
+  value,
+  warn = false,
+}: {
+  label: string;
+  value: number;
+  warn?: boolean;
+}) {
+  return (
+    <div className={cn("min-w-0 rounded-md bg-surface p-3", warn && "bg-rose-50")}>
+      <p className="text-xs font-medium text-muted">{label}</p>
+      <p className={cn("mt-1 truncate text-sm font-semibold", warn ? "text-rose-600" : "text-ink")}>
+        {formatCurrency(value)}
+      </p>
     </div>
   );
 }

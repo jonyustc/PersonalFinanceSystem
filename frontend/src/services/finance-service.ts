@@ -153,6 +153,12 @@ export const createBudget = (payload: BudgetCreatePayload) =>
     body: JSON.stringify(payload),
   });
 
+export const upsertBudget = (payload: BudgetCreatePayload) =>
+  apiRequest<Budget>("/budgets/upsert", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
 export const updateBudget = (id: string, payload: BudgetUpdatePayload) =>
   apiRequest<Budget>(`/budgets/${id}`, {
     method: "PATCH",
@@ -264,7 +270,11 @@ export const fetchNetWorthTrend = () =>
 export const fetchMonthlyIncome = (month: string) =>
   apiRequest<{ amount: number }>(`/budgets/income?month=${month}`);
 
-export const saveMonthlyIncome = (payload: { month: string; amount: number }) =>
+export const saveMonthlyIncome = (payload: {
+  month: string;
+  amount: number;
+  opening_balance?: number;
+}) =>
   apiRequest("/budgets/income", {
     method: "POST",
     body: JSON.stringify(payload),

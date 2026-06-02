@@ -76,6 +76,7 @@ class AccountCreate(BaseModel):
 class AccountUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     type: AccountType | None = None
+    opening_balance: Decimal | None = None
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     notes: str | None = None
     is_active: bool | None = None
@@ -94,6 +95,17 @@ class AccountUpdate(BaseModel):
     @classmethod
     def uppercase_currency(cls, value: str | None) -> str | None:
         return value.upper() if value else value
+
+    @model_validator(mode="after")
+    def validate_opening_balance(self) -> "AccountUpdate":
+        if (
+            self.opening_balance is not None
+            and self.type
+            and self.type.lower() not in {"card", "credit_card"}
+            and self.opening_balance < 0
+        ):
+            raise ValueError("Only card accounts may have a negative opening balance")
+        return self
 
 
 class AccountResponse(BaseModel):

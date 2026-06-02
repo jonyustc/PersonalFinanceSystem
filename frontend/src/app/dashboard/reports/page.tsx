@@ -3,12 +3,10 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowDownRight,
-  ArrowUpRight,
+  ArrowLeft,
   CalendarDays,
+  ChevronLeft,
   ChevronRight,
-  RefreshCcw,
-  Sparkles,
-  Wallet,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -17,27 +15,41 @@ import {
   ExpenseHierarchyChart,
   type ExpenseSlice,
 } from "@/components/reports/expense-hierarchy-chart";
-import { NetWorthLine } from "@/components/reports/networth-line";
-import { Heatmap } from "@/components/transactions/heatmap";
-import { StatCard } from "@/components/ui/stat-card";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import {
+  fetchBudgetSummary,
   fetchCategorySpending,
   fetchCategoryTree,
-  fetchNetWorthTrend,
   fetchTransactionAnalytics,
   fetchTransactions,
 } from "@/services/finance-service";
 import type { Category, Transaction, TransactionAnalytics } from "@/types/api";
 
-const windows = [
-  { key: "30", label: "Last 30 days" },
-  { key: "90", label: "Last 90 days" },
-  { key: "180", label: "Last 6 months" },
-];
+function monthKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
 
-function isoDate(date: Date) {
-  return date.toISOString().slice(0, 10);
+function monthRange(month: string) {
+  const [year, monthIndex] = month.split("-").map(Number);
+  const first = new Date(year, monthIndex - 1, 1);
+  const last = new Date(year, monthIndex, 0);
+  const format = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return { fromDate: format(first), toDate: format(last) };
+}
+
+function shiftMonth(month: string, offset: number) {
+  const [year, monthIndex] = month.split("-").map(Number);
+  const next = new Date(year, monthIndex - 1 + offset, 1);
+  return monthKey(next);
+}
+
+function monthLabel(month: string) {
+  const [year, monthIndex] = month.split("-").map(Number);
+  return new Date(year, monthIndex - 1, 1).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
 }
 
 function findCategoryPath(
@@ -56,33 +68,23 @@ function findCategoryPath(
   return null;
 }
 
+function expenseCategories(categories: Category[]) {
+  return categories.filter((category) => category.type?.toLowerCase() === "expense");
+}
+
 export default function ReportsPage() {
-  const [range, setRange] = useState("30");
+  const [month, setMonth] = useState(monthKey());
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
     null,
   );
   const [activeCategory, setActiveCategory] = useState<Category | null>(null);
 
-  const { fromDate, toDate } = useMemo(() => {
-    const now = new Date();
-    const start = new Date(now);
-    start.setDate(now.getDate() - Number(range));
-    return {
-      fromDate: isoDate(start),
-      toDate: isoDate(now),
-    };
-  }, [range]);
+  const { fromDate, toDate } = useMemo(() => monthRange(month), [month]);
 
   const analyticsQuery = useQuery({
-    queryKey: ["reports-analytics", fromDate, toDate],
+    queryKey: ["reports-analytics", fromDate, toDate, "expense"],
     queryFn: () =>
       fetchTransactionAnalytics({ from_date: fromDate, to_date: toDate }),
-    keepPreviousData: true,
-  });
-
-  const netWorthQuery = useQuery({
-    queryKey: ["reports-net-worth"],
-    queryFn: fetchNetWorthTrend,
   });
 
   const categoryTreeQuery = useQuery({
@@ -91,9 +93,14 @@ export default function ReportsPage() {
   });
 
   const categorySpendingQuery = useQuery({
-    queryKey: ["category-spending", fromDate, toDate],
+    queryKey: ["category-spending", fromDate, toDate, "expense"],
     queryFn: () =>
       fetchCategorySpending({ from_date: fromDate, to_date: toDate }),
+  });
+
+  const budgetSummaryQuery = useQuery({
+    queryKey: ["budget-summary", month],
+    queryFn: () => fetchBudgetSummary(month),
   });
 
   const activeTransactionsQuery = useQuery({
@@ -106,15 +113,14 @@ export default function ReportsPage() {
         to_date: toDate,
         type: "expense",
       }),
-    keepPreviousData: true,
   });
 
   const analytics = analyticsQuery.data as TransactionAnalytics | undefined;
-  const netWorth = netWorthQuery.data || [];
-  const categories = categoryTreeQuery.data ?? [];
+  const budgetSummary = budgetSummaryQuery.data as any;
+  const categories = expenseCategories(categoryTreeQuery.data ?? []);
   const categorySpending = categorySpendingQuery.data ?? [];
 
-  const amountByCategory = useMemo(
+  const directAmountByCategory = useMemo(
     () =>
       new Map(
         categorySpending
@@ -124,6 +130,20 @@ export default function ReportsPage() {
     [categorySpending],
   );
 
+  const categoryTotal = useMemo(() => {
+    const totals = new Map<string, number>();
+    const visit = (category: Category): number => {
+      const own = directAmountByCategory.get(category.id) ?? 0;
+      const childTotal =
+        category.children?.reduce((sum, child) => sum + visit(child), 0) ?? 0;
+      const total = own + childTotal;
+      totals.set(category.id, total);
+      return total;
+    };
+    categories.forEach(visit);
+    return totals;
+  }, [categories, directAmountByCategory]);
+
   const selectedPath = useMemo(
     () =>
       selectedCategoryId
@@ -132,9 +152,9 @@ export default function ReportsPage() {
     [categories, selectedCategoryId],
   );
 
-  const selectedRoot = selectedPath[selectedPath.length - 1] ?? null;
-  const currentLevel = selectedRoot?.children?.length
-    ? selectedRoot.children
+  const selectedCategory = selectedPath[selectedPath.length - 1] ?? null;
+  const currentLevel = selectedCategory?.children?.length
+    ? expenseCategories(selectedCategory.children)
     : categories;
 
   const slices: ExpenseSlice[] = useMemo(
@@ -143,233 +163,237 @@ export default function ReportsPage() {
         .map((category) => ({
           id: category.id,
           label: category.name,
-          value: amountByCategory.get(category.id) ?? 0,
-          childrenCount: category.children?.length ?? 0,
+          value: categoryTotal.get(category.id) ?? 0,
+          childrenCount: expenseCategories(category.children ?? []).length,
         }))
-        .filter((slice) => slice.value > 0),
-    [currentLevel, amountByCategory],
+        .filter((slice) => slice.value > 0)
+        .sort((a, b) => b.value - a.value),
+    [currentLevel, categoryTotal],
   );
 
   const totalExpense = Number(analytics?.total_expense ?? 0);
-  const currentTotal = selectedRoot
-    ? Number(amountByCategory.get(selectedRoot.id) ?? 0)
-    : slices.reduce((sum, slice) => sum + slice.value, 0);
+  const totalIncome = Number(analytics?.total_income ?? 0);
+  const averageSpend = Number(analytics?.average_daily_spending ?? 0);
+  const selectedTotal = selectedCategory
+    ? categoryTotal.get(selectedCategory.id) ?? 0
+    : totalExpense;
+  const selectedPercent =
+    totalExpense > 0 ? Math.round((selectedTotal / totalExpense) * 100) : 0;
 
-  const breadcrumbPath = activeCategory
-    ? (findCategoryPath(categories, activeCategory.id) ?? [])
-    : selectedPath;
+  function resetDrilldown() {
+    setSelectedCategoryId(null);
+    setActiveCategory(null);
+  }
 
-  const insightText = selectedRoot
-    ? `${selectedRoot.name} represents ${totalExpense ? Math.round((currentTotal / totalExpense) * 100) : 0}% of your tracked spending.`
-    : "Tap a category slice to reveal subcategories and the underlying transaction story.";
+  function handleMonthChange(nextMonth: string) {
+    setMonth(nextMonth);
+    resetDrilldown();
+  }
 
-  const summaryStats = [
-    {
-      label: "Net cashflow",
-      value: analytics?.net_cashflow ?? "0",
-      icon: ArrowUpRight,
-      tone: "green",
-    },
-    {
-      label: "Income",
-      value: analytics?.total_income ?? "0",
-      icon: Wallet,
-      tone: "blue",
-    },
-    {
-      label: "Expense",
-      value: analytics?.total_expense ?? "0",
-      icon: ArrowDownRight,
-      tone: "amber",
-    },
-    {
-      label: "Avg daily spend",
-      value: analytics?.average_daily_spending ?? "0",
-      icon: Sparkles,
-      tone: "blue",
-    },
-  ];
-
-  const handleSliceClick = (id: string) => {
+  function handleSliceClick(id: string) {
     const path = findCategoryPath(categories, id);
     if (!path) return;
-    const node = path[path.length - 1];
-    if (node.children?.length) {
+    const category = path[path.length - 1];
+    if (expenseCategories(category.children ?? []).length > 0) {
       setSelectedCategoryId(id);
       setActiveCategory(null);
       return;
     }
-    setActiveCategory(node);
-  };
+    setActiveCategory(category);
+  }
+
+  const loading =
+    analyticsQuery.isLoading ||
+    categoryTreeQuery.isLoading ||
+    categorySpendingQuery.isLoading;
 
   return (
-    <div className="space-y-6">
-      <section className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur-sm py-4">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="text-sm uppercase tracking-[0.2em] text-slate-500">
-                Reports
-              </p>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-                Your spending story, made actionable
-              </h1>
-              <p className="mt-2 max-w-2xl text-sm text-slate-600">
-                Deep category stories, merchant signals and transaction
-                drilldowns for smarter monthly choices.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {windows.map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => setRange(option.key)}
-                  className={`rounded-full border px-4 py-2 text-sm transition ${
-                    range === option.key
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
+    <div className="-mt-4 space-y-4 pb-8 md:mt-0 md:space-y-5">
+      <section className="sticky top-14 z-20 -mx-4 border-y border-line bg-surface/95 px-4 py-3 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-white text-muted"
+            onClick={() => handleMonthChange(shiftMonth(month, -1))}
+            title="Previous month"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className="flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink"
+            onClick={() => handleMonthChange(monthKey())}
+            title="Go to current month"
+          >
+            <CalendarDays className="h-4 w-4 shrink-0 text-brand-700" />
+            <span className="truncate">{monthLabel(month)}</span>
+          </button>
+          <button
+            type="button"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-white text-muted"
+            onClick={() => handleMonthChange(shiftMonth(month, 1))}
+            title="Next month"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {summaryStats.map((stat) => (
-            <StatCard
-              key={stat.label}
-              label={stat.label}
-              value={stat.value}
-              icon={stat.icon}
-            />
-          ))}
+      <section className="rounded-md border border-line bg-white p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase text-brand-700">
+              Expense report
+            </p>
+            <h1 className="mt-1 text-xl font-semibold text-ink">
+              {selectedCategory?.name ?? "All parent categories"}
+            </h1>
+            <p className="mt-1 text-sm text-muted">
+              {selectedCategory
+                ? `${selectedPercent}% of ${monthLabel(month)} spending`
+                : "Parent categories first. Tap one to see subcategories."}
+            </p>
+          </div>
+          {selectedCategory ? (
+            <button
+              type="button"
+              onClick={() => setSelectedCategoryId(null)}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line bg-surface text-muted"
+              title="Back to parent categories"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+          ) : (
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-rose-50 text-rose-600">
+              <ArrowDownRight className="h-4 w-4" />
+            </span>
+          )}
         </div>
 
-        <div className="mt-6 grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-          <div className="space-y-4">
-            <div className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm text-slate-500">Expense insight</p>
-                  <h2 className="mt-2 text-xl font-semibold text-slate-900">
-                    {selectedRoot?.name ?? "Active spending"}
-                  </h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedCategoryId(null);
-                    setActiveCategory(null);
-                  }}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 hover:border-slate-300"
-                >
-                  <RefreshCcw className="h-4 w-4" /> Reset
-                </button>
-              </div>
-              <p className="mt-4 text-sm leading-6 text-slate-600">
-                {insightText}
-              </p>
-              <div className="mt-6">
-                <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-500">
-                  <span>Current view</span>
-                  <ChevronRight className="h-3.5 w-3.5" />
-                  <span>
-                    {selectedRoot ? `${selectedRoot.name}` : "All expenses"}
-                  </span>
-                </div>
-              </div>
-            </div>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <ReportMetric label="Spent" value={totalExpense} loading={loading} />
+          <ReportMetric label="Income" value={totalIncome} loading={loading} />
+          <ReportMetric label="Avg/day" value={averageSpend} loading={loading} />
+        </div>
+      </section>
 
-            <ExpenseHierarchyChart
-              data={slices}
-              selectedId={selectedCategoryId ?? activeCategory?.id}
-              onSliceClick={handleSliceClick}
-            />
+      <ExpenseHierarchyChart
+        data={slices}
+        selectedId={selectedCategoryId ?? activeCategory?.id}
+        title={selectedCategory ? `${selectedCategory.name} subcategories` : "Parent categories"}
+        total={selectedCategory ? selectedTotal : totalExpense}
+        subtitle={
+          selectedCategory
+            ? "Tap a subcategory to view transactions."
+            : "Tap a parent category to drill down."
+        }
+        onSliceClick={handleSliceClick}
+      />
 
-            <div className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
-              <h3 className="text-base font-semibold text-slate-900">
-                Drilldown navigation
-              </h3>
-              <div className="mt-4 flex flex-wrap gap-2 text-sm text-slate-600">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedCategoryId(null);
-                    setActiveCategory(null);
-                  }}
-                  className="rounded-full bg-slate-50 px-3 py-2"
-                >
-                  All expenses
-                </button>
-                {selectedPath.map((category) => (
-                  <button
-                    key={category.id}
-                    type="button"
-                    onClick={() => setSelectedCategoryId(category.id)}
-                    className="rounded-full bg-slate-50 px-3 py-2"
-                  >
-                    {category.name}
-                  </button>
-                ))}
-              </div>
-            </div>
+      {selectedPath.length > 0 ? (
+        <section className="rounded-md border border-line bg-white p-3 shadow-sm">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={resetDrilldown}
+              className="rounded-full bg-surface px-3 py-1.5 text-xs font-semibold text-muted"
+            >
+              All expenses
+            </button>
+            {selectedPath.map((category) => (
+              <button
+                key={category.id}
+                type="button"
+                onClick={() => {
+                  setSelectedCategoryId(category.id);
+                  setActiveCategory(null);
+                }}
+                className={cn(
+                  "rounded-full px-3 py-1.5 text-xs font-semibold",
+                  category.id === selectedCategoryId
+                    ? "bg-brand-600 text-white"
+                    : "bg-surface text-muted",
+                )}
+              >
+                {category.name}
+              </button>
+            ))}
           </div>
+        </section>
+      ) : null}
 
-          <div className="space-y-4">
-            <div className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm text-slate-500">Trend storytelling</p>
-                  <h2 className="mt-2 text-xl font-semibold text-slate-900">
-                    Spending heatmap
-                  </h2>
-                </div>
-                <CalendarDays className="h-5 w-5 text-slate-400" />
-              </div>
-              <div className="mt-5">
-                <Heatmap data={analytics?.expense_heatmap ?? []} />
-              </div>
-            </div>
+      <section className="rounded-md border border-line bg-white p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-ink">Budget vs expense</p>
+            <p className="mt-1 text-xs text-muted">
+              {monthLabel(month)} plan compared with posted expenses.
+            </p>
+          </div>
+          <span
+            className={cn(
+              "rounded-full px-3 py-1 text-xs font-semibold",
+              Number(budgetSummary?.actual_balance ?? 0) < 0
+                ? "bg-rose-50 text-rose-600"
+                : "bg-emerald-50 text-emerald-700",
+            )}
+          >
+            Balance {formatCurrency(Number(budgetSummary?.actual_balance ?? 0))}
+          </span>
+        </div>
 
-            <div className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm text-slate-500">Top merchants</p>
-                  <h2 className="mt-2 text-xl font-semibold text-slate-900">
-                    Merchant velocity
-                  </h2>
-                </div>
-              </div>
-              <div className="mt-4 space-y-3">
-                {analytics?.top_merchants?.slice(0, 4).map((merchant) => (
-                  <div
-                    key={merchant.label}
-                    className="flex justify-between rounded-3xl bg-slate-50 px-4 py-3"
-                  >
-                    <span className="text-sm font-medium text-slate-900">
-                      {merchant.label}
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <ReportMetric
+            label="Total budget"
+            value={Number(budgetSummary?.total_budget ?? 0)}
+            loading={budgetSummaryQuery.isLoading}
+          />
+          <ReportMetric
+            label="Spent"
+            value={Number(budgetSummary?.total_spent ?? 0)}
+            loading={budgetSummaryQuery.isLoading}
+          />
+          <ReportMetric
+            label="Planned left"
+            value={Number(budgetSummary?.planned_balance ?? 0)}
+            loading={budgetSummaryQuery.isLoading}
+          />
+        </div>
+
+        <div className="mt-4 space-y-2">
+          {(budgetSummary?.categories ?? []).length ? (
+            budgetSummary.categories.map((item: any) => {
+              const budget = Number(item.budget ?? 0);
+              const spent = Number(item.spent ?? 0);
+              const used = budget > 0 ? Math.min((spent / budget) * 100, 100) : 0;
+              const over = spent > budget;
+              return (
+                <div key={item.category_id} className="rounded-md bg-surface p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="min-w-0 truncate text-sm font-semibold text-ink">
+                      {item.category_name}
                     </span>
-                    <span className="text-sm text-slate-700">
-                      {formatCurrency(merchant.amount)}
+                    <span className={cn("shrink-0 text-sm font-semibold", over ? "text-rose-600" : "text-ink")}>
+                      {formatCurrency(spent)} / {formatCurrency(budget)}
                     </span>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500">Month-over-month</p>
-              <div className="mt-5 h-64">
-                <NetWorthLine data={netWorth} />
-              </div>
-            </div>
-          </div>
+                  <div className="mt-2 h-2 rounded-full bg-white">
+                    <div
+                      className={cn("h-2 rounded-full", over ? "bg-rose-500" : "bg-emerald-600")}
+                      style={{ width: `${used}%` }}
+                    />
+                  </div>
+                  <p className={cn("mt-1 text-xs", over ? "text-rose-600" : "text-muted")}>
+                    Remaining {formatCurrency(budget - spent)}
+                  </p>
+                </div>
+              );
+            })
+          ) : (
+            <p className="rounded-md border border-dashed border-line p-4 text-sm text-muted">
+              No budget plan found for this month.
+            </p>
+          )}
         </div>
       </section>
 
@@ -383,6 +407,25 @@ export default function ReportsPage() {
         loading={activeTransactionsQuery.isFetching}
         onClose={() => setActiveCategory(null)}
       />
+    </div>
+  );
+}
+
+function ReportMetric({
+  label,
+  value,
+  loading,
+}: {
+  label: string;
+  value: number;
+  loading: boolean;
+}) {
+  return (
+    <div className="min-w-0 rounded-md bg-surface p-2.5">
+      <p className="text-xs font-medium text-muted">{label}</p>
+      <p className="mt-1 truncate text-sm font-semibold text-ink">
+        {loading ? "--" : formatCurrency(value)}
+      </p>
     </div>
   );
 }

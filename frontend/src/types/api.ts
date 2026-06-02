@@ -80,6 +80,7 @@ export type AccountCreatePayload = {
 export type AccountUpdatePayload = {
   name?: string;
   type?: AccountType;
+  opening_balance?: number;
   currency?: string;
   notes?: string | null;
   is_active?: boolean;

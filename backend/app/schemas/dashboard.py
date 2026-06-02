@@ -36,10 +36,13 @@ class MonthlyCashflow(BaseModel):
 # BUDGET SUMMARY
 # =========================
 class BudgetCategory(BaseModel):
-    category_id: int
+    category_id: str
     category_name: str
     budget: Decimal
     spent: Decimal
+    remaining: Decimal = Decimal("0")
+    used_percentage: Decimal = Decimal("0")
+    overspending: bool = False
 
     class Config:
         from_attributes = True
@@ -48,6 +51,12 @@ class BudgetCategory(BaseModel):
 class BudgetSummary(BaseModel):
     month: str
     income: Decimal
+    opening_balance: Decimal = Decimal("0")
+    total_balance: Decimal = Decimal("0")
+    total_budget: Decimal = Decimal("0")
+    total_spent: Decimal = Decimal("0")
+    planned_balance: Decimal = Decimal("0")
+    actual_balance: Decimal = Decimal("0")
     categories: List[BudgetCategory]
 
     class Config:

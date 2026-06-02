@@ -7,7 +7,7 @@ from typing import List
 from app.api.v1.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.budget import BudgetCreate, BudgetUpdate, BudgetResponse
+from app.schemas.budget import BudgetCreate, BudgetUpdate, BudgetResponse, BudgetSummaryResponse
 from app.services.budget import BudgetService
 
 router = APIRouter()
@@ -29,6 +29,7 @@ async def get_budgets(
 # =========================
 # CREATE
 # =========================
+@router.post("", response_model=BudgetResponse)
 @router.post("/", response_model=BudgetResponse)
 async def create_budget(
     payload: BudgetCreate,
@@ -53,6 +54,17 @@ async def update_budget(
     return await service.update_budget(current_user.id, budget_id, payload)
 
 
+@router.delete("/{budget_id}")
+async def delete_budget(
+    budget_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    service = BudgetService(db)
+    await service.delete_budget(current_user.id, budget_id)
+    return {"success": True}
+
+
 # =========================
 # UPSERT (🔥 BEST FOR FRONTEND)
 # =========================
@@ -69,7 +81,7 @@ async def upsert_budget(
 # =========================
 # ✅ BUDGET SUMMARY (FIX)
 # =========================
-@router.get("/summary")
+@router.get("/summary", response_model=BudgetSummaryResponse)
 async def get_budget_summary(
     month: str,
     current_user: User = Depends(get_current_user),

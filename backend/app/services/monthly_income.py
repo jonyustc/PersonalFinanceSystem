@@ -28,11 +28,13 @@ class MonthlyIncomeService:
 
         if existing:
             existing.amount = payload.amount
+            existing.opening_balance = payload.opening_balance
         else:
             existing = MonthlyIncome(
                 user_id=user_id,
                 month=payload.month,
                 amount=payload.amount,
+                opening_balance=payload.opening_balance,
             )
             self.db.add(existing)
 

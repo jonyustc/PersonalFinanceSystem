@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import select, func, extract
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +13,22 @@ from app.services.account import AccountService
 class ReportService:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    def _date_range_conditions(self, from_date=None, to_date=None):
+        conditions = []
+        if from_date:
+            start = date.fromisoformat(from_date) if isinstance(from_date, str) else from_date
+            if isinstance(start, date) and not isinstance(start, datetime):
+                start = datetime.combine(start, time.min)
+            conditions.append(Transaction.txn_date >= start)
+        if to_date:
+            end = date.fromisoformat(to_date) if isinstance(to_date, str) else to_date
+            if isinstance(end, date) and not isinstance(end, datetime):
+                end = datetime.combine(end + timedelta(days=1), time.min)
+                conditions.append(Transaction.txn_date < end)
+            else:
+                conditions.append(Transaction.txn_date <= end)
+        return conditions
 
     async def monthly_expenses(self, user_id, month, year):
         stmt = (
@@ -56,10 +73,7 @@ class ReportService:
             Transaction.user_id == user_id,
             Transaction.type == "expense",
         ]
-        if from_date:
-            conditions.append(Transaction.txn_date >= from_date)
-        if to_date:
-            conditions.append(Transaction.txn_date <= to_date)
+        conditions.extend(self._date_range_conditions(from_date, to_date))
 
         stmt = (
             select(

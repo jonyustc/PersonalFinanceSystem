@@ -704,7 +704,3 @@ function AddExpenseForm({
   );
 }
 
-// local useState import (already imported at top, just listed here for clarity)
-function useState<T>(init: T): [T, React.Dispatch<React.SetStateAction<T>>] {
-  return require("react").useState(init);
-}

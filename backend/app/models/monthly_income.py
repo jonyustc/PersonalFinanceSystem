@@ -37,6 +37,12 @@ class MonthlyIncome(UUIDMixin, TimestampMixin, Base):
         nullable=False,
     )
 
+    opening_balance: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2),
+        nullable=False,
+        default=Decimal("0"),
+    )
+
     user: Mapped["User"] = relationship(
         "User",
         back_populates="monthly_incomes",

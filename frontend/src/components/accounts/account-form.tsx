@@ -119,14 +119,9 @@ export function AccountForm({ account, onSubmit, onCancel }: Props) {
               due_day: values.due_day ? Number(values.due_day) : null,
             }
           : null,
+      opening_balance: values.opening_balance,
     };
-
-    if (isEditing) {
-      await onSubmit(basePayload);
-      return;
-    }
-
-    await onSubmit({ ...basePayload, opening_balance: values.opening_balance });
+    await onSubmit(basePayload);
   }
 
   return (
@@ -161,7 +156,6 @@ export function AccountForm({ account, onSubmit, onCancel }: Props) {
           label={selectedType === "credit_card" ? "Opening available limit" : "Opening balance"}
           type="number"
           step="0.01"
-          disabled={isEditing}
           error={errors.opening_balance?.message}
           {...register("opening_balance")}
         />

@@ -86,6 +86,7 @@ export function TransactionExperience() {
   const [filters, setFilters] = useState<TransactionFilters>({
     from_date: todayIso,
     to_date: todayIso,
+    type: "expense",
     limit: 30,
   });
   const [searchDraft, setSearchDraft] = useState("");
@@ -176,7 +177,7 @@ export function TransactionExperience() {
   }
 
   return (
-    <div className="w-full max-w-full overflow-x-hidden min-h-[calc(100vh-7rem)] space-y-4 pb-28 md:space-y-5 md:pb-6">
+    <div className="-mt-4 w-full max-w-full overflow-x-hidden min-h-[calc(100vh-7rem)] space-y-4 pb-28 md:mt-0 md:space-y-5 md:pb-6">
       <section className="sticky top-14 z-20 -mx-4 overflow-hidden border-y border-line bg-surface/95 px-4 py-3 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border">
         <div className="min-w-0 space-y-3">
           <SmartSearchBar value={searchDraft} onChange={setSearchDraft} />
@@ -215,7 +216,7 @@ export function TransactionExperience() {
                 type="button"
                 onClick={() => {
                   setSearchDraft("");
-                  setFilters({ from_date: todayIso, to_date: todayIso, limit: 30 });
+                  setFilters({ from_date: todayIso, to_date: todayIso, type: "expense", limit: 30 });
                 }}
                 className="inline-flex h-11 shrink-0 items-center justify-center rounded-md border border-line bg-white px-3 text-xs font-semibold text-muted"
               >
