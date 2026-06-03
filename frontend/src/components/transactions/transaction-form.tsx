@@ -98,7 +98,8 @@ const schema = z
     },
   );
 
-type FormValues = z.infer<typeof schema>;
+type FormInput = z.input<typeof schema>;
+type FormValues = z.output<typeof schema>;
 
 type Props = {
   accounts: Account[];
@@ -141,7 +142,7 @@ export function TransactionForm({
     setValue,
     watch,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({
+  } = useForm<FormInput, any, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       type: transaction?.type ?? "expense",
@@ -159,6 +160,7 @@ export function TransactionForm({
 
   const type = useWatch({ control, name: "type" });
   const amount = useWatch({ control, name: "amount" });
+  const amountNumber = Number(amount || 0);
   const categoryId = useWatch({ control, name: "category_id" });
   const description = useWatch({ control, name: "description" });
   const fromId = useWatch({ control, name: "account_id" });
@@ -296,25 +298,25 @@ export function TransactionForm({
   let previewFromOutstanding = fromOutstanding;
   let previewToOutstanding = toOutstanding;
 
-  if (amount > 0) {
+  if (amountNumber > 0) {
     if (type === "expense") {
       if (isFromCreditCard) {
-        previewFromOutstanding = fromOutstanding + amount;
+        previewFromOutstanding = fromOutstanding + amountNumber;
       } else {
-        previewFrom = fromBalance - amount;
+        previewFrom = fromBalance - amountNumber;
       }
     }
 
     if (type === "transfer") {
       if (isCardPayment) {
-        previewFrom = fromBalance - amount;
-        previewToOutstanding = Math.max(toOutstanding - amount, 0);
+        previewFrom = fromBalance - amountNumber;
+        previewToOutstanding = Math.max(toOutstanding - amountNumber, 0);
       } else if (isCardSpendingTransfer) {
-        previewFromOutstanding = fromOutstanding + amount;
-        previewTo = toBalance + amount;
+        previewFromOutstanding = fromOutstanding + amountNumber;
+        previewTo = toBalance + amountNumber;
       } else {
-        previewFrom = fromBalance - amount;
-        previewTo = toBalance + amount;
+        previewFrom = fromBalance - amountNumber;
+        previewTo = toBalance + amountNumber;
       }
     }
   }
@@ -322,8 +324,8 @@ export function TransactionForm({
   const insufficient =
     !isFromCreditCard &&
     (type === "expense" || isTransfer) &&
-    amount > 0 &&
-    fromBalance < amount;
+    amountNumber > 0 &&
+    fromBalance < amountNumber;
 
   function handleSwap() {
     const from = watch("account_id");
@@ -420,7 +422,7 @@ export function TransactionForm({
         </div>
         <div className="mt-2 flex items-center gap-3">
           <span className="min-w-[120px] text-2xl font-semibold text-slate-900">
-            {amount ? formatCurrency(amount) : "$0.00"}
+            {amountNumber ? formatCurrency(amountNumber) : "$0.00"}
           </span>
           <input
             ref={amountRef}
@@ -527,7 +529,7 @@ export function TransactionForm({
           </button>
         )}
 
-        {fromAccount && amount > 0 && (
+        {fromAccount && amountNumber > 0 && (
           <div className="text-xs space-y-1">
             <div>
               From: {formatCurrency(fromBalance)} →{" "}

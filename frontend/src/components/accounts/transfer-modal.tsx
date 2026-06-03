@@ -26,7 +26,8 @@ const schema = z
     message: "Choose a different destination",
   });
 
-type FormValues = z.infer<typeof schema>;
+type FormInput = z.input<typeof schema>;
+type FormValues = z.output<typeof schema>;
 
 type Props = {
   accounts: Account[];
@@ -42,7 +43,7 @@ export function TransferModal({ accounts, onSubmit, onCancel }: Props) {
     control,
     setValue,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({
+  } = useForm<FormInput, any, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { fee: 0, is_card_payment: false },
   });

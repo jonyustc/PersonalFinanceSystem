@@ -61,7 +61,8 @@ const schema = z
     }
   });
 
-type FormValues = z.infer<typeof schema>;
+type FormInput = z.input<typeof schema>;
+type FormValues = z.output<typeof schema>;
 
 type Props = {
   account?: Account | null;
@@ -76,7 +77,7 @@ export function AccountForm({ account, onSubmit, onCancel }: Props) {
     handleSubmit,
     watch,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({
+  } = useForm<FormInput, any, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: account?.name ?? "",
