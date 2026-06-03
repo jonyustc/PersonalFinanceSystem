@@ -49,12 +49,12 @@ const txnTypes: { value: PortfolioTxnType; label: string }[] = [
 
 type PortfolioTab = "dashboard" | "holding" | "transaction" | "dividend" | "market";
 
-const portfolioTabs: { value: PortfolioTab; label: string }[] = [
-  { value: "dashboard", label: "Dashboard" },
-  { value: "holding", label: "Holding" },
-  { value: "transaction", label: "Transaction" },
-  { value: "dividend", label: "Dividend" },
-  { value: "market", label: "Market Price" },
+const portfolioTabs: { value: PortfolioTab; label: string; mobileLabel: string }[] = [
+  { value: "dashboard", label: "Dashboard", mobileLabel: "Dashboard" },
+  { value: "holding", label: "Holding", mobileLabel: "Holding" },
+  { value: "transaction", label: "Transaction", mobileLabel: "Trade" },
+  { value: "dividend", label: "Dividend", mobileLabel: "Dividend" },
+  { value: "market", label: "Market Price", mobileLabel: "Market" },
 ];
 
 export default function PortfolioPage() {
@@ -198,11 +198,12 @@ export default function PortfolioPage() {
             <RefreshCw className="h-4 w-4" />
           </Button>
         </div>
+        <div className="mt-2 md:mt-3">
+          <PortfolioTabs activeTab={activeTab} onChange={setActiveTab} />
+        </div>
       </section>
 
       {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
-
-      <PortfolioTabs activeTab={activeTab} onChange={setActiveTab} />
 
       {activeTab === "dashboard" ? (
         <>
@@ -377,19 +378,20 @@ export default function PortfolioPage() {
 
 function PortfolioTabs({ activeTab, onChange }: { activeTab: PortfolioTab; onChange: (tab: PortfolioTab) => void }) {
   return (
-    <section className="rounded-md border border-line bg-white p-1.5 shadow-sm">
-      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+    <section className="rounded-md border border-line bg-white p-1 shadow-sm">
+      <div className="grid grid-cols-3 gap-1 sm:grid-cols-5">
         {portfolioTabs.map((tab) => (
           <button
             key={tab.value}
             type="button"
             onClick={() => onChange(tab.value)}
             className={cn(
-              "h-10 min-w-0 rounded-md px-2 text-xs font-semibold transition",
+              "h-9 min-w-0 rounded-md px-1.5 text-[11px] font-semibold transition sm:text-xs",
               activeTab === tab.value ? "bg-brand-600 text-white shadow-sm" : "bg-surface text-muted hover:text-ink",
             )}
           >
-            <span className="block truncate">{tab.label}</span>
+            <span className="block truncate sm:hidden">{tab.mobileLabel}</span>
+            <span className="hidden truncate sm:block">{tab.label}</span>
           </button>
         ))}
       </div>
