@@ -255,9 +255,14 @@ class AccountService:
             to_account = await self.get(user_id, payload.to_account_id)
             amount = payload.amount
             fee = payload.fee
+            card_spending_amount = amount + fee
+            is_card_spending_transfer = is_credit_card(from_account) and not is_credit_card(to_account)
 
-            self._ensure_can_debit(from_account, amount + fee)
-            from_account.balance -= amount + fee
+            if is_card_spending_transfer:
+                from_account.current_outstanding += card_spending_amount
+            else:
+                self._ensure_can_debit(from_account, card_spending_amount)
+                from_account.balance -= card_spending_amount
             if is_credit_card(to_account) and payload.is_card_payment:
                 to_account.current_outstanding = max(to_account.current_outstanding - amount, ZERO)
             else:
@@ -291,6 +296,21 @@ class AccountService:
                     transfer_id=transfer.id,
                 )
                 self.db.add(card_payment)
+
+            if is_card_spending_transfer:
+                card_spending = Transaction(
+                    user_id=user_id,
+                    account_id=from_account.id,
+                    transfer_account_id=to_account.id,
+                    type="transfer",
+                    transaction_type="CARD_SPENDING",
+                    amount=card_spending_amount,
+                    txn_date=transfer.transfer_date,
+                    transaction_date=transfer.transfer_date,
+                    description=payload.notes or f"Card spending to {to_account.name}",
+                    transfer_id=transfer.id,
+                )
+                self.db.add(card_spending)
 
             if from_account.account_subtype == FUND_SUBTYPE:
                 fund_transfer_tag = (

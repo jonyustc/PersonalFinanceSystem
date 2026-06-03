@@ -174,7 +174,7 @@ export type Transaction = {
   type: "expense" | "income" | "transfer";
   txn_type?: "expense" | "income" | "transfer";
   payment_method?: string | null;
-  transaction_type?: "expense" | "income" | "transfer" | "CARD_PAYMENT" | null;
+  transaction_type?: "expense" | "income" | "transfer" | "CARD_PAYMENT" | "CARD_SPENDING" | null;
   amount: string;
   txn_date: string;
   transaction_date?: string | null;
@@ -199,7 +199,7 @@ export type TransactionCreatePayload = {
   category_id?: string | null;
 
   type: "expense" | "income" | "transfer";
-  transaction_type?: "expense" | "income" | "transfer" | "CARD_PAYMENT" | null;
+  transaction_type?: "expense" | "income" | "transfer" | "CARD_PAYMENT" | "CARD_SPENDING" | null;
   payment_method?: string | null;
 
   amount: number;
@@ -374,6 +374,88 @@ export type PortfolioSummary = {
   total_unrealized_profit_loss: string;
   total_realized_profit_loss: string;
   holdings: StockHolding[];
+};
+
+export type PortfolioTxnType = "buy" | "sell" | "deposit" | "withdraw" | "income";
+
+export type Stock = {
+  id: string;
+  symbol: string;
+  name: string;
+  exchange?: string | null;
+  currency: string;
+  last_price: string;
+};
+
+export type PortfolioTransaction = {
+  id: string;
+  stock_id?: string | null;
+  broker_account_id?: string | null;
+  txn_type: PortfolioTxnType;
+  quantity: string;
+  price: string;
+  fees: string;
+  total_amount: string;
+  cash_flow: string;
+  txn_date: string;
+  notes?: string | null;
+  stock?: Stock | null;
+};
+
+export type PortfolioTransactionPayload = {
+  stock_id?: string | null;
+  stock?: {
+    symbol: string;
+    name: string;
+    exchange?: string | null;
+    currency: string;
+    last_price: number;
+  } | null;
+  broker_account_id?: string | null;
+  txn_type: PortfolioTxnType;
+  quantity?: number;
+  price: number;
+  fees?: number | null;
+  txn_date: string;
+  notes?: string | null;
+};
+
+export type PortfolioHolding = {
+  stock: Stock;
+  quantity: string;
+  avg_buy_price: string;
+  invested_amount: string;
+  market_value: string;
+  unrealized_profit_loss: string;
+  unrealized_percent: string;
+  realized_profit_loss: string;
+  dividend_income: string;
+  total_profit_loss: string;
+};
+
+export type PortfolioDividendReportRow = {
+  stock_id: string;
+  stock_name: string;
+  year: number;
+  dividend_gain: string;
+};
+
+export type PortfolioSummaryV2 = {
+  total_principal_investment: string;
+  invested_capital: string;
+  active_cost_basis: string;
+  current_equity_value: string;
+  unrealized_gain_loss: string;
+  cash_balance: string;
+  total_portfolio_value: string;
+  total_realized_capital_gain_loss: string;
+  dividend_income: string;
+  total_realized_profit: string;
+  overall_profit_loss: string;
+  return_percent: string;
+  broker_accounts: { id: string; name: string; balance: string; currency: string }[];
+  holdings: PortfolioHolding[];
+  dividend_report: PortfolioDividendReportRow[];
 };
 
 export type DashboardResponse = {

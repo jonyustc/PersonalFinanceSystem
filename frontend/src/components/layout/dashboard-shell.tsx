@@ -8,6 +8,7 @@ import {
   PieChart,
   ReceiptText,
   Tags,
+  TrendingUp,
   Wallet,
   X,
 } from "lucide-react";
@@ -28,6 +29,7 @@ const navItems = [
   { href: "/dashboard/categories", label: "Categories", icon: Tags },
   { href: "/dashboard/budgets", label: "Budgets", icon: PieChart },
   { href: "/dashboard/transactions", label: "Transactions", icon: ReceiptText },
+  { href: "/dashboard/portfolio", label: "Stocks", icon: TrendingUp },
   { href: "/dashboard/reports", label: "Reports", icon: BarChart3 },
 ];
 
@@ -128,7 +130,7 @@ export function DashboardShell({ children }: any) {
         </header>
 
         {/* CONTENT */}
-        <main className="min-w-0 overflow-x-hidden p-4 md:p-6">{children}</main>
+        <main className="min-w-0 overflow-x-hidden px-3 pb-4 pt-0 md:p-6">{children}</main>
         {user ? <GlobalTransactionCta /> : null}
       </div>
     </div>

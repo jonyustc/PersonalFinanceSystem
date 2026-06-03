@@ -128,7 +128,7 @@ export default function FundTrackerPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
+    <div className="mx-auto max-w-4xl space-y-3 md:space-y-6">
       {/* ── HEADER ── */}
       <div className="flex items-start justify-between gap-4">
         <div>

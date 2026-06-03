@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 # ================= TYPES =================
 
 TransactionType = Literal["expense", "income", "transfer"]
-TransactionKind = Literal["expense", "income", "transfer", "CARD_PAYMENT"]
+TransactionKind = Literal["expense", "income", "transfer", "CARD_PAYMENT", "CARD_SPENDING"]
 PaymentMethod = Literal["cash", "bank", "card"]
 TransactionStatus = Literal["posted", "pending", "void"]
 RecurringRule = Literal["daily", "weekly", "monthly", "yearly"]

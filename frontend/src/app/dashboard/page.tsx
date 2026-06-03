@@ -86,6 +86,13 @@ function transactionKind(transaction: Transaction) {
   return transaction.transaction_type ?? transaction.type ?? transaction.txn_type;
 }
 
+function isCardSpendingTransaction(transaction: Transaction, account?: Account) {
+  return (
+    (transaction.type === "expense" || transactionKind(transaction) === "CARD_SPENDING") &&
+    isCardAccount(account)
+  );
+}
+
 type HistoryView = {
   title: string;
   subtitle: string;
@@ -183,7 +190,9 @@ export default function DashboardPage() {
       title: `${card.name} Spending`,
       subtitle: `${month} expense transactions from this credit card`,
       empty: "No spending found for this credit card this month.",
-      filter: (transaction) => transaction.type === "expense" && transaction.account_id === card.id,
+      filter: (transaction) =>
+        transaction.account_id === card.id &&
+        (transaction.type === "expense" || transactionKind(transaction) === "CARD_SPENDING"),
     });
   }
 
@@ -245,7 +254,7 @@ export default function DashboardPage() {
           subtitle: `${month} expense transactions from credit or debit cards`,
           empty: "No card spending found for this month.",
           filter: (transaction: Transaction) =>
-            transaction.type === "expense" && isCardAccount(accountMapRef.current.get(transaction.account_id)),
+            isCardSpendingTransaction(transaction, accountMapRef.current.get(transaction.account_id)),
         }),
       },
       {
@@ -273,6 +282,7 @@ export default function DashboardPage() {
           empty: "No credit card activity found for this month.",
           filter: (transaction: Transaction) =>
             (transaction.type === "expense" && isCreditCardAccount(accountMapRef.current.get(transaction.account_id))) ||
+            (transactionKind(transaction) === "CARD_SPENDING" && isCreditCardAccount(accountMapRef.current.get(transaction.account_id))) ||
             transactionKind(transaction) === "CARD_PAYMENT" ||
             Boolean(transaction.transfer_account_id && isCreditCardAccount(accountMapRef.current.get(transaction.transfer_account_id))),
         }),
@@ -291,7 +301,7 @@ export default function DashboardPage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3 md:space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-ink">Dashboard</h1>
@@ -731,6 +741,7 @@ function HistoryTransactionRow({
     : undefined;
   const kind = transactionKind(transaction);
   const isExpense = transaction.type === "expense";
+  const isCardSpending = kind === "CARD_SPENDING";
   const isIncome = transaction.type === "income";
   const date = new Date(transaction.txn_date);
 
@@ -744,14 +755,14 @@ function HistoryTransactionRow({
                 "rounded-full px-2 py-0.5 text-xs font-semibold capitalize",
                 kind === "CARD_PAYMENT"
                   ? "bg-teal-50 text-teal-700"
-                  : isExpense
+                  : isExpense || isCardSpending
                     ? "bg-rose-50 text-rose-700"
                     : isIncome
                       ? "bg-emerald-50 text-emerald-700"
                       : "bg-blue-50 text-blue-700",
               )}
             >
-              {kind === "CARD_PAYMENT" ? "Card payment" : transaction.type}
+              {kind === "CARD_PAYMENT" ? "Card payment" : isCardSpending ? "Card spending" : transaction.type}
             </span>
             <span className="text-xs text-muted">
               {date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
@@ -770,10 +781,10 @@ function HistoryTransactionRow({
         <p
           className={cn(
             "shrink-0 text-sm font-semibold",
-            isExpense ? "text-rose-700" : isIncome ? "text-emerald-700" : "text-ink",
+            isExpense || isCardSpending ? "text-rose-700" : isIncome ? "text-emerald-700" : "text-ink",
           )}
         >
-          {isExpense ? "-" : isIncome ? "+" : ""}
+          {isExpense || isCardSpending ? "-" : isIncome ? "+" : ""}
           {formatCurrency(transaction.amount, fromAccount?.currency || "BDT")}
         </p>
       </div>
@@ -848,7 +859,7 @@ function HistoryEditDrawer({
 
 function DashboardSkeleton() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-3 md:space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
           <div key={index} className="h-32 animate-pulse rounded-md border border-line bg-slate-100" />

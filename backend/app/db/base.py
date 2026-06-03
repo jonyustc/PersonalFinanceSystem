@@ -7,6 +7,7 @@ from app.models.category import Category
 from app.models.credit_card import CreditCard
 from app.models.monthly_income import MonthlyIncome
 from app.models.notification import Notification
+from app.models.stock import Dividend, Holding, PortfolioTransaction, Stock
 from app.models.transaction import Transaction
 from app.models.user import User
 
@@ -21,6 +22,10 @@ __all__ = [
     "CreditCard",
     "MonthlyIncome",
     "Notification",
+    "Stock",
+    "PortfolioTransaction",
+    "Holding",
+    "Dividend",
     "Transaction",
     "User",
 ]

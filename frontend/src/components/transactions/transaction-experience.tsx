@@ -177,8 +177,8 @@ export function TransactionExperience() {
   }
 
   return (
-    <div className="-mt-4 w-full max-w-full overflow-x-hidden min-h-[calc(100vh-7rem)] space-y-4 pb-28 md:mt-0 md:space-y-5 md:pb-6">
-      <section className="sticky top-14 z-20 -mx-4 overflow-hidden border-y border-line bg-surface/95 px-4 py-3 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border">
+    <div className="w-full max-w-full overflow-x-hidden min-h-[calc(100vh-7rem)] space-y-3 pb-28 md:space-y-5 md:pb-6">
+      <section className="sticky top-14 z-20 -mx-3 overflow-hidden border-y border-line bg-surface/95 px-3 py-2.5 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border md:px-4 md:py-3">
         <div className="min-w-0 space-y-3">
           <SmartSearchBar value={searchDraft} onChange={setSearchDraft} />
 
@@ -588,6 +588,8 @@ function TransactionCard({
   onDelete,
 }: any) {
   const type = transaction.type ?? transaction.txn_type;
+  const kind = transaction.transaction_type ?? type;
+  const isCardSpending = kind === "CARD_SPENDING";
   const account = accounts.find(
     (item: Account) => item.id === transaction.account_id,
   );
@@ -597,11 +599,11 @@ function TransactionCard({
   const merchant =
     transaction.merchant_name ||
     transaction.description ||
-    (type === "transfer" ? "Transfer" : "Unlabeled transaction");
+    (isCardSpending ? "Card spending" : type === "transfer" ? "Transfer" : "Unlabeled transaction");
   const Icon =
     type === "income"
       ? ArrowDownLeft
-      : type === "transfer"
+      : type === "transfer" && !isCardSpending
         ? ArrowRightLeft
         : ArrowUpRight;
   return (
@@ -617,7 +619,7 @@ function TransactionCard({
             "flex h-11 w-11 shrink-0 items-center justify-center rounded-md",
             type === "income"
               ? "bg-emerald-50 text-emerald-600"
-              : type === "transfer"
+              : type === "transfer" && !isCardSpending
                 ? "bg-slate-100 text-slate-600"
                 : "bg-rose-50 text-rose-600",
           )}
@@ -639,12 +641,12 @@ function TransactionCard({
                 "max-w-full truncate text-left text-base font-semibold sm:shrink-0 sm:text-right",
                 type === "income"
                   ? "text-emerald-600"
-                  : type === "transfer"
+                  : type === "transfer" && !isCardSpending
                     ? "text-slate-600"
                     : "text-rose-600",
               )}
             >
-              {type === "income" ? "+" : type === "expense" ? "-" : ""}
+              {type === "income" ? "+" : type === "expense" || isCardSpending ? "-" : ""}
               {formatCurrency(transaction.amount, account?.currency)}
             </p>
           </div>
@@ -655,7 +657,9 @@ function TransactionCard({
             {transaction.is_split ? (
               <Badge icon={ReceiptText}>Split</Badge>
             ) : null}
-            {type === "transfer" ? (
+            {isCardSpending ? (
+              <Badge icon={CreditCard}>Card spending</Badge>
+            ) : type === "transfer" ? (
               <Badge icon={ArrowRightLeft}>Transfer</Badge>
             ) : null}
             {(transaction.tags ?? []).slice(0, 3).map((tag: string) => (
@@ -805,7 +809,7 @@ function groupTransactions(items: Transaction[]) {
       });
     const group = map.get(key)!;
     group.items.push(item);
-    if ((item.type ?? item.txn_type) === "expense")
+    if ((item.type ?? item.txn_type) === "expense" || item.transaction_type === "CARD_SPENDING")
       group.total += Number(item.amount);
   }
   return Array.from(map.values());

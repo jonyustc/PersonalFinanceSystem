@@ -289,6 +289,7 @@ export function TransactionForm({
   const isFromCreditCard = isCreditCard(fromAccount);
   const isToCreditCard = isCreditCard(toAccount);
   const isCardPayment = isTransfer && isToCreditCard && !isFromCreditCard;
+  const isCardSpendingTransfer = isTransfer && isFromCreditCard && !isToCreditCard;
 
   let previewFrom = fromBalance;
   let previewTo = toBalance;
@@ -308,6 +309,9 @@ export function TransactionForm({
       if (isCardPayment) {
         previewFrom = fromBalance - amount;
         previewToOutstanding = Math.max(toOutstanding - amount, 0);
+      } else if (isCardSpendingTransfer) {
+        previewFromOutstanding = fromOutstanding + amount;
+        previewTo = toBalance + amount;
       } else {
         previewFrom = fromBalance - amount;
         previewTo = toBalance + amount;
@@ -377,7 +381,7 @@ export function TransactionForm({
       category_id:
         values.type !== "transfer" ? values.category_id || null : null,
       type: values.type,
-      transaction_type: isCardPayment ? "CARD_PAYMENT" : values.type,
+      transaction_type: isCardPayment ? "CARD_PAYMENT" : isCardSpendingTransfer ? "CARD_SPENDING" : values.type,
       payment_method: null,
       amount: values.amount,
       txn_date: new Date(values.txn_date).toISOString(),
@@ -546,6 +550,12 @@ export function TransactionForm({
         {isCardPayment ? (
           <p className="text-amber-600 text-xs">
             This transfer will be saved as a card payment and reduce outstanding.
+          </p>
+        ) : null}
+
+        {isCardSpendingTransfer ? (
+          <p className="text-amber-600 text-xs">
+            This transfer will be saved as card spending and outstanding will become {formatCurrency(previewFromOutstanding, fromAccount?.currency)}.
           </p>
         ) : null}
 

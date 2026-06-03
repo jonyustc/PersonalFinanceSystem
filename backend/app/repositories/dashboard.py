@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
@@ -58,7 +58,7 @@ class DashboardRepository:
             .join(Account, Account.id == Transaction.account_id)
             .where(
                 Transaction.user_id == user_id,
-                Transaction.type == "expense",
+                or_(Transaction.type == "expense", Transaction.transaction_type == "CARD_SPENDING"),
                 Transaction.transaction_status == "posted",
                 Transaction.txn_date >= start_date,
                 Transaction.txn_date < end_date,

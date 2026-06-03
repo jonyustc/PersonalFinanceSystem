@@ -13,6 +13,9 @@ import type {
   CategoryUpdatePayload,
   DashboardResponse,
   MonthlyExpenseReport,
+  PortfolioSummaryV2,
+  PortfolioTransaction,
+  PortfolioTransactionPayload,
   ReportRow,
   SimpleDashboardResponse,
   Transaction,
@@ -22,6 +25,7 @@ import type {
   TransactionUpdatePayload,
   TransferPayload,
   TrendPoint,
+  Stock,
 } from "@/types/api";
 
 /* =========================
@@ -282,3 +286,47 @@ export const saveMonthlyIncome = (payload: {
 
 export const fetchCardAnalytics = (month: string) =>
   apiRequest(`/dashboard/card-analytics?month=${month}`);
+
+/* =========================
+   STOCK PORTFOLIO
+========================= */
+
+export const fetchPortfolioSummary = () =>
+  apiRequest<PortfolioSummaryV2>("/portfolio/summary");
+
+export const fetchPortfolioTransactions = (limit = 100) =>
+  apiRequest<PortfolioTransaction[]>(`/portfolio/transactions?limit=${limit}`);
+
+export const createPortfolioTransaction = (payload: PortfolioTransactionPayload) =>
+  apiRequest<PortfolioTransaction>("/portfolio/transactions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const updatePortfolioTransaction = (id: string, payload: PortfolioTransactionPayload) =>
+  apiRequest<PortfolioTransaction>(`/portfolio/transactions/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
+export const deletePortfolioTransaction = (id: string) =>
+  apiRequest<void>(`/portfolio/transactions/${id}`, {
+    method: "DELETE",
+  });
+
+export const fetchStocks = () => apiRequest<Stock[]>("/portfolio/stocks");
+
+export const createStock = (payload: PortfolioTransactionPayload["stock"]) =>
+  apiRequest<Stock>("/portfolio/stocks", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const updateStock = (
+  id: string,
+  payload: Partial<Pick<Stock, "name" | "exchange" | "currency" | "last_price">>,
+) =>
+  apiRequest<Stock>(`/portfolio/stocks/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });

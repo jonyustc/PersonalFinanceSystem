@@ -216,7 +216,7 @@ export default function CategoriesPage() {
   /* ================= UI ================= */
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3 md:space-y-6">
       {/* HEADER */}
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-semibold">Categories</h1>

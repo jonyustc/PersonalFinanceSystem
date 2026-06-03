@@ -9,6 +9,7 @@ from app.api.v1.endpoints import (
     categories,
     dashboard,
     notifications,
+    portfolio,
     reports,
     transactions,
     transfers,
@@ -34,6 +35,7 @@ api_router.include_router(card.router, prefix="/card", tags=["card"])
 api_router.include_router(
     transfers.router, prefix="/transfers", tags=["transfers"])
 api_router.include_router(cards.router, prefix="/cards", tags=["cards"])
+api_router.include_router(portfolio.router, prefix="/portfolio", tags=["portfolio"])
 
 # 🔹 Budget & Reports
 api_router.include_router(budgets.router, prefix="/budgets", tags=["budgets"])

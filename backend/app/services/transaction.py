@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import String, func, select
+from sqlalchemy import String, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -62,7 +62,10 @@ class TransactionService:
                 | func.cast(Transaction.amount, String).ilike(like)
             )
         if type:
-            filters.append(Transaction.type == type)
+            if type == "expense":
+                filters.append(or_(Transaction.type == "expense", Transaction.transaction_type == "CARD_SPENDING"))
+            else:
+                filters.append(Transaction.type == type)
         if category_id:
             filters.append(Transaction.category_id == category_id)
         if account_id:
@@ -185,17 +188,28 @@ class TransactionService:
         if to_date:
             filters.append(Transaction.txn_date < to_date + timedelta(days=1))
         income = await self.db.scalar(select(func.coalesce(func.sum(Transaction.amount), 0)).where(*filters, Transaction.type == "income"))
-        expense = await self.db.scalar(select(func.coalesce(func.sum(Transaction.amount), 0)).where(*filters, Transaction.type == "expense", Transaction.parent_transaction_id.is_(None)))
+        expense_filter = or_(Transaction.type == "expense", Transaction.transaction_type == "CARD_SPENDING")
+        expense = await self.db.scalar(
+            select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                *filters,
+                expense_filter,
+                Transaction.parent_transaction_id.is_(None),
+            )
+        )
         days = max(((to_date or date.today()) - (from_date or date.today().replace(day=1))).days + 1, 1)
         merchants = (await self.db.execute(
             select(Transaction.merchant_name.label("label"), func.sum(Transaction.amount).label("amount"))
-            .where(*filters, Transaction.type == "expense", Transaction.merchant_name.is_not(None))
+            .where(*filters, expense_filter, Transaction.merchant_name.is_not(None))
             .group_by(Transaction.merchant_name).order_by(func.sum(Transaction.amount).desc()).limit(8)
         )).mappings().all()
+        effective_type = case(
+            (Transaction.transaction_type == "CARD_SPENDING", "expense"),
+            else_=Transaction.type,
+        )
         trend = (await self.db.execute(
-            select(func.date(Transaction.txn_date).label("date"), Transaction.type, func.sum(Transaction.amount).label("amount"))
-            .where(*filters, Transaction.type.in_(["income", "expense"]))
-            .group_by(func.date(Transaction.txn_date), Transaction.type).order_by(func.date(Transaction.txn_date))
+            select(func.date(Transaction.txn_date).label("date"), effective_type.label("type"), func.sum(Transaction.amount).label("amount"))
+            .where(*filters, or_(Transaction.type.in_(["income", "expense"]), Transaction.transaction_type == "CARD_SPENDING"))
+            .group_by(func.date(Transaction.txn_date), effective_type).order_by(func.date(Transaction.txn_date))
         )).mappings().all()
         return {
             "total_income": income or Decimal("0"),
@@ -223,9 +237,13 @@ class TransactionService:
         elif trx.type == "transfer":
             if not to_acc:
                 raise HTTPException(400, "Transfer account required")
-            if not is_credit_card(from_acc) and from_acc.balance < trx.amount:
-                raise HTTPException(400, "Insufficient balance")
-            from_acc.balance -= trx.amount
+            is_card_spending = is_credit_card(from_acc) and getattr(trx, "transaction_type", None) == "CARD_SPENDING"
+            if is_card_spending:
+                from_acc.current_outstanding += trx.amount
+            else:
+                if not is_credit_card(from_acc) and from_acc.balance < trx.amount:
+                    raise HTTPException(400, "Insufficient balance")
+                from_acc.balance -= trx.amount
             if is_credit_card(to_acc) and getattr(trx, "transaction_type", None) == "CARD_PAYMENT":
                 to_acc.current_outstanding = max(to_acc.current_outstanding - trx.amount, ZERO)
             else:
@@ -241,7 +259,10 @@ class TransactionService:
         elif trx.type == "income":
             from_acc.balance -= trx.amount
         elif trx.type == "transfer" and to_acc:
-            from_acc.balance += trx.amount
+            if is_credit_card(from_acc) and getattr(trx, "transaction_type", None) == "CARD_SPENDING":
+                from_acc.current_outstanding = max(from_acc.current_outstanding - trx.amount, ZERO)
+            else:
+                from_acc.balance += trx.amount
             if is_credit_card(to_acc) and getattr(trx, "transaction_type", None) == "CARD_PAYMENT":
                 to_acc.current_outstanding += trx.amount
             else:
@@ -262,6 +283,9 @@ class TransactionService:
         transaction_type = payload.transaction_type or payload.type
         if payload.type == "transfer" and to_acc and is_credit_card(to_acc) and not is_credit_card(from_acc):
             transaction_type = "CARD_PAYMENT"
+            payload.transaction_type = transaction_type
+        elif payload.type == "transfer" and to_acc and is_credit_card(from_acc) and not is_credit_card(to_acc):
+            transaction_type = "CARD_SPENDING"
             payload.transaction_type = transaction_type
         await self._apply_balance(from_acc, to_acc, payload)
         trx = Transaction(
@@ -295,7 +319,9 @@ class TransactionService:
             return
         if is_credit_card(to_acc) and not is_credit_card(from_acc):
             trx.transaction_type = "CARD_PAYMENT"
-        elif trx.transaction_type == "CARD_PAYMENT":
+        elif is_credit_card(from_acc) and not is_credit_card(to_acc):
+            trx.transaction_type = "CARD_SPENDING"
+        elif trx.transaction_type in ("CARD_PAYMENT", "CARD_SPENDING"):
             trx.transaction_type = "transfer"
 
     def _after_balance_change(self, from_acc: Account, to_acc: Optional[Account]) -> None:

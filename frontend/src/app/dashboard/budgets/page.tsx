@@ -170,8 +170,8 @@ export default function BudgetsPage() {
   }
 
   return (
-    <div className="-mt-4 space-y-4 pb-24 md:mt-0 md:space-y-5">
-      <section className="sticky top-14 z-20 -mx-4 border-y border-line bg-surface/95 px-4 py-3 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border">
+    <div className="space-y-3 pb-24 md:space-y-5">
+      <section className="sticky top-14 z-20 -mx-3 border-y border-line bg-surface/95 px-3 py-2.5 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border md:px-4 md:py-3">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -324,7 +324,7 @@ export default function BudgetsPage() {
         )}
       </section>
 
-      <div className="sticky bottom-0 z-20 -mx-4 border-t border-line bg-white/95 px-4 py-3 backdrop-blur md:mx-0 md:rounded-md md:border">
+      <div className="sticky bottom-0 z-20 -mx-3 border-t border-line bg-white/95 px-3 py-2.5 backdrop-blur md:mx-0 md:rounded-md md:border md:px-4 md:py-3">
         <Button className="w-full" disabled={saving} onClick={saveAll}>
           <Save className="h-4 w-4" />
           {saving ? "Saving..." : "Save monthly budget"}

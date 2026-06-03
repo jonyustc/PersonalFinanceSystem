@@ -96,4 +96,5 @@ from app.models.budget import Budget  # noqa: E402,F401
 from app.models.category import Category  # noqa: E402,F401
 from app.models.monthly_income import MonthlyIncome  # noqa: E402,F401
 from app.models.notification import Notification  # noqa: E402,F401
+from app.models.stock import Dividend, Holding, PortfolioTransaction, Stock  # noqa: E402,F401
 from app.models.transaction import Transaction  # noqa: E402,F401
