@@ -1,0 +1,235 @@
+import 'dart:convert';
+
+import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart';
+
+class AppDatabase {
+  Database? _db;
+
+  Future<Database> get database async {
+    if (_db != null) return _db!;
+    final path = p.join(await getDatabasesPath(), 'personal_finance.db');
+    _db = await openDatabase(path, version: 1, onCreate: _create);
+    return _db!;
+  }
+
+  Future<void> _create(Database db, int version) async {
+    await db.execute('''
+      CREATE TABLE accounts (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        balance REAL NOT NULL DEFAULT 0,
+        opening_balance REAL NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        color TEXT,
+        icon TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        archived INTEGER NOT NULL DEFAULT 0,
+        raw_json TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE categories (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        parent_id TEXT,
+        color TEXT,
+        icon TEXT,
+        raw_json TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE transactions (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        category_id TEXT,
+        transfer_account_id TEXT,
+        type TEXT NOT NULL,
+        amount REAL NOT NULL,
+        txn_date TEXT NOT NULL,
+        description TEXT,
+        merchant_name TEXT,
+        payment_method TEXT,
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        transaction_status TEXT NOT NULL DEFAULT 'posted',
+        is_pending INTEGER NOT NULL DEFAULT 0,
+        raw_json TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE sync_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        method TEXT NOT NULL,
+        path TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    ''');
+  }
+
+  Future<List<Map<String, dynamic>>> accounts() async {
+    final db = await database;
+    return db.query('accounts', orderBy: 'name COLLATE NOCASE');
+  }
+
+  Future<List<Map<String, dynamic>>> categories() async {
+    final db = await database;
+    return db.query('categories', orderBy: 'type, name COLLATE NOCASE');
+  }
+
+  Future<List<Map<String, dynamic>>> transactions() async {
+    final db = await database;
+    return db.query('transactions', orderBy: 'txn_date DESC', limit: 250);
+  }
+
+  Future<int> pendingCount() async {
+    final db = await database;
+    final rows = await db.rawQuery('SELECT COUNT(*) AS total FROM sync_queue');
+    return (rows.first['total'] as int?) ?? 0;
+  }
+
+  Future<String?> lastSyncAt() async {
+    final db = await database;
+    final rows = await db.query('meta', where: 'key = ?', whereArgs: ['last_sync_at']);
+    return rows.isEmpty ? null : rows.first['value'] as String;
+  }
+
+  Future<void> markSynced() async {
+    final db = await database;
+    await db.insert(
+      'meta',
+      {'key': 'last_sync_at', 'value': DateTime.now().toIso8601String()},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> replaceAccounts(List<Map<String, dynamic>> rows) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('accounts');
+      for (final row in rows) {
+        await txn.insert('accounts', _accountRow(row),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<void> replaceCategories(List<Map<String, dynamic>> rows) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('categories');
+      for (final row in rows) {
+        await txn.insert('categories', _categoryRow(row),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<void> replaceTransactions(List<Map<String, dynamic>> rows) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('transactions');
+      for (final row in rows) {
+        await txn.insert('transactions', _transactionRow(row),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<void> upsertTransaction(
+    Map<String, dynamic> row, {
+    bool pending = false,
+  }) async {
+    final db = await database;
+    await db.insert(
+      'transactions',
+      _transactionRow(row, pending: pending),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> queuePost(String path, Map<String, dynamic> payload) async {
+    final db = await database;
+    await db.insert('sync_queue', {
+      'method': 'POST',
+      'path': path,
+      'payload_json': jsonEncode(payload),
+      'created_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> queuedMutations() async {
+    final db = await database;
+    return db.query('sync_queue', orderBy: 'id ASC');
+  }
+
+  Future<void> deleteQueuedMutation(int id) async {
+    final db = await database;
+    await db.delete('sync_queue', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Map<String, Object?> _accountRow(Map<String, dynamic> row) {
+    return {
+      'id': row['id'].toString(),
+      'name': row['name'] ?? 'Account',
+      'type': row['type'] ?? 'cash',
+      'balance': _num(row['balance']),
+      'opening_balance': _num(row['opening_balance']),
+      'currency': row['currency'] ?? 'USD',
+      'color': row['color'],
+      'icon': row['icon'],
+      'is_active': row['is_active'] == false ? 0 : 1,
+      'archived': row['archived'] == true ? 1 : 0,
+      'raw_json': jsonEncode(row),
+    };
+  }
+
+  Map<String, Object?> _categoryRow(Map<String, dynamic> row) {
+    return {
+      'id': row['id'].toString(),
+      'name': row['name'] ?? 'Category',
+      'type': row['type'] ?? 'expense',
+      'parent_id': row['parent_id']?.toString(),
+      'color': row['color'],
+      'icon': row['icon'],
+      'raw_json': jsonEncode(row),
+    };
+  }
+
+  Map<String, Object?> _transactionRow(
+    Map<String, dynamic> row, {
+    bool pending = false,
+  }) {
+    final tags = row['tags'] is List ? row['tags'] as List : const [];
+    return {
+      'id': row['id'].toString(),
+      'account_id': row['account_id'].toString(),
+      'category_id': row['category_id']?.toString(),
+      'transfer_account_id': row['transfer_account_id']?.toString(),
+      'type': row['type'] ?? 'expense',
+      'amount': _num(row['amount']),
+      'txn_date': (row['txn_date'] ?? DateTime.now().toIso8601String()).toString(),
+      'description': row['description'],
+      'merchant_name': row['merchant_name'],
+      'payment_method': row['payment_method'],
+      'tags_json': jsonEncode(tags),
+      'transaction_status': row['transaction_status'] ?? 'posted',
+      'is_pending': pending ? 1 : 0,
+      'raw_json': jsonEncode(row),
+    };
+  }
+
+  double _num(Object? value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0;
+    return 0;
+  }
+}

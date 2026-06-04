@@ -1,0 +1,62 @@
+import 'package:shared_preferences/shared_preferences.dart';
+
+class Session {
+  const Session({
+    required this.accessToken,
+    required this.refreshToken,
+    required this.userName,
+    required this.email,
+    required this.currency,
+  });
+
+  final String accessToken;
+  final String refreshToken;
+  final String userName;
+  final String email;
+  final String currency;
+}
+
+class SessionStore {
+  static const _accessToken = 'access_token';
+  static const _refreshToken = 'refresh_token';
+  static const _userName = 'user_name';
+  static const _email = 'email';
+  static const _currency = 'currency';
+
+  Future<Session?> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString(_accessToken);
+    final refresh = prefs.getString(_refreshToken);
+    if (token == null || refresh == null) return null;
+
+    return Session(
+      accessToken: token,
+      refreshToken: refresh,
+      userName: prefs.getString(_userName) ?? 'User',
+      email: prefs.getString(_email) ?? '',
+      currency: prefs.getString(_currency) ?? 'USD',
+    );
+  }
+
+  Future<void> saveFromAuth(Map<String, dynamic> auth) async {
+    final prefs = await SharedPreferences.getInstance();
+    final user = (auth['user'] as Map?)?.cast<String, dynamic>() ?? {};
+    await prefs.setString(_accessToken, auth['access_token'] as String);
+    await prefs.setString(_refreshToken, auth['refresh_token'] as String);
+    await prefs.setString(_userName, (user['full_name'] ?? 'User') as String);
+    await prefs.setString(_email, (user['email'] ?? '') as String);
+    await prefs.setString(
+      _currency,
+      (user['currency'] ?? user['default_currency'] ?? 'USD') as String,
+    );
+  }
+
+  Future<void> clear() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_accessToken);
+    await prefs.remove(_refreshToken);
+    await prefs.remove(_userName);
+    await prefs.remove(_email);
+    await prefs.remove(_currency);
+  }
+}

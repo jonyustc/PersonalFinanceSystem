@@ -20,8 +20,12 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { GlobalTransactionCta } from "@/components/transactions/global-transaction-cta";
 import { cn } from "@/lib/utils";
-import { logout } from "@/services/auth-service";
-import { getStoredUser } from "@/services/token-store";
+import { getMe, logout } from "@/services/auth-service";
+import {
+  clearAuthSession,
+  getAccessToken,
+  getStoredUser,
+} from "@/services/token-store";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -42,12 +46,29 @@ export function DashboardShell({ children }: any) {
 
   // ✅ safer client auth check
   useEffect(() => {
+    let active = true;
     const u = getStoredUser();
-    if (!u) {
+    const token = getAccessToken();
+    if (!u || !token) {
+      clearAuthSession();
       router.push("/auth/login");
-    } else {
-      setUser(u);
+      return;
     }
+
+    setUser(u);
+    getMe()
+      .then((freshUser) => {
+        if (active) setUser(freshUser);
+      })
+      .catch(() => {
+        if (!active) return;
+        clearAuthSession();
+        router.push("/auth/login");
+      });
+
+    return () => {
+      active = false;
+    };
   }, [router]);
 
   function handleLogout() {
@@ -130,7 +151,7 @@ export function DashboardShell({ children }: any) {
         </header>
 
         {/* CONTENT */}
-        <main className="min-w-0 overflow-x-hidden px-3 pb-4 pt-0 md:p-6">{children}</main>
+        <main className="min-w-0 overflow-x-hidden px-3 pb-4 pt-2 sm:px-4 md:px-6 md:pb-6 md:pt-3">{children}</main>
         {user ? <GlobalTransactionCta /> : null}
       </div>
     </div>

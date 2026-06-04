@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -83,6 +83,10 @@ class BudgetService:
     async def get_budget_summary(self, user_id: str, month: str):
         start_date = datetime.strptime(month + "-01", "%Y-%m-%d")
         end_date = (start_date + timedelta(days=32)).replace(day=1)
+        report_expense_filter = or_(
+            Transaction.type == "expense",
+            Transaction.transaction_type.in_(["CARD_PAYMENT", "CARD_SPENDING"]),
+        )
 
         Parent = aliased(Category)
         Child = aliased(Category)
@@ -97,7 +101,7 @@ class BudgetService:
                 Transaction.user_id == user_id,
                 Transaction.txn_date >= start_date,
                 Transaction.txn_date < end_date,
-                Transaction.type == "expense",
+                report_expense_filter,
             )
             .group_by(Child.parent_id)
             .subquery()
@@ -112,7 +116,7 @@ class BudgetService:
                 Transaction.user_id == user_id,
                 Transaction.txn_date >= start_date,
                 Transaction.txn_date < end_date,
-                Transaction.type == "expense",
+                report_expense_filter,
             )
             .group_by(Transaction.category_id)
             .subquery()

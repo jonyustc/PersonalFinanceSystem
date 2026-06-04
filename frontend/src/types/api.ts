@@ -248,7 +248,7 @@ export type TransactionAnalytics = {
   income_vs_expense: { label: string; amount: string }[];
   spending_trend: { date: string; type: TransactionType; amount: string }[];
   expense_heatmap: { date: string; type: TransactionType; amount: string }[];
-  account_breakdown: { label: string; amount: string }[];
+  account_breakdown: { label: string; amount: string | number }[];
 };
 
 export type MonthlySummary = {

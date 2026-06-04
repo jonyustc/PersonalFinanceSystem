@@ -1,7 +1,7 @@
 from decimal import Decimal
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import select, func, extract
+from sqlalchemy import select, func, extract, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.category import Category
@@ -30,6 +30,12 @@ class ReportService:
                 conditions.append(Transaction.txn_date <= end)
         return conditions
 
+    def _report_expense_filter(self):
+        return or_(
+            Transaction.type == "expense",
+            Transaction.transaction_type.in_(["CARD_PAYMENT", "CARD_SPENDING"]),
+        )
+
     async def monthly_expenses(self, user_id, month, year):
         stmt = (
             select(
@@ -41,7 +47,7 @@ class ReportService:
             .outerjoin(Category, Category.id == Transaction.category_id)
             .where(
                 Transaction.user_id == user_id,
-                Transaction.type == "expense",
+                self._report_expense_filter(),
                 extract("month", Transaction.txn_date) == month,
                 extract("year", Transaction.txn_date) == year,
             )
@@ -71,7 +77,7 @@ class ReportService:
     async def category_report(self, user_id, from_date=None, to_date=None):
         conditions = [
             Transaction.user_id == user_id,
-            Transaction.type == "expense",
+            self._report_expense_filter(),
         ]
         conditions.extend(self._date_range_conditions(from_date, to_date))
 

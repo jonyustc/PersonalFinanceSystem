@@ -63,7 +63,12 @@ class TransactionService:
             )
         if type:
             if type == "expense":
-                filters.append(or_(Transaction.type == "expense", Transaction.transaction_type == "CARD_SPENDING"))
+                filters.append(
+                    or_(
+                        Transaction.type == "expense",
+                        Transaction.transaction_type.in_(["CARD_PAYMENT", "CARD_SPENDING"]),
+                    )
+                )
             else:
                 filters.append(Transaction.type == type)
         if category_id:
@@ -188,7 +193,10 @@ class TransactionService:
         if to_date:
             filters.append(Transaction.txn_date < to_date + timedelta(days=1))
         income = await self.db.scalar(select(func.coalesce(func.sum(Transaction.amount), 0)).where(*filters, Transaction.type == "income"))
-        expense_filter = or_(Transaction.type == "expense", Transaction.transaction_type == "CARD_SPENDING")
+        expense_filter = or_(
+            Transaction.type == "expense",
+            Transaction.transaction_type.in_(["CARD_PAYMENT", "CARD_SPENDING"]),
+        )
         expense = await self.db.scalar(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 *filters,
@@ -203,13 +211,36 @@ class TransactionService:
             .group_by(Transaction.merchant_name).order_by(func.sum(Transaction.amount).desc()).limit(8)
         )).mappings().all()
         effective_type = case(
-            (Transaction.transaction_type == "CARD_SPENDING", "expense"),
+            (Transaction.transaction_type.in_(["CARD_PAYMENT", "CARD_SPENDING"]), "expense"),
             else_=Transaction.type,
         )
         trend = (await self.db.execute(
             select(func.date(Transaction.txn_date).label("date"), effective_type.label("type"), func.sum(Transaction.amount).label("amount"))
-            .where(*filters, or_(Transaction.type.in_(["income", "expense"]), Transaction.transaction_type == "CARD_SPENDING"))
+            .where(
+                *filters,
+                or_(
+                    Transaction.type.in_(["income", "expense"]),
+                    Transaction.transaction_type.in_(["CARD_PAYMENT", "CARD_SPENDING"]),
+                ),
+            )
             .group_by(func.date(Transaction.txn_date), effective_type).order_by(func.date(Transaction.txn_date))
+        )).mappings().all()
+        account_bucket = case(
+            (func.lower(Account.type).in_(["cash"]), "Cash"),
+            (func.lower(Account.type).in_(["bank", "mobile_banking"]), "Bank"),
+            (func.lower(Account.type).in_(["card", "credit_card", "debit_card"]), "Card"),
+            else_="Other",
+        )
+        account_breakdown = (await self.db.execute(
+            select(account_bucket.label("label"), func.sum(Transaction.amount).label("amount"))
+            .join(Account, Account.id == Transaction.account_id)
+            .where(
+                *filters,
+                expense_filter,
+                Transaction.parent_transaction_id.is_(None),
+            )
+            .group_by(account_bucket)
+            .order_by(func.sum(Transaction.amount).desc())
         )).mappings().all()
         return {
             "total_income": income or Decimal("0"),
@@ -221,7 +252,7 @@ class TransactionService:
             "income_vs_expense": [{"label": "Income", "amount": income or 0}, {"label": "Expense", "amount": expense or 0}],
             "spending_trend": [dict(r) for r in trend],
             "expense_heatmap": [dict(r) for r in trend if r["type"] == "expense"],
-            "account_breakdown": [],
+            "account_breakdown": [dict(r) for r in account_breakdown],
         }
 
     async def _apply_balance(self, from_acc: Account, to_acc: Optional[Account], trx):

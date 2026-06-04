@@ -49,17 +49,17 @@ export function ExpenseHierarchyChart({
   }
 
   return (
-    <div className="rounded-md border border-line bg-white p-4 shadow-sm">
+    <div className="rounded-md border border-line bg-white p-3 shadow-sm sm:p-4">
       <div className="flex items-center justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs font-semibold uppercase text-brand-700">Expense</p>
-          <h2 className="mt-1 text-lg font-semibold text-slate-900">{title}</h2>
+          <h2 className="mt-1 break-words text-lg font-semibold text-slate-900">{title}</h2>
           <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
         </div>
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.95fr)] lg:items-center">
-        <div className="relative h-[300px] min-w-0">
+        <div className="relative h-[240px] min-w-0 sm:h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
@@ -121,14 +121,14 @@ export function ExpenseHierarchyChart({
                 onClick={() => onSliceClick(item.id)}
                 className="w-full rounded-md border border-line bg-surface p-3 text-left transition hover:border-brand-200 hover:bg-brand-50"
               >
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                   <span className="flex min-w-0 items-start gap-2">
                     <span
                       className="mt-1 h-3 w-3 shrink-0 rounded-full"
                       style={{ backgroundColor: COLORS[index % COLORS.length] }}
                     />
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold text-slate-900">
+                      <span className="block break-words text-sm font-semibold text-slate-900">
                         {item.label}
                       </span>
                       <span className="block text-xs text-slate-500">
@@ -136,8 +136,8 @@ export function ExpenseHierarchyChart({
                       </span>
                     </span>
                   </span>
-                  <span className="shrink-0 text-right">
-                    <span className="block text-sm font-semibold text-slate-900">
+                  <span className="min-w-0 sm:shrink-0 sm:text-right">
+                    <span className="block break-words text-sm font-semibold text-slate-900">
                       {formatCurrency(item.value)}
                     </span>
                     <span className="block text-xs text-slate-500">

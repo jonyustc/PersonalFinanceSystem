@@ -72,6 +72,17 @@ function expenseCategories(categories: Category[]) {
   return categories.filter((category) => category.type?.toLowerCase() === "expense");
 }
 
+const SPEND_SOURCE_LABELS = ["Cash", "Bank", "Card"] as const;
+
+function spendSourceAmount(
+  rows: TransactionAnalytics["account_breakdown"] | undefined,
+  label: (typeof SPEND_SOURCE_LABELS)[number],
+) {
+  const row = rows?.find((item) => item.label?.toLowerCase() === label.toLowerCase());
+  const amount = Number(row?.amount ?? 0);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
 export default function ReportsPage() {
   const [month, setMonth] = useState(monthKey());
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
@@ -118,7 +129,10 @@ export default function ReportsPage() {
   const analytics = analyticsQuery.data as TransactionAnalytics | undefined;
   const budgetSummary = budgetSummaryQuery.data as any;
   const categories = expenseCategories(categoryTreeQuery.data ?? []);
-  const categorySpending = categorySpendingQuery.data ?? [];
+  const categorySpending = useMemo(
+    () => categorySpendingQuery.data ?? [],
+    [categorySpendingQuery.data],
+  );
 
   const directAmountByCategory = useMemo(
     () =>
@@ -174,6 +188,10 @@ export default function ReportsPage() {
   const totalExpense = Number(analytics?.total_expense ?? 0);
   const totalIncome = Number(analytics?.total_income ?? 0);
   const averageSpend = Number(analytics?.average_daily_spending ?? 0);
+  const spendSources = SPEND_SOURCE_LABELS.map((label) => ({
+    label,
+    value: spendSourceAmount(analytics?.account_breakdown, label),
+  }));
   const selectedTotal = selectedCategory
     ? categoryTotal.get(selectedCategory.id) ?? 0
     : totalExpense;
@@ -208,8 +226,8 @@ export default function ReportsPage() {
     categorySpendingQuery.isLoading;
 
   return (
-    <div className="space-y-3 pb-8 md:space-y-5">
-      <section className="sticky top-14 z-20 -mx-3 border-y border-line bg-surface/95 px-3 py-2.5 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border md:px-4 md:py-3">
+    <div className="space-y-3 pb-8 md:space-y-4">
+      <section className="-mx-3 border-y border-line bg-surface/95 px-3 py-2 backdrop-blur sm:-mx-4 sm:px-4 md:mx-0 md:rounded-md md:border md:px-4">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -239,13 +257,13 @@ export default function ReportsPage() {
         </div>
       </section>
 
-      <section className="rounded-md border border-line bg-white p-4 shadow-sm">
+      <section className="rounded-md border border-line bg-white p-3 shadow-sm sm:p-4">
         <div className="flex items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <p className="text-xs font-semibold uppercase text-brand-700">
               Expense report
             </p>
-            <h1 className="mt-1 text-xl font-semibold text-ink">
+            <h1 className="mt-1 break-words text-xl font-semibold text-ink">
               {selectedCategory?.name ?? "All parent categories"}
             </h1>
             <p className="mt-1 text-sm text-muted">
@@ -270,10 +288,26 @@ export default function ReportsPage() {
           )}
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2">
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
           <ReportMetric label="Spent" value={totalExpense} loading={loading} />
           <ReportMetric label="Income" value={totalIncome} loading={loading} />
           <ReportMetric label="Avg/day" value={averageSpend} loading={loading} />
+        </div>
+
+        <div className="mt-3 rounded-md bg-surface p-3">
+          <p className="text-xs font-semibold uppercase text-muted">
+            Spent from
+          </p>
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {spendSources.map((source) => (
+              <div key={source.label} className="min-w-0 rounded-md bg-white p-2.5">
+                <p className="text-xs font-medium text-muted">{source.label}</p>
+                <p className="mt-1 break-words text-sm font-semibold text-ink">
+                  {loading ? "--" : formatCurrency(source.value)}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -322,9 +356,9 @@ export default function ReportsPage() {
         </section>
       ) : null}
 
-      <section className="rounded-md border border-line bg-white p-4 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
+      <section className="rounded-md border border-line bg-white p-3 shadow-sm sm:p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <p className="text-sm font-semibold text-ink">Budget vs expense</p>
             <p className="mt-1 text-xs text-muted">
               {monthLabel(month)} plan compared with posted expenses.
@@ -332,7 +366,7 @@ export default function ReportsPage() {
           </div>
           <span
             className={cn(
-              "rounded-full px-3 py-1 text-xs font-semibold",
+              "w-fit max-w-full rounded-full px-3 py-1 text-xs font-semibold",
               Number(budgetSummary?.actual_balance ?? 0) < 0
                 ? "bg-rose-50 text-rose-600"
                 : "bg-emerald-50 text-emerald-700",
@@ -342,7 +376,7 @@ export default function ReportsPage() {
           </span>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2">
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
           <ReportMetric
             label="Total budget"
             value={Number(budgetSummary?.total_budget ?? 0)}
@@ -369,11 +403,11 @@ export default function ReportsPage() {
               const over = spent > budget;
               return (
                 <div key={item.category_id} className="rounded-md bg-surface p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="min-w-0 truncate text-sm font-semibold text-ink">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                    <span className="min-w-0 break-words text-sm font-semibold text-ink">
                       {item.category_name}
                     </span>
-                    <span className={cn("shrink-0 text-sm font-semibold", over ? "text-rose-600" : "text-ink")}>
+                    <span className={cn("break-words text-sm font-semibold sm:shrink-0 sm:text-right", over ? "text-rose-600" : "text-ink")}>
                       {formatCurrency(spent)} / {formatCurrency(budget)}
                     </span>
                   </div>
@@ -423,7 +457,7 @@ function ReportMetric({
   return (
     <div className="min-w-0 rounded-md bg-surface p-2.5">
       <p className="text-xs font-medium text-muted">{label}</p>
-      <p className="mt-1 truncate text-sm font-semibold text-ink">
+      <p className="mt-1 break-words text-sm font-semibold text-ink">
         {loading ? "--" : formatCurrency(value)}
       </p>
     </div>

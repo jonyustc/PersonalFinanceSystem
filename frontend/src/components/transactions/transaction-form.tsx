@@ -206,9 +206,7 @@ export function TransactionForm({
   }, [activeAccounts, transaction, setValue, watch]);
 
   useEffect(() => {
-    if (type === "transfer") {
-      setValue("category_id", "");
-    } else {
+    if (type !== "transfer") {
       setValue("transfer_account_id", "");
     }
   }, [type, setValue]);
@@ -222,6 +220,13 @@ export function TransactionForm({
     () => activeAccounts.find((a) => a.id === toId),
     [activeAccounts, toId],
   );
+
+  const isFromCreditCard = isCreditCard(fromAccount);
+  const isToCreditCard = isCreditCard(toAccount);
+  const isCardPayment = isTransfer && isToCreditCard && !isFromCreditCard;
+  const isCardSpendingTransfer = isTransfer && isFromCreditCard && !isToCreditCard;
+  const isExpenseLikeTransfer = isCardPayment || isCardSpendingTransfer;
+  const categoryType = isExpenseLikeTransfer ? "expense" : type;
 
   const selectedCategory = useMemo(
     () => localCategories.find((category) => category.id === categoryId),
@@ -244,23 +249,23 @@ export function TransactionForm({
   }, [selectedCategory, selectedParentCategory]);
 
   useEffect(() => {
-    if (!autoNote || isTransfer) return;
+    if (!autoNote || (isTransfer && !isExpenseLikeTransfer)) return;
     const currentNote = description?.trim() ?? "";
     if (!currentNote || currentNote === lastAutoNoteRef.current) {
       setValue("description", autoNote, { shouldDirty: true });
       setNoteOpen(true);
       lastAutoNoteRef.current = autoNote;
     }
-  }, [autoNote, description, isTransfer, setValue]);
+  }, [autoNote, description, isTransfer, isExpenseLikeTransfer, setValue]);
 
   useEffect(() => {
-    if (!categoryId || isTransfer) {
+    if (!categoryId || (isTransfer && !isExpenseLikeTransfer)) {
       setNoteSuggestions([]);
       return;
     }
 
     let active = true;
-    fetchTransactions({ category_id: categoryId, type, limit: 50 })
+    fetchTransactions({ category_id: categoryId, type: categoryType, limit: 50 })
       .then((response) => {
         if (!active) return;
         const suggestions = Array.from(
@@ -281,17 +286,12 @@ export function TransactionForm({
     return () => {
       active = false;
     };
-  }, [categoryId, type, isTransfer, autoNote]);
+  }, [categoryId, categoryType, isTransfer, isExpenseLikeTransfer, autoNote]);
 
   const fromBalance = Number(fromAccount?.balance || 0);
   const toBalance = Number(toAccount?.balance || 0);
   const fromOutstanding = Number(fromAccount?.current_outstanding ?? 0);
   const toOutstanding = Number(toAccount?.current_outstanding ?? 0);
-
-  const isFromCreditCard = isCreditCard(fromAccount);
-  const isToCreditCard = isCreditCard(toAccount);
-  const isCardPayment = isTransfer && isToCreditCard && !isFromCreditCard;
-  const isCardSpendingTransfer = isTransfer && isFromCreditCard && !isToCreditCard;
 
   let previewFrom = fromBalance;
   let previewTo = toBalance;
@@ -381,7 +381,7 @@ export function TransactionForm({
       transfer_account_id:
         values.type === "transfer" ? values.transfer_account_id || null : null,
       category_id:
-        values.type !== "transfer" ? values.category_id || null : null,
+        values.type !== "transfer" || isExpenseLikeTransfer ? values.category_id || null : null,
       type: values.type,
       transaction_type: isCardPayment ? "CARD_PAYMENT" : isCardSpendingTransfer ? "CARD_SPENDING" : values.type,
       payment_method: null,
@@ -470,7 +470,7 @@ export function TransactionForm({
         )}
       </div>
 
-      {quickCategories.length > 0 ? (
+      {quickCategories.length > 0 && (!isTransfer || isExpenseLikeTransfer) ? (
         <div className="space-y-2">
           <p className="text-xs font-semibold text-slate-900">
             Quick categories
@@ -572,10 +572,10 @@ export function TransactionForm({
         )}
       </div>
 
-      {!isTransfer && (
+      {(!isTransfer || isExpenseLikeTransfer) && (
         <CategoryTreeSelect
           categories={localCategories}
-          type={type}
+          type={categoryType}
           value={categoryId}
           onChange={(id: string) =>
             setValue("category_id", id, { shouldDirty: true })
