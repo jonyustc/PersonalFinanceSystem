@@ -171,7 +171,7 @@ export default function BudgetsPage() {
 
   return (
     <div className="space-y-3 pb-24 md:space-y-5">
-      <section className="sticky top-14 z-20 -mx-3 border-y border-line bg-surface/95 px-3 py-2.5 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border md:px-4 md:py-3">
+      <section className="-mx-3 border-b border-line bg-white px-3 py-3 shadow-sm sm:-mx-4 sm:px-4 md:mx-0 md:rounded-md md:border md:px-4">
         <div className="flex items-center gap-2">
           <button
             type="button"

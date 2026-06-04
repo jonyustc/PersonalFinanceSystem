@@ -178,7 +178,7 @@ export function TransactionExperience() {
 
   return (
     <div className="w-full max-w-full overflow-x-hidden min-h-[calc(100vh-7rem)] space-y-3 pb-28 md:space-y-5 md:pb-6">
-      <section className="sticky top-14 z-20 -mx-3 overflow-hidden border-y border-line bg-surface/95 px-3 py-2.5 backdrop-blur md:top-0 md:mx-0 md:rounded-md md:border md:px-4 md:py-3">
+      <section className="-mx-3 overflow-hidden border-b border-line bg-white px-3 py-3 shadow-sm sm:-mx-4 sm:px-4 md:mx-0 md:rounded-md md:border md:px-4">
         <div className="min-w-0 space-y-3">
           <SmartSearchBar value={searchDraft} onChange={setSearchDraft} />
 

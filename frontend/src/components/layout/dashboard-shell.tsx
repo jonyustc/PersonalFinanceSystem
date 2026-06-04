@@ -151,7 +151,7 @@ export function DashboardShell({ children }: any) {
         </header>
 
         {/* CONTENT */}
-        <main className="min-w-0 overflow-x-hidden px-3 pb-4 pt-2 sm:px-4 md:px-6 md:pb-6 md:pt-3">{children}</main>
+        <main className="min-w-0 flex-1 overflow-x-hidden px-3 pb-24 pt-0 sm:px-4 md:px-6 md:pb-10 md:pt-3">{children}</main>
         {user ? <GlobalTransactionCta /> : null}
       </div>
     </div>
