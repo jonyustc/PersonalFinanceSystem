@@ -195,6 +195,7 @@ export const fetchTransactions = (filters: TransactionFilters = {}) => {
     offset: filters.offset ?? 0,
     search: filters.search,
     type: filters.type,
+    account_source: filters.account_source,
     account_id: filters.account_id,
     category_id: filters.category_id,
     merchant: filters.merchant,

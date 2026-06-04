@@ -73,10 +73,11 @@ function expenseCategories(categories: Category[]) {
 }
 
 const SPEND_SOURCE_LABELS = ["Cash", "Bank", "Card"] as const;
+type SpendSourceLabel = (typeof SPEND_SOURCE_LABELS)[number];
 
 function spendSourceAmount(
   rows: TransactionAnalytics["account_breakdown"] | undefined,
-  label: (typeof SPEND_SOURCE_LABELS)[number],
+  label: SpendSourceLabel,
 ) {
   const row = rows?.find((item) => item.label?.toLowerCase() === label.toLowerCase());
   const amount = Number(row?.amount ?? 0);
@@ -89,6 +90,8 @@ export default function ReportsPage() {
     null,
   );
   const [activeCategory, setActiveCategory] = useState<Category | null>(null);
+  const [activeSpendSource, setActiveSpendSource] =
+    useState<SpendSourceLabel | null>(null);
 
   const { fromDate, toDate } = useMemo(() => monthRange(month), [month]);
 
@@ -123,6 +126,19 @@ export default function ReportsPage() {
         from_date: fromDate,
         to_date: toDate,
         type: "expense",
+      }),
+  });
+
+  const activeSpendSourceQuery = useQuery({
+    queryKey: ["source-transactions", activeSpendSource, fromDate, toDate],
+    enabled: Boolean(activeSpendSource),
+    queryFn: () =>
+      fetchTransactions({
+        account_source: activeSpendSource?.toLowerCase() as "cash" | "bank" | "card",
+        from_date: fromDate,
+        to_date: toDate,
+        type: "expense",
+        limit: 1000,
       }),
   });
 
@@ -201,6 +217,7 @@ export default function ReportsPage() {
   function resetDrilldown() {
     setSelectedCategoryId(null);
     setActiveCategory(null);
+    setActiveSpendSource(null);
   }
 
   function handleMonthChange(nextMonth: string) {
@@ -215,9 +232,17 @@ export default function ReportsPage() {
     if (expenseCategories(category.children ?? []).length > 0) {
       setSelectedCategoryId(id);
       setActiveCategory(null);
+      setActiveSpendSource(null);
       return;
     }
     setActiveCategory(category);
+    setActiveSpendSource(null);
+  }
+
+  function handleSpendSourceClick(source: SpendSourceLabel) {
+    if (loading) return;
+    setActiveSpendSource(source);
+    setActiveCategory(null);
   }
 
   const loading =
@@ -300,12 +325,21 @@ export default function ReportsPage() {
           </p>
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
             {spendSources.map((source) => (
-              <div key={source.label} className="min-w-0 rounded-md bg-white p-2.5">
+              <button
+                key={source.label}
+                type="button"
+                onClick={() => handleSpendSourceClick(source.label)}
+                className="min-w-0 rounded-md bg-white p-2.5 text-left transition hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                title={`${source.label} spent history`}
+              >
                 <p className="text-xs font-medium text-muted">{source.label}</p>
                 <p className="mt-1 break-words text-sm font-semibold text-ink">
                   {loading ? "--" : formatCurrency(source.value)}
                 </p>
-              </div>
+                <p className="mt-1 text-xs font-medium text-brand-700">
+                  View history
+                </p>
+              </button>
             ))}
           </div>
         </div>
@@ -440,6 +474,16 @@ export default function ReportsPage() {
         }
         loading={activeTransactionsQuery.isFetching}
         onClose={() => setActiveCategory(null)}
+      />
+      <ExpenseDrilldownDrawer
+        open={Boolean(activeSpendSource)}
+        categoryName={`${activeSpendSource ?? "Source"} spent`}
+        transactions={
+          (activeSpendSourceQuery.data as { items: Transaction[] } | undefined)
+            ?.items ?? []
+        }
+        loading={activeSpendSourceQuery.isFetching}
+        onClose={() => setActiveSpendSource(null)}
       />
     </div>
   );

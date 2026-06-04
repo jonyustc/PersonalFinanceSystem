@@ -40,6 +40,7 @@ class TransactionService:
         offset: int = 0,
         search: Optional[str] = None,
         type: Optional[str] = None,
+        account_source: Optional[str] = None,
         category_id: Optional[UUID] = None,
         account_id: Optional[UUID] = None,
         from_date: Optional[date] = None,
@@ -75,6 +76,14 @@ class TransactionService:
             filters.append(Transaction.category_id == category_id)
         if account_id:
             filters.append(Transaction.account_id == account_id)
+        if account_source:
+            source = account_source.lower()
+            if source == "cash":
+                filters.append(func.lower(Account.type) == "cash")
+            elif source == "bank":
+                filters.append(func.lower(Account.type).in_(["bank", "mobile_banking"]))
+            elif source == "card":
+                filters.append(func.lower(Account.type).in_(["card", "credit_card", "debit_card"]))
         if from_date:
             filters.append(Transaction.txn_date >= from_date)
         if to_date:
@@ -92,9 +101,15 @@ class TransactionService:
         if max_amount is not None:
             filters.append(Transaction.amount <= max_amount)
 
-        stmt = select(Transaction).where(*filters).order_by(Transaction.txn_date.desc(), Transaction.id.desc()).limit(limit).offset(offset)
+        base_stmt = select(Transaction)
+        count_stmt = select(func.count()).select_from(Transaction)
+        if account_source:
+            base_stmt = base_stmt.join(Account, Account.id == Transaction.account_id)
+            count_stmt = count_stmt.join(Account, Account.id == Transaction.account_id)
+
+        stmt = base_stmt.where(*filters).order_by(Transaction.txn_date.desc(), Transaction.id.desc()).limit(limit).offset(offset)
         items = list((await self.db.execute(stmt)).scalars().all())
-        total = await self.db.scalar(select(func.count()).select_from(Transaction).where(*filters))
+        total = await self.db.scalar(count_stmt.where(*filters))
         return items, int(total or 0)
 
     async def update(self, user_id: UUID, transaction_id: UUID, payload: TransactionUpdate):

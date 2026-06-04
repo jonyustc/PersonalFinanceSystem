@@ -31,6 +31,7 @@ async def list_transactions(
 
     search: Optional[str] = None,
     type: Optional[str] = None,
+    account_source: Optional[str] = None,
     category_id: Optional[UUID] = None,
     account_id: Optional[UUID] = None,
     merchant: Optional[str] = None,
@@ -55,6 +56,7 @@ async def list_transactions(
         offset=offset,
         search=search,
         type=type,
+        account_source=account_source,
         category_id=category_id,
         account_id=account_id,
         from_date=from_date,

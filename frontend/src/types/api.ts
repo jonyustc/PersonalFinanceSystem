@@ -226,6 +226,7 @@ export type TransactionFilters = {
   to_date?: string;
   search?: string;
   type?: TransactionType;
+  account_source?: "cash" | "bank" | "card";
   account_id?: string;
   category_id?: string;
   merchant?: string;
