@@ -23,8 +23,10 @@ class TransactionTile extends StatelessWidget {
     return Card(
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: isIncome ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
-          foregroundColor: isIncome ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
+          backgroundColor:
+              isIncome ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+          foregroundColor:
+              isIncome ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
           child: Icon(isIncome ? Icons.arrow_downward : Icons.arrow_upward),
         ),
         title: Text(
@@ -34,7 +36,7 @@ class TransactionTile extends StatelessWidget {
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         subtitle: Text(
-          '${compactDate(row['txn_date'] as String? ?? '')}${isPending ? '  ·  pending sync' : ''}',
+          '${compactDate(row['txn_date'] as String? ?? '')}${isPending ? ' - pending sync' : ''}',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -42,7 +44,8 @@ class TransactionTile extends StatelessWidget {
           '${isIncome ? '+' : '-'}${money(amount, currency: currency)}',
           style: TextStyle(
             fontWeight: FontWeight.w800,
-            color: isIncome ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
+            color:
+                isIncome ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
           ),
         ),
       ),

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user
@@ -32,10 +32,11 @@ async def create_account(
 
 @router.get("", response_model=list[AccountResponse])
 async def list_accounts(
+    active_only: bool = Query(default=True),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await AccountService(db).list(current_user.id)
+    return await AccountService(db).list(current_user.id, active_only=active_only)
 
 
 @router.get("/summary", response_model=AccountSummaryResponse)

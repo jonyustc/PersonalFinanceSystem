@@ -12,14 +12,50 @@ class SyncService {
   Future<void> syncAll() async {
     await _replayPendingWrites();
 
-    final accounts = await _api.getAccounts();
-    final categories = await _api.getCategories();
-    final transactions = await _fetchAllTransactions();
-
-    await _db.replaceAccounts(accounts);
-    await _db.replaceCategories(categories);
-    await _db.replaceTransactions(transactions);
+    final results = await Future.wait<bool>([
+      _syncResource(
+        fetch: _api.getAccounts,
+        replace: _db.replaceAccounts,
+      ),
+      _syncResource(
+        fetch: _api.getCategories,
+        replace: _db.replaceCategories,
+      ),
+      _syncResource(
+        fetch: () => _fetchTransactions(limit: 250),
+        replace: _db.replaceTransactions,
+      ),
+      _syncResource(
+        fetch: () => _api.getBudgets(_monthKey(DateTime.now())),
+        replace: _db.replaceBudgets,
+      ),
+      _syncResource(
+        fetch: _api.getStocks,
+        replace: _db.replaceStocks,
+      ),
+      _syncResource(
+        fetch: () => _api.getPortfolioTransactions(limit: 250),
+        replace: _db.replacePortfolioTransactions,
+      ),
+    ], eagerError: false);
+    if (!results.any((synced) => synced)) {
+      throw StateError('No sync endpoints completed');
+    }
     await _db.markSynced();
+  }
+
+  Future<bool> _syncResource({
+    required Future<List<Map<String, dynamic>>> Function() fetch,
+    required Future<void> Function(List<Map<String, dynamic>>) replace,
+  }) async {
+    try {
+      await replace(await fetch());
+      return true;
+    } catch (_) {
+      // Keep other datasets syncing; stale local data is better than blocking
+      // budgets or portfolio because one endpoint timed out.
+      return false;
+    }
   }
 
   Future<void> _replayPendingWrites() async {
@@ -38,24 +74,15 @@ class SyncService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> _fetchAllTransactions() async {
-    const limit = 100;
-    var offset = 0;
-    final items = <Map<String, dynamic>>[];
+  Future<List<Map<String, dynamic>>> _fetchTransactions({int limit = 250}) async {
+    final page = await _api.getTransactions(limit: limit, offset: 0);
+    return (page['items'] as List? ?? [])
+        .whereType<Map>()
+        .map((row) => row.cast<String, dynamic>())
+        .toList();
+  }
 
-    while (true) {
-      final page = await _api.getTransactions(limit: limit, offset: offset);
-      final pageItems = (page['items'] as List? ?? [])
-          .whereType<Map>()
-          .map((row) => row.cast<String, dynamic>())
-          .toList();
-      items.addAll(pageItems);
-
-      final next = page['next_offset'];
-      if (next == null) break;
-      offset = next as int;
-    }
-
-    return items;
+  String _monthKey(DateTime date) {
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}';
   }
 }

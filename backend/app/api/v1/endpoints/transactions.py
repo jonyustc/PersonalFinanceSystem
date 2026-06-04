@@ -38,6 +38,7 @@ async def list_transactions(
     tags: Optional[str] = None,
     recurring_only: bool = False,
     transfer_only: bool = False,
+    active_accounts_only: bool = False,
     min_amount: Optional[Decimal] = None,
     max_amount: Optional[Decimal] = None,
 
@@ -65,6 +66,7 @@ async def list_transactions(
         tags=[tag.strip() for tag in tags.split(",") if tag.strip()] if tags else None,
         recurring_only=recurring_only,
         transfer_only=transfer_only,
+        active_accounts_only=active_accounts_only,
         min_amount=min_amount,
         max_amount=max_amount,
     )

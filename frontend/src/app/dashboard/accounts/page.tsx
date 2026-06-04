@@ -45,7 +45,6 @@ const groups = [
   { key: "mobile", label: "Mobile Banking", icon: Wallet },
   { key: "debit", label: "Debit Cards", icon: CreditCard },
   { key: "card", label: "Cards", icon: CreditCard },
-  { key: "inactive", label: "Inactive", icon: Wallet },
 ] as const;
 
 function normalizedType(account: Account) {
@@ -111,9 +110,6 @@ export default function AccountsPage() {
       card: accounts.filter(
         (account) =>
           isCreditCard(account) && account.is_active && !account.archived,
-      ),
-      inactive: accounts.filter(
-        (account) => !account.is_active || account.archived,
       ),
     };
   }, [accounts]);

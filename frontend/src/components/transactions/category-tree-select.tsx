@@ -137,7 +137,11 @@ export function CategoryTreeSelect({
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
-                addMode === "category" ? addCategory() : addSubcategory();
+                if (addMode === "category") {
+                  addCategory();
+                } else {
+                  addSubcategory();
+                }
               }
             }}
           />

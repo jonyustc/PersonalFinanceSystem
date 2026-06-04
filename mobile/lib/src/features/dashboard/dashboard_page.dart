@@ -13,7 +13,7 @@ class DashboardPage extends ConsumerWidget {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
     if (snapshot == null) return const Center(child: CircularProgressIndicator());
 
-    final currency = snapshot.session?.currency ?? 'USD';
+    final currency = snapshot.session?.currency ?? 'BDT';
     final accounts = snapshot.accounts;
     final transactions = snapshot.transactions;
     final cash = accounts.fold<double>(
@@ -40,39 +40,104 @@ class DashboardPage extends ConsumerWidget {
         })
         .fold<double>(0, (sum, row) => sum + asDouble(row['amount']));
 
+    final savingsRate = monthlyIncome <= 0
+        ? 0.0
+        : ((monthlyIncome - monthlyExpense) / monthlyIncome)
+            .clamp(0, 1)
+            .toDouble();
+
     return RefreshIndicator(
       onRefresh: () => ref.read(appControllerProvider.notifier).syncNow(),
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text(
-            'Hi, ${snapshot.session?.userName ?? 'there'}',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            syncTime(snapshot.lastSyncAt),
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.blueGrey.shade700,
-                ),
+          Card(
+            color: Theme.of(context).colorScheme.primary,
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Hi, ${snapshot.session?.userName ?? 'there'}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: Colors.white70,
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    money(cash, currency: currency),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${accounts.length} accounts - ${syncTime(snapshot.lastSyncAt)}',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  const SizedBox(height: 18),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      minHeight: 10,
+                      value: savingsRate,
+                      backgroundColor: Colors.white24,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Saved ${(savingsRate * 100).toStringAsFixed(0)}% of monthly income',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
           ),
           if (snapshot.notice != null) ...[
             const SizedBox(height: 12),
             _Notice(text: snapshot.notice!),
           ],
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 42,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _QuickChip(
+                  icon: Icons.receipt_long_outlined,
+                  label: '${transactions.length} transactions',
+                ),
+                _QuickChip(
+                  icon: Icons.pie_chart_outline,
+                  label: '${snapshot.budgets.length} budgets',
+                ),
+                _QuickChip(
+                  icon: Icons.show_chart,
+                  label: '${snapshot.stocks.length} stocks',
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 18),
           _MetricGrid(
             metrics: [
-              Metric('Total balance', money(cash, currency: currency), Icons.savings_outlined),
-              Metric('Income', money(monthlyIncome, currency: currency), Icons.trending_up),
-              Metric('Expense', money(monthlyExpense, currency: currency), Icons.trending_down),
+              Metric('Income', money(monthlyIncome, currency: currency),
+                  Icons.trending_up),
+              Metric('Expense', money(monthlyExpense, currency: currency),
+                  Icons.trending_down),
               Metric(
                 'Cashflow',
                 money(monthlyIncome - monthlyExpense, currency: currency),
                 Icons.swap_vert,
               ),
+              Metric('Pending sync', '${snapshot.pendingWrites}',
+                  Icons.cloud_upload_outlined),
             ],
           ),
           const SizedBox(height: 22),
@@ -112,6 +177,25 @@ class Metric {
   final String label;
   final String value;
   final IconData icon;
+}
+
+class _QuickChip extends StatelessWidget {
+  const _QuickChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ActionChip(
+        avatar: Icon(icon, size: 18),
+        label: Text(label),
+        onPressed: () {},
+      ),
+    );
+  }
 }
 
 class _MetricGrid extends StatelessWidget {

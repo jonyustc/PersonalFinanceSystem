@@ -34,7 +34,7 @@ class AccountsPage extends ConsumerWidget {
               itemBuilder: (context, index) {
                 final account = accounts[index];
                 final balance = asDouble(account['balance']);
-                final currency = (account['currency'] ?? snapshot.session?.currency ?? 'USD') as String;
+                final currency = (account['currency'] ?? snapshot.session?.currency ?? 'BDT') as String;
                 return Card(
                   child: ListTile(
                     leading: CircleAvatar(
@@ -51,6 +51,7 @@ class AccountsPage extends ConsumerWidget {
                       money(balance, currency: currency),
                       style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
+                    onLongPress: () => _archiveAccount(context, ref, account),
                   ),
                 );
               },
@@ -64,5 +65,34 @@ class AccountsPage extends ConsumerWidget {
     if (value.contains('bank')) return Icons.account_balance;
     if (value.contains('mobile')) return Icons.phone_android;
     return Icons.wallet;
+  }
+
+  Future<void> _archiveAccount(
+    BuildContext context,
+    WidgetRef ref,
+    Map<String, dynamic> account,
+  ) async {
+    final name = account['name'] as String? ?? 'Account';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Archive account?'),
+        content: Text('$name will be removed from active account lists.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Archive'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await ref
+        .read(appControllerProvider.notifier)
+        .archiveAccount(account['id'] as String);
   }
 }

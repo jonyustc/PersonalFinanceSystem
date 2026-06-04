@@ -25,6 +25,7 @@ class _CreateTransactionSheetState extends ConsumerState<CreateTransactionSheet>
   final _description = TextEditingController();
   String _type = 'expense';
   String? _accountId;
+  String? _parentCategoryId;
   String? _categoryId;
   bool _busy = false;
 
@@ -43,6 +44,14 @@ class _CreateTransactionSheetState extends ConsumerState<CreateTransactionSheet>
     final categories = (snapshot?.categories ?? [])
         .where((row) => row['type'] == _type)
         .toList();
+    final parentCategories = categories
+        .where((row) => row['parent_id'] == null)
+        .toList();
+    final subcategories = _parentCategoryId == null
+        ? <Map<String, dynamic>>[]
+        : categories
+            .where((row) => row['parent_id'] == _parentCategoryId)
+            .toList();
     _accountId ??= accounts.isNotEmpty ? accounts.first['id'] as String : null;
 
     return Padding(
@@ -83,6 +92,7 @@ class _CreateTransactionSheetState extends ConsumerState<CreateTransactionSheet>
               onSelectionChanged: (value) {
                 setState(() {
                   _type = value.first;
+                  _parentCategoryId = null;
                   _categoryId = null;
                 });
               },
@@ -120,12 +130,12 @@ class _CreateTransactionSheetState extends ConsumerState<CreateTransactionSheet>
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              initialValue: _categoryId,
+              initialValue: _parentCategoryId,
               decoration: const InputDecoration(
                 labelText: 'Category',
                 prefixIcon: Icon(Icons.category_outlined),
               ),
-              items: categories
+              items: parentCategories
                   .map(
                     (row) => DropdownMenuItem<String>(
                       value: row['id'] as String,
@@ -133,8 +143,40 @@ class _CreateTransactionSheetState extends ConsumerState<CreateTransactionSheet>
                     ),
                   )
                   .toList(),
-              onChanged: (value) => setState(() => _categoryId = value),
+              onChanged: (value) => setState(() {
+                _parentCategoryId = value;
+                _categoryId = value;
+              }),
             ),
+            if (_parentCategoryId != null && subcategories.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue:
+                    subcategories.any((row) => row['id'] == _categoryId)
+                        ? _categoryId
+                        : '',
+                decoration: const InputDecoration(
+                  labelText: 'Subcategory',
+                  prefixIcon: Icon(Icons.sell_outlined),
+                ),
+                items: [
+                  const DropdownMenuItem<String>(
+                    value: '',
+                    child: Text('No subcategory'),
+                  ),
+                  ...subcategories.map(
+                    (row) => DropdownMenuItem<String>(
+                      value: row['id'] as String,
+                      child: Text(row['name'] as String),
+                    ),
+                  ),
+                ],
+                onChanged: (value) => setState(
+                  () => _categoryId =
+                      value == null || value.isEmpty ? _parentCategoryId : value,
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             TextField(
               controller: _merchant,

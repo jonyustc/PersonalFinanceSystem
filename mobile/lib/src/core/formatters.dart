@@ -4,7 +4,7 @@ final _money = NumberFormat.currency(symbol: '', decimalDigits: 2);
 final _date = DateFormat('MMM d, yyyy');
 final _dateTime = DateFormat('MMM d, h:mm a');
 
-String money(num value, {String currency = 'USD'}) {
+String money(num value, {String currency = 'BDT'}) {
   return '$currency ${_money.format(value)}';
 }
 

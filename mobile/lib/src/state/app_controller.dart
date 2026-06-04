@@ -27,6 +27,9 @@ class AppSnapshot {
     required this.accounts,
     required this.categories,
     required this.transactions,
+    required this.budgets,
+    required this.stocks,
+    required this.portfolioTransactions,
     required this.isSyncing,
     required this.pendingWrites,
     required this.lastSyncAt,
@@ -37,6 +40,9 @@ class AppSnapshot {
   final List<Map<String, dynamic>> accounts;
   final List<Map<String, dynamic>> categories;
   final List<Map<String, dynamic>> transactions;
+  final List<Map<String, dynamic>> budgets;
+  final List<Map<String, dynamic>> stocks;
+  final List<Map<String, dynamic>> portfolioTransactions;
   final bool isSyncing;
   final int pendingWrites;
   final String? lastSyncAt;
@@ -50,6 +56,9 @@ class AppSnapshot {
     List<Map<String, dynamic>>? accounts,
     List<Map<String, dynamic>>? categories,
     List<Map<String, dynamic>>? transactions,
+    List<Map<String, dynamic>>? budgets,
+    List<Map<String, dynamic>>? stocks,
+    List<Map<String, dynamic>>? portfolioTransactions,
     bool? isSyncing,
     int? pendingWrites,
     String? lastSyncAt,
@@ -60,6 +69,10 @@ class AppSnapshot {
       accounts: accounts ?? this.accounts,
       categories: categories ?? this.categories,
       transactions: transactions ?? this.transactions,
+      budgets: budgets ?? this.budgets,
+      stocks: stocks ?? this.stocks,
+      portfolioTransactions:
+          portfolioTransactions ?? this.portfolioTransactions,
       isSyncing: isSyncing ?? this.isSyncing,
       pendingWrites: pendingWrites ?? this.pendingWrites,
       lastSyncAt: lastSyncAt ?? this.lastSyncAt,
@@ -171,6 +184,13 @@ class AppController extends AsyncNotifier<AppSnapshot>
     state = AsyncData(await _readLocal(session: current?.session));
   }
 
+  Future<void> archiveAccount(String accountId) async {
+    await _api.archiveAccount(accountId);
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -184,6 +204,9 @@ class AppController extends AsyncNotifier<AppSnapshot>
       accounts: await _db.accounts(),
       categories: await _db.categories(),
       transactions: await _db.transactions(),
+      budgets: await _db.budgets(),
+      stocks: await _db.stocks(),
+      portfolioTransactions: await _db.portfolioTransactions(),
       isSyncing: false,
       pendingWrites: await _db.pendingCount(),
       lastSyncAt: await _db.lastSyncAt(),

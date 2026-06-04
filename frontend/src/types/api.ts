@@ -2,7 +2,8 @@ export type User = {
   id: string;
   full_name: string;
   email: string;
-  default_currency: string;
+  currency: string;
+  default_currency?: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;

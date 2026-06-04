@@ -9,7 +9,12 @@ class AppDatabase {
   Future<Database> get database async {
     if (_db != null) return _db!;
     final path = p.join(await getDatabasesPath(), 'personal_finance.db');
-    _db = await openDatabase(path, version: 1, onCreate: _create);
+    _db = await openDatabase(
+      path,
+      version: 3,
+      onCreate: _create,
+      onUpgrade: _upgrade,
+    );
     return _db!;
   }
 
@@ -21,7 +26,7 @@ class AppDatabase {
         type TEXT NOT NULL,
         balance REAL NOT NULL DEFAULT 0,
         opening_balance REAL NOT NULL DEFAULT 0,
-        currency TEXT NOT NULL DEFAULT 'USD',
+        currency TEXT NOT NULL DEFAULT 'BDT',
         color TEXT,
         icon TEXT,
         is_active INTEGER NOT NULL DEFAULT 1,
@@ -73,11 +78,74 @@ class AppDatabase {
         value TEXT NOT NULL
       )
     ''');
+    await _createPortfolioTables(db);
+    await _createBudgetTables(db);
+  }
+
+  Future<void> _upgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await _createPortfolioTables(db);
+      await _createBudgetTables(db);
+    }
+    if (oldVersion < 3) {
+      await db.execute("UPDATE accounts SET currency = 'BDT' WHERE currency = 'USD'");
+    }
+  }
+
+  Future<void> _createBudgetTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS budgets (
+        id TEXT PRIMARY KEY,
+        category_id TEXT NOT NULL,
+        month INTEGER NOT NULL,
+        year INTEGER NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        spent REAL NOT NULL DEFAULT 0,
+        remaining REAL NOT NULL DEFAULT 0,
+        overspending INTEGER NOT NULL DEFAULT 0,
+        raw_json TEXT NOT NULL
+      )
+    ''');
+  }
+
+  Future<void> _createPortfolioTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS stocks (
+        id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        name TEXT NOT NULL,
+        exchange TEXT,
+        currency TEXT NOT NULL DEFAULT 'BDT',
+        last_price REAL NOT NULL DEFAULT 0,
+        raw_json TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS portfolio_transactions (
+        id TEXT PRIMARY KEY,
+        stock_id TEXT,
+        broker_account_id TEXT,
+        txn_type TEXT NOT NULL,
+        quantity REAL NOT NULL DEFAULT 0,
+        price REAL NOT NULL DEFAULT 0,
+        fees REAL NOT NULL DEFAULT 0,
+        total_amount REAL NOT NULL DEFAULT 0,
+        cash_flow REAL NOT NULL DEFAULT 0,
+        txn_date TEXT NOT NULL,
+        notes TEXT,
+        stock_json TEXT,
+        raw_json TEXT NOT NULL
+      )
+    ''');
   }
 
   Future<List<Map<String, dynamic>>> accounts() async {
     final db = await database;
-    return db.query('accounts', orderBy: 'name COLLATE NOCASE');
+    return db.query(
+      'accounts',
+      where: 'is_active = 1 AND archived = 0',
+      orderBy: 'name COLLATE NOCASE',
+    );
   }
 
   Future<List<Map<String, dynamic>>> categories() async {
@@ -88,6 +156,25 @@ class AppDatabase {
   Future<List<Map<String, dynamic>>> transactions() async {
     final db = await database;
     return db.query('transactions', orderBy: 'txn_date DESC', limit: 250);
+  }
+
+  Future<List<Map<String, dynamic>>> budgets() async {
+    final db = await database;
+    return db.query('budgets', orderBy: 'year DESC, month DESC');
+  }
+
+  Future<List<Map<String, dynamic>>> stocks() async {
+    final db = await database;
+    return db.query('stocks', orderBy: 'name COLLATE NOCASE');
+  }
+
+  Future<List<Map<String, dynamic>>> portfolioTransactions() async {
+    final db = await database;
+    return db.query(
+      'portfolio_transactions',
+      orderBy: 'txn_date DESC',
+      limit: 250,
+    );
   }
 
   Future<int> pendingCount() async {
@@ -144,6 +231,39 @@ class AppDatabase {
     });
   }
 
+  Future<void> replaceBudgets(List<Map<String, dynamic>> rows) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('budgets');
+      for (final row in rows) {
+        await txn.insert('budgets', _budgetRow(row),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<void> replaceStocks(List<Map<String, dynamic>> rows) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('stocks');
+      for (final row in rows) {
+        await txn.insert('stocks', _stockRow(row),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<void> replacePortfolioTransactions(List<Map<String, dynamic>> rows) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('portfolio_transactions');
+      for (final row in rows) {
+        await txn.insert('portfolio_transactions', _portfolioTransactionRow(row),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
   Future<void> upsertTransaction(
     Map<String, dynamic> row, {
     bool pending = false,
@@ -152,6 +272,15 @@ class AppDatabase {
     await db.insert(
       'transactions',
       _transactionRow(row, pending: pending),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> upsertBudget(Map<String, dynamic> row) async {
+    final db = await database;
+    await db.insert(
+      'budgets',
+      _budgetRow(row),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -183,7 +312,7 @@ class AppDatabase {
       'type': row['type'] ?? 'cash',
       'balance': _num(row['balance']),
       'opening_balance': _num(row['opening_balance']),
-      'currency': row['currency'] ?? 'USD',
+      'currency': row['currency'] ?? 'BDT',
       'color': row['color'],
       'icon': row['icon'],
       'is_active': row['is_active'] == false ? 0 : 1,
@@ -227,9 +356,70 @@ class AppDatabase {
     };
   }
 
+  Map<String, Object?> _budgetRow(Map<String, dynamic> row) {
+    return {
+      'id': row['id'].toString(),
+      'category_id': row['category_id'].toString(),
+      'month': _budgetMonth(row['month']),
+      'year': _budgetYear(row['month'], row['year']),
+      'amount': _num(row['amount']),
+      'spent': _num(row['spent']),
+      'remaining': _num(row['remaining']),
+      'overspending': row['overspending'] == true ? 1 : 0,
+      'raw_json': jsonEncode(row),
+    };
+  }
+
+  Map<String, Object?> _stockRow(Map<String, dynamic> row) {
+    return {
+      'id': row['id'].toString(),
+      'symbol': row['symbol'] ?? row['name'] ?? 'STOCK',
+      'name': row['name'] ?? row['symbol'] ?? 'Stock',
+      'exchange': row['exchange'],
+      'currency': row['currency'] ?? 'BDT',
+      'last_price': _num(row['last_price']),
+      'raw_json': jsonEncode(row),
+    };
+  }
+
+  Map<String, Object?> _portfolioTransactionRow(Map<String, dynamic> row) {
+    return {
+      'id': row['id'].toString(),
+      'stock_id': row['stock_id']?.toString(),
+      'broker_account_id': row['broker_account_id']?.toString(),
+      'txn_type': row['txn_type'] ?? 'buy',
+      'quantity': _num(row['quantity']),
+      'price': _num(row['price']),
+      'fees': _num(row['fees']),
+      'total_amount': _num(row['total_amount']),
+      'cash_flow': _num(row['cash_flow']),
+      'txn_date': (row['txn_date'] ?? DateTime.now().toIso8601String()).toString(),
+      'notes': row['notes'],
+      'stock_json': row['stock'] == null ? null : jsonEncode(row['stock']),
+      'raw_json': jsonEncode(row),
+    };
+  }
+
   double _num(Object? value) {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value) ?? 0;
     return 0;
+  }
+
+  int _budgetMonth(Object? value) {
+    if (value is num) return value.toInt();
+    if (value is String && RegExp(r'^\d{4}-\d{2}$').hasMatch(value)) {
+      return int.tryParse(value.substring(5, 7)) ?? DateTime.now().month;
+    }
+    return DateTime.now().month;
+  }
+
+  int _budgetYear(Object? month, Object? year) {
+    if (year is num) return year.toInt();
+    if (year is String) return int.tryParse(year) ?? DateTime.now().year;
+    if (month is String && RegExp(r'^\d{4}-\d{2}$').hasMatch(month)) {
+      return int.tryParse(month.substring(0, 4)) ?? DateTime.now().year;
+    }
+    return DateTime.now().year;
   }
 }

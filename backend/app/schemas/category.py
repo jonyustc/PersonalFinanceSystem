@@ -30,7 +30,7 @@ class CategoryResponse(BaseModel):
     icon: Optional[str]
 
     # ✅ KEEP children
-    children: List["CategoryResponse"] = []
+    children: List["CategoryResponse"] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

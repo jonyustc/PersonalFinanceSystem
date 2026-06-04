@@ -47,7 +47,7 @@ class AccountCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     type: AccountType
     opening_balance: Decimal = Decimal("0")
-    currency: str = Field(default="USD", min_length=3, max_length=3)
+    currency: str = Field(default="BDT", min_length=3, max_length=3)
     notes: str | None = None
     is_active: bool = True
     account_subtype: str | None = Field(default=None, max_length=30)

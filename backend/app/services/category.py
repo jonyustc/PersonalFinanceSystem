@@ -31,6 +31,7 @@ class CategoryService:
     async def create(self, user_id: UUID, payload: CategoryCreate):
         data = payload.model_dump()
         data["user_id"] = user_id
+        await self._validate_parent(user_id, data.get("parent_id"), data["type"])
 
         category = await self.repo.create(data)
 
@@ -89,7 +90,14 @@ class CategoryService:
         if not category:
             raise HTTPException(404, "Category not found")
 
-        for k, v in payload.model_dump(exclude_unset=True).items():
+        data = payload.model_dump(exclude_unset=True)
+        next_type = data.get("type", category.type)
+        if "parent_id" in data:
+            if data["parent_id"] == category.id:
+                raise HTTPException(400, "Category cannot be its own parent")
+            await self._validate_parent(user_id, data["parent_id"], next_type)
+
+        for k, v in data.items():
             setattr(category, k, v)
 
         await self.db.commit()
@@ -108,3 +116,14 @@ class CategoryService:
 
         await self.repo.delete(category)
         await self.db.commit()
+
+    async def _validate_parent(self, user_id: UUID, parent_id: UUID | None, category_type: str):
+        if parent_id is None:
+            return
+        parent = await self.repo.get_user_owned(user_id, parent_id)
+        if not parent:
+            raise HTTPException(404, "Parent category not found")
+        if parent.parent_id is not None:
+            raise HTTPException(400, "Subcategories cannot have children")
+        if parent.type != category_type:
+            raise HTTPException(400, "Parent category type must match")

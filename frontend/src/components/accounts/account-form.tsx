@@ -83,7 +83,7 @@ export function AccountForm({ account, onSubmit, onCancel }: Props) {
       name: account?.name ?? "",
       type: normalizeFormType(account?.type),
       opening_balance: Number(account?.opening_balance ?? account?.balance ?? 0),
-      currency: account?.currency ?? "USD",
+      currency: account?.currency ?? "BDT",
       institution_name: account?.institution_name ?? "",
       account_subtype: account?.account_subtype ?? "",
       color: account?.color ?? colorOptions[0],

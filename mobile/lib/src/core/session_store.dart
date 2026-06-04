@@ -34,7 +34,7 @@ class SessionStore {
       refreshToken: refresh,
       userName: prefs.getString(_userName) ?? 'User',
       email: prefs.getString(_email) ?? '',
-      currency: prefs.getString(_currency) ?? 'USD',
+      currency: prefs.getString(_currency) ?? 'BDT',
     );
   }
 
@@ -47,7 +47,7 @@ class SessionStore {
     await prefs.setString(_email, (user['email'] ?? '') as String);
     await prefs.setString(
       _currency,
-      (user['currency'] ?? user['default_currency'] ?? 'USD') as String,
+      (user['currency'] ?? user['default_currency'] ?? 'BDT') as String,
     );
   }
 

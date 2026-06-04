@@ -49,6 +49,7 @@ class TransactionService:
         tags: Optional[list[str]] = None,
         recurring_only: bool = False,
         transfer_only: bool = False,
+        active_accounts_only: bool = False,
         min_amount: Optional[Decimal] = None,
         max_amount: Optional[Decimal] = None,
     ):
@@ -84,6 +85,9 @@ class TransactionService:
                 filters.append(func.lower(Account.type).in_(["bank", "mobile_banking"]))
             elif source == "card":
                 filters.append(func.lower(Account.type).in_(["card", "credit_card", "debit_card"]))
+        if active_accounts_only:
+            filters.append(Account.is_active.is_(True))
+            filters.append(Account.archived.is_(False))
         if from_date:
             filters.append(Transaction.txn_date >= from_date)
         if to_date:
@@ -103,7 +107,7 @@ class TransactionService:
 
         base_stmt = select(Transaction)
         count_stmt = select(func.count()).select_from(Transaction)
-        if account_source:
+        if account_source or active_accounts_only:
             base_stmt = base_stmt.join(Account, Account.id == Transaction.account_id)
             count_stmt = count_stmt.join(Account, Account.id == Transaction.account_id)
 

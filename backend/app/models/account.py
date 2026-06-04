@@ -64,7 +64,7 @@ class Account(UUIDMixin, TimestampMixin, Base):
 
     currency: Mapped[str] = mapped_column(
         String(3),
-        default="USD",
+        default="BDT",
         nullable=False,
     )
 

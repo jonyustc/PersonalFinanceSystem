@@ -43,12 +43,23 @@ class ApiClient {
   }
 
   Future<List<Map<String, dynamic>>> getAccounts() async {
-    final response = await _dio.get<List<dynamic>>('/accounts');
+    final response = await _dio.get<List<dynamic>>(
+      '/accounts',
+      queryParameters: {'active_only': true},
+    );
     return _asMapList(response.data);
   }
 
   Future<List<Map<String, dynamic>>> getCategories() async {
     final response = await _dio.get<List<dynamic>>('/categories');
+    return _asMapList(response.data);
+  }
+
+  Future<List<Map<String, dynamic>>> getBudgets(String month) async {
+    final response = await _dio.get<List<dynamic>>(
+      '/budgets',
+      queryParameters: {'month': month},
+    );
     return _asMapList(response.data);
   }
 
@@ -58,7 +69,11 @@ class ApiClient {
   }) async {
     final response = await _dio.get<Map<String, dynamic>>(
       '/transactions',
-      queryParameters: {'limit': limit, 'offset': offset},
+      queryParameters: {
+        'limit': limit,
+        'offset': offset,
+        'active_accounts_only': true,
+      },
     );
     return response.data ?? {};
   }
@@ -71,6 +86,25 @@ class ApiClient {
       data: payload,
     );
     return response.data ?? {};
+  }
+
+  Future<void> archiveAccount(String id) async {
+    await _dio.delete('/accounts/$id');
+  }
+
+  Future<List<Map<String, dynamic>>> getStocks() async {
+    final response = await _dio.get<List<dynamic>>('/portfolio/stocks');
+    return _asMapList(response.data);
+  }
+
+  Future<List<Map<String, dynamic>>> getPortfolioTransactions({
+    int limit = 100,
+  }) async {
+    final response = await _dio.get<List<dynamic>>(
+      '/portfolio/transactions',
+      queryParameters: {'limit': limit},
+    );
+    return _asMapList(response.data);
   }
 
   Future<void> post(String path, Map<String, dynamic> payload) async {

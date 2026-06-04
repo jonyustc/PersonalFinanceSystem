@@ -31,7 +31,7 @@ class User(UUIDMixin, TimestampMixin, Base):
 
     currency: Mapped[str] = mapped_column(
         String(10),
-        default="USD",
+        default="BDT",
         nullable=False,
     )
 

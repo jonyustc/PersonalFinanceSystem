@@ -111,8 +111,11 @@ class AccountService:
                              "user_id": str(user_id), "account_type": payload.type})
             raise
 
-    async def list(self, user_id: UUID) -> list[Account]:
-        return await self.accounts.list_by_user(user_id)
+    async def list(self, user_id: UUID, active_only: bool = True) -> list[Account]:
+        accounts = await self.accounts.list_by_user(user_id)
+        if active_only:
+            return [account for account in accounts if account.is_active and not account.archived]
+        return accounts
 
     async def get(self, user_id: UUID, account_id: UUID) -> Account:
         account = await self.accounts.get_user_owned(user_id, account_id)
