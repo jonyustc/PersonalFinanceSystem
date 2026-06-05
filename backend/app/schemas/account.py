@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 
 AccountType = Literal[
@@ -127,6 +127,13 @@ class AccountResponse(BaseModel):
     billing_cycle_day: int | None = None
     payment_due_day: int | None = None
     card_details: CreditCardDetailsResponse | None = None
+
+    @computed_field
+    @property
+    def display_balance(self) -> Decimal:
+        if self.type.lower() in {"card", "credit_card"}:
+            return self.current_outstanding
+        return self.balance
 
     class Config:
         from_attributes = True

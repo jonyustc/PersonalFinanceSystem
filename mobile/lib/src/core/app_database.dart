@@ -11,7 +11,7 @@ class AppDatabase {
     final path = p.join(await getDatabasesPath(), 'personal_finance.db');
     _db = await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _create,
       onUpgrade: _upgrade,
     );
@@ -27,6 +27,9 @@ class AppDatabase {
         balance REAL NOT NULL DEFAULT 0,
         opening_balance REAL NOT NULL DEFAULT 0,
         currency TEXT NOT NULL DEFAULT 'BDT',
+        current_outstanding REAL NOT NULL DEFAULT 0,
+        credit_limit REAL,
+        display_balance REAL NOT NULL DEFAULT 0,
         color TEXT,
         icon TEXT,
         is_active INTEGER NOT NULL DEFAULT 1,
@@ -89,6 +92,11 @@ class AppDatabase {
     }
     if (oldVersion < 3) {
       await db.execute("UPDATE accounts SET currency = 'BDT' WHERE currency = 'USD'");
+    }
+    if (oldVersion < 4) {
+      await _addColumnSafely(db, 'accounts', 'current_outstanding', 'REAL NOT NULL DEFAULT 0');
+      await _addColumnSafely(db, 'accounts', 'credit_limit', 'REAL');
+      await _addColumnSafely(db, 'accounts', 'display_balance', 'REAL NOT NULL DEFAULT 0');
     }
   }
 
@@ -198,6 +206,24 @@ class AppDatabase {
     );
   }
 
+  Future<Map<String, dynamic>?> portfolioSummary() async {
+    final db = await database;
+    final rows = await db.query('meta', where: 'key = ?', whereArgs: ['portfolio_summary']);
+    if (rows.isEmpty) return null;
+    final decoded = jsonDecode(rows.first['value'] as String);
+    if (decoded is Map) return decoded.cast<String, dynamic>();
+    return null;
+  }
+
+  Future<void> savePortfolioSummary(Map<String, dynamic> summary) async {
+    final db = await database;
+    await db.insert(
+      'meta',
+      {'key': 'portfolio_summary', 'value': jsonEncode(summary)},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
   Future<void> replaceAccounts(List<Map<String, dynamic>> rows) async {
     final db = await database;
     await db.transaction((txn) async {
@@ -240,6 +266,11 @@ class AppDatabase {
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
+  }
+
+  Future<void> deleteTransaction(String id) async {
+    final db = await database;
+    await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> replaceStocks(List<Map<String, dynamic>> rows) async {
@@ -306,13 +337,20 @@ class AppDatabase {
   }
 
   Map<String, Object?> _accountRow(Map<String, dynamic> row) {
+    final type = (row['type'] ?? 'cash').toString().toLowerCase();
+    final isCreditCard = type == 'card' || type == 'credit_card';
+    final displayBalance = row['display_balance'] ??
+        (isCreditCard ? row['current_outstanding'] : row['balance']);
     return {
       'id': row['id'].toString(),
       'name': row['name'] ?? 'Account',
-      'type': row['type'] ?? 'cash',
-      'balance': _num(row['balance']),
+      'type': type,
+      'balance': _num(displayBalance),
       'opening_balance': _num(row['opening_balance']),
       'currency': row['currency'] ?? 'BDT',
+      'current_outstanding': _num(row['current_outstanding']),
+      'credit_limit': row['credit_limit'] == null ? null : _num(row['credit_limit']),
+      'display_balance': _num(displayBalance),
       'color': row['color'],
       'icon': row['icon'],
       'is_active': row['is_active'] == false ? 0 : 1,
@@ -357,12 +395,14 @@ class AppDatabase {
   }
 
   Map<String, Object?> _budgetRow(Map<String, dynamic> row) {
+    final monthValue = row['month'];
+    final categoryId = row['category_id'].toString();
     return {
-      'id': row['id'].toString(),
-      'category_id': row['category_id'].toString(),
-      'month': _budgetMonth(row['month']),
-      'year': _budgetYear(row['month'], row['year']),
-      'amount': _num(row['amount']),
+      'id': (row['id'] ?? '$monthValue-$categoryId').toString(),
+      'category_id': categoryId,
+      'month': _budgetMonth(monthValue),
+      'year': _budgetYear(monthValue, row['year']),
+      'amount': _num(row['amount'] ?? row['budget']),
       'spent': _num(row['spent']),
       'remaining': _num(row['remaining']),
       'overspending': row['overspending'] == true ? 1 : 0,
@@ -404,6 +444,17 @@ class AppDatabase {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value) ?? 0;
     return 0;
+  }
+
+  Future<void> _addColumnSafely(
+    Database db,
+    String table,
+    String column,
+    String definition,
+  ) async {
+    final columns = await db.rawQuery('PRAGMA table_info($table)');
+    if (columns.any((row) => row['name'] == column)) return;
+    await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
   }
 
   int _budgetMonth(Object? value) {

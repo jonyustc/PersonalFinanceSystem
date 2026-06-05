@@ -63,6 +63,22 @@ class ApiClient {
     return _asMapList(response.data);
   }
 
+  Future<List<Map<String, dynamic>>> getBudgetSummaryRows(String month) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/budgets/summary',
+      queryParameters: {'month': month},
+    );
+    final body = response.data ?? {};
+    return (body['categories'] as List? ?? [])
+        .whereType<Map>()
+        .map((row) => {
+              ...row.cast<String, dynamic>(),
+              'month': body['month'] ?? month,
+              'amount': row['budget'],
+            })
+        .toList();
+  }
+
   Future<Map<String, dynamic>> getTransactions({
     int limit = 100,
     int offset = 0,
@@ -88,6 +104,40 @@ class ApiClient {
     return response.data ?? {};
   }
 
+  Future<Map<String, dynamic>> updateTransaction(
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/transactions/$id',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
+  Future<void> deleteTransaction(String id) async {
+    await _dio.delete('/transactions/$id');
+  }
+
+  Future<Map<String, dynamic>> createTransfer(Map<String, dynamic> payload) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/transfers',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> updateAccount(
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/accounts/$id',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
   Future<void> archiveAccount(String id) async {
     await _dio.delete('/accounts/$id');
   }
@@ -105,6 +155,56 @@ class ApiClient {
       queryParameters: {'limit': limit},
     );
     return _asMapList(response.data);
+  }
+
+  Future<Map<String, dynamic>> getPortfolioSummary() async {
+    final response = await _dio.get<Map<String, dynamic>>('/portfolio/summary');
+    return response.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> createAccount(Map<String, dynamic> payload) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/accounts',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> createCategory(Map<String, dynamic> payload) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/categories',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> upsertBudget(Map<String, dynamic> payload) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/budgets/upsert',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> updateBudget(
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/budgets/$id',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> createPortfolioTransaction(
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/portfolio/transactions',
+      data: payload,
+    );
+    return response.data ?? {};
   }
 
   Future<void> post(String path, Map<String, dynamic> payload) async {

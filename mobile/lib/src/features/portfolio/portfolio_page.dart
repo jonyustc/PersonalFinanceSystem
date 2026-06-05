@@ -1,8 +1,7 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/finance_summary.dart';
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../dashboard/dashboard_page.dart';
@@ -15,10 +14,21 @@ class PortfolioPage extends ConsumerWidget {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
     if (snapshot == null) return const Center(child: CircularProgressIndicator());
 
-    final holdings = _buildHoldings(snapshot);
+    final holdings = buildPortfolioHoldings(
+      snapshot.stocks,
+      snapshot.portfolioTransactions,
+    );
     final currency = snapshot.session?.currency ?? 'BDT';
+    final backendSummary = snapshot.portfolioSummary;
     final equityValue =
-        holdings.fold<double>(0, (sum, row) => sum + row.marketValue);
+        asDouble(backendSummary?['current_equity_value']) > 0
+            ? asDouble(backendSummary?['current_equity_value'])
+            : holdings.fold<double>(0, (sum, row) => sum + row.marketValue);
+    final costBasis = asDouble(backendSummary?['active_cost_basis']) > 0
+        ? asDouble(backendSummary?['active_cost_basis'])
+        : holdings.fold<double>(0, (sum, row) => sum + row.cost);
+    final dividend = asDouble(backendSummary?['dividend_income']);
+    final returnPercent = asDouble(backendSummary?['return_percent']);
     final cash = snapshot.accounts
         .where(_isBrokerAccount)
         .fold<double>(0, (sum, row) => sum + asDouble(row['balance']));
@@ -70,6 +80,23 @@ class PortfolioPage extends ConsumerWidget {
                             ),
                           ],
                         ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _PortfolioMetric(
+                                label: 'Cost',
+                                value: money(costBasis, currency: currency),
+                              ),
+                            ),
+                            Expanded(
+                              child: _PortfolioMetric(
+                                label: 'Dividend',
+                                value: money(dividend, currency: currency),
+                              ),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 14),
                         ClipRRect(
                           borderRadius: BorderRadius.circular(999),
@@ -101,9 +128,18 @@ class PortfolioPage extends ConsumerWidget {
                         ),
                         Text('Total portfolio value',
                             style: Theme.of(context).textTheme.bodySmall),
+                        if (returnPercent != 0)
+                          Text('Return ${returnPercent.toStringAsFixed(1)}%',
+                              style: Theme.of(context).textTheme.bodySmall),
                       ],
                     ),
                   ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () => _showAddHoldingSheet(context),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add holding'),
                 ),
                 const SizedBox(height: 16),
                 if (holdings.isEmpty)
@@ -206,80 +242,163 @@ class PortfolioPage extends ConsumerWidget {
       ),
     );
   }
-}
 
-class _Holding {
-  _Holding({
-    required this.id,
-    required this.symbol,
-    required this.name,
-    required this.currency,
-    required this.lastPrice,
-  });
-
-  final String id;
-  final String symbol;
-  final String name;
-  final String currency;
-  final double lastPrice;
-  double quantity = 0;
-  double cost = 0;
-
-  double get marketValue => quantity * lastPrice;
-}
-
-List<_Holding> _buildHoldings(AppSnapshot snapshot) {
-  final byId = <String, _Holding>{
-    for (final stock in snapshot.stocks)
-      stock['id'] as String: _Holding(
-        id: stock['id'] as String,
-        symbol: stock['symbol'] as String? ?? 'S',
-        name: stock['name'] as String? ?? 'Stock',
-        currency: stock['currency'] as String? ?? 'BDT',
-        lastPrice: asDouble(stock['last_price']),
-      ),
-  };
-
-  for (final row in snapshot.portfolioTransactions) {
-    final stockId = row['stock_id'] as String?;
-    if (stockId == null) continue;
-    final embeddedStock = _decodeMap(row['stock_json']);
-    final holding = byId.putIfAbsent(
-      stockId,
-      () => _Holding(
-        id: stockId,
-        symbol: embeddedStock['symbol'] as String? ?? 'S',
-        name: embeddedStock['name'] as String? ?? 'Stock',
-        currency: embeddedStock['currency'] as String? ?? 'BDT',
-        lastPrice: asDouble(embeddedStock['last_price'] ?? row['price']),
-      ),
+  void _showAddHoldingSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const _AddHoldingSheet(),
     );
-    final quantity = asDouble(row['quantity']);
-    final cost = asDouble(row['total_amount']);
-    switch (row['txn_type']) {
-      case 'buy':
-        holding.quantity += quantity;
-        holding.cost += cost;
-      case 'sell':
-        holding.quantity -= quantity;
-        holding.cost -= cost;
-    }
+  }
+}
+
+class _AddHoldingSheet extends ConsumerStatefulWidget {
+  const _AddHoldingSheet();
+
+  @override
+  ConsumerState<_AddHoldingSheet> createState() => _AddHoldingSheetState();
+}
+
+class _AddHoldingSheetState extends ConsumerState<_AddHoldingSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _symbol = TextEditingController();
+  final _name = TextEditingController();
+  final _quantity = TextEditingController();
+  final _price = TextEditingController();
+  final _notes = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _symbol.dispose();
+    _name.dispose();
+    _quantity.dispose();
+    _price.dispose();
+    _notes.dispose();
+    super.dispose();
   }
 
-  return byId.values.where((row) => row.quantity > 0).toList()
-    ..sort((a, b) => b.marketValue.compareTo(a.marketValue));
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+      ),
+      child: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Add holding',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _symbol,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(
+                  labelText: 'Symbol',
+                  prefixIcon: Icon(Icons.tag_outlined),
+                ),
+                validator: (value) =>
+                    value == null || value.trim().isEmpty ? 'Enter symbol' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _name,
+                decoration: const InputDecoration(
+                  labelText: 'Company name',
+                  prefixIcon: Icon(Icons.business_outlined),
+                ),
+                validator: (value) =>
+                    value == null || value.trim().isEmpty ? 'Enter company name' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _quantity,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Quantity',
+                  prefixIcon: Icon(Icons.format_list_numbered),
+                ),
+                validator: _positiveNumber,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _price,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Buy price',
+                  prefixIcon: Icon(Icons.payments_outlined),
+                ),
+                validator: _positiveNumber,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _notes,
+                decoration: const InputDecoration(
+                  labelText: 'Note',
+                  prefixIcon: Icon(Icons.notes_outlined),
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: _busy ? null : _save,
+                icon: _busy
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check),
+                label: const Text('Save holding'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String? _positiveNumber(String? value) {
+    final parsed = double.tryParse(value ?? '');
+    return parsed == null || parsed <= 0 ? 'Enter a valid amount' : null;
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _busy = true);
+    await ref.read(appControllerProvider.notifier).addStockHolding(
+          symbol: _symbol.text.trim(),
+          name: _name.text.trim(),
+          quantity: double.parse(_quantity.text),
+          price: double.parse(_price.text),
+          notes: _notes.text,
+        );
+    if (mounted) Navigator.of(context).pop();
+  }
 }
 
 bool _isBrokerAccount(Map<String, dynamic> row) {
-  final raw = _decodeMap(row['raw_json']);
-  return raw['account_subtype'] == 'stock_broker';
-}
-
-Map<String, dynamic> _decodeMap(Object? value) {
-  if (value is! String || value.isEmpty) return {};
-  final decoded = jsonDecode(value);
-  if (decoded is Map) return decoded.cast<String, dynamic>();
-  return {};
+  final raw = row['raw_json'] as String? ?? '';
+  return raw.contains('"account_subtype":"stock_broker"') ||
+      raw.contains('"account_subtype": "stock_broker"');
 }
 
 String _percent(double value) => '${(value * 100).toStringAsFixed(1)}%';

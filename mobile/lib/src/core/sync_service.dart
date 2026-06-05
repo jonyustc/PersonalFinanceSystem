@@ -26,7 +26,7 @@ class SyncService {
         replace: _db.replaceTransactions,
       ),
       _syncResource(
-        fetch: () => _api.getBudgets(_monthKey(DateTime.now())),
+        fetch: () => _api.getBudgetSummaryRows(_monthKey(DateTime.now())),
         replace: _db.replaceBudgets,
       ),
       _syncResource(
@@ -38,6 +38,12 @@ class SyncService {
         replace: _db.replacePortfolioTransactions,
       ),
     ], eagerError: false);
+    try {
+      await _db.savePortfolioSummary(await _api.getPortfolioSummary());
+    } catch (_) {
+      // Portfolio summary is an enhancement over local holdings; keep sync
+      // usable when this endpoint is temporarily unavailable.
+    }
     if (!results.any((synced) => synced)) {
       throw StateError('No sync endpoints completed');
     }

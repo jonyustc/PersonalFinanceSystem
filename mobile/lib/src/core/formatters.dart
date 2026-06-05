@@ -5,7 +5,15 @@ final _date = DateFormat('MMM d, yyyy');
 final _dateTime = DateFormat('MMM d, h:mm a');
 
 String money(num value, {String currency = 'BDT'}) {
-  return '$currency ${_money.format(value)}';
+  final code = currency.toUpperCase();
+  final prefix = switch (code) {
+    'USD' => r'$',
+    'EUR' => '€',
+    'GBP' => '£',
+    'AED' => 'AED ',
+    _ => 'BDT ',
+  };
+  return '$prefix${_money.format(value)}';
 }
 
 String compactDate(String value) {

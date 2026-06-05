@@ -83,6 +83,12 @@ class BudgetsPage extends ConsumerWidget {
                     ),
                   ),
                 ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () => _showBudgetSheet(context, ref),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add budget'),
+                ),
                 const SizedBox(height: 16),
                 if (budgets.isEmpty)
                   const EmptyPanel(
@@ -100,8 +106,10 @@ class BudgetsPage extends ConsumerWidget {
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
+                        child: InkWell(
+                          onTap: () => _showBudgetSheet(context, ref, row: row),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -157,6 +165,7 @@ class BudgetsPage extends ConsumerWidget {
                           ),
                         ),
                       ),
+                      ),
                     );
                   }),
               ],
@@ -164,6 +173,18 @@ class BudgetsPage extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+
+  void _showBudgetSheet(
+    BuildContext context,
+    WidgetRef ref, {
+    Map<String, dynamic>? row,
+  }) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _BudgetSheet(initial: row),
     );
   }
 }
@@ -197,5 +218,157 @@ class _BudgetMetric extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+class _BudgetSheet extends ConsumerStatefulWidget {
+  const _BudgetSheet({this.initial});
+
+  final Map<String, dynamic>? initial;
+
+  @override
+  ConsumerState<_BudgetSheet> createState() => _BudgetSheetState();
+}
+
+class _BudgetSheetState extends ConsumerState<_BudgetSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _amount = TextEditingController();
+  String? _categoryId;
+  DateTime _month = DateTime(DateTime.now().year, DateTime.now().month);
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initial;
+    if (initial != null) {
+      _amount.text = asDouble(initial['amount']).toStringAsFixed(2);
+      _categoryId = initial['category_id'] as String?;
+      _month = DateTime(
+        initial['year'] as int? ?? DateTime.now().year,
+        initial['month'] as int? ?? DateTime.now().month,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final categories = (ref.watch(appControllerProvider).asData?.value.categories ?? [])
+        .where((row) => row['type'] == 'expense')
+        .toList();
+    _categoryId ??= categories.isNotEmpty ? categories.first['id'] as String : null;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+      ),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  widget.initial == null ? 'Add budget' : 'Edit budget',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: _categoryId,
+              decoration: const InputDecoration(
+                labelText: 'Category',
+                prefixIcon: Icon(Icons.category_outlined),
+              ),
+              items: categories
+                  .map(
+                    (row) => DropdownMenuItem<String>(
+                      value: row['id'] as String,
+                      child: Text(row['name'] as String),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) => setState(() => _categoryId = value),
+              validator: (value) => value == null ? 'Choose a category' : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _amount,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Budget amount',
+                prefixIcon: Icon(Icons.payments_outlined),
+              ),
+              validator: (value) {
+                final amount = double.tryParse(value ?? '');
+                return amount == null || amount <= 0 ? 'Enter a valid amount' : null;
+              },
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _pickMonth,
+              icon: const Icon(Icons.calendar_month_outlined),
+              label: Text(_monthKey),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _save,
+              icon: const Icon(Icons.check),
+              label: const Text('Save budget'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String get _monthKey =>
+      '${_month.year}-${_month.month.toString().padLeft(2, '0')}';
+
+  Future<void> _pickMonth() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _month,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
+    );
+    if (picked != null) {
+      setState(() => _month = DateTime(picked.year, picked.month));
+    }
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    final initial = widget.initial;
+    final amount = double.parse(_amount.text);
+    if (initial == null) {
+      await ref.read(appControllerProvider.notifier).upsertBudget(
+            categoryId: _categoryId!,
+            month: _monthKey,
+            amount: amount,
+          );
+    } else {
+      await ref.read(appControllerProvider.notifier).updateBudget(
+            id: initial['id'] as String,
+            amount: amount,
+          );
+    }
+    if (mounted) Navigator.of(context).pop();
   }
 }

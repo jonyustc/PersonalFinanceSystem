@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/app_controller.dart';
 import '../dashboard/dashboard_page.dart';
+import 'create_transaction_sheet.dart';
 import 'transaction_tile.dart';
 
 class TransactionsPage extends ConsumerStatefulWidget {
@@ -93,6 +94,11 @@ class _TransactionsPageState extends ConsumerState<TransactionsPage> {
                   return TransactionTile(
                     row: transactions[index],
                     currency: currency,
+                    onTap: () => showCreateTransactionSheet(
+                      context,
+                      initial: transactions[index],
+                    ),
+                    onDelete: () => _confirmDelete(transactions[index]),
                   );
                 },
               ),
@@ -100,6 +106,32 @@ class _TransactionsPageState extends ConsumerState<TransactionsPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _confirmDelete(Map<String, dynamic> row) async {
+    final title =
+        (row['merchant_name'] ?? row['description'] ?? 'transaction') as String;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete transaction?'),
+        content: Text('Delete $title and refresh balances?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await ref
+        .read(appControllerProvider.notifier)
+        .deleteTransaction(row['id'] as String);
   }
 }
 

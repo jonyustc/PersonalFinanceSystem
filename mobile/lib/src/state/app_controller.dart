@@ -30,9 +30,11 @@ class AppSnapshot {
     required this.budgets,
     required this.stocks,
     required this.portfolioTransactions,
+    required this.portfolioSummary,
     required this.isSyncing,
     required this.pendingWrites,
     required this.lastSyncAt,
+    required this.themeMode,
     this.notice,
   });
 
@@ -43,9 +45,11 @@ class AppSnapshot {
   final List<Map<String, dynamic>> budgets;
   final List<Map<String, dynamic>> stocks;
   final List<Map<String, dynamic>> portfolioTransactions;
+  final Map<String, dynamic>? portfolioSummary;
   final bool isSyncing;
   final int pendingWrites;
   final String? lastSyncAt;
+  final String themeMode;
   final String? notice;
 
   bool get isAuthenticated => session != null;
@@ -59,9 +63,11 @@ class AppSnapshot {
     List<Map<String, dynamic>>? budgets,
     List<Map<String, dynamic>>? stocks,
     List<Map<String, dynamic>>? portfolioTransactions,
+    Map<String, dynamic>? portfolioSummary,
     bool? isSyncing,
     int? pendingWrites,
     String? lastSyncAt,
+    String? themeMode,
     String? notice,
   }) {
     return AppSnapshot(
@@ -73,9 +79,11 @@ class AppSnapshot {
       stocks: stocks ?? this.stocks,
       portfolioTransactions:
           portfolioTransactions ?? this.portfolioTransactions,
+      portfolioSummary: portfolioSummary ?? this.portfolioSummary,
       isSyncing: isSyncing ?? this.isSyncing,
       pendingWrites: pendingWrites ?? this.pendingWrites,
       lastSyncAt: lastSyncAt ?? this.lastSyncAt,
+      themeMode: themeMode ?? this.themeMode,
       notice: notice,
     );
   }
@@ -169,7 +177,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
     try {
       final created = await _api.createTransaction(payload);
       await _db.upsertTransaction(created);
-      unawaited(syncNow(silent: true));
+      await syncNow(silent: true);
     } catch (_) {
       final local = {
         ...payload,
@@ -182,6 +190,194 @@ class AppController extends AsyncNotifier<AppSnapshot>
 
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<void> updateTransaction({
+    required String id,
+    required String accountId,
+    required String type,
+    required double amount,
+    required DateTime date,
+    String? categoryId,
+    String? merchantName,
+    String? description,
+  }) async {
+    final payload = {
+      'account_id': accountId,
+      'category_id': categoryId,
+      'type': type,
+      'amount': amount,
+      'txn_date': date.toUtc().toIso8601String(),
+      'merchant_name': _blankToNull(merchantName),
+      'description': _blankToNull(description),
+      'tags': <String>[],
+      'transaction_status': 'posted',
+    };
+
+    final updated = await _api.updateTransaction(id, payload);
+    await _db.upsertTransaction(updated);
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<void> deleteTransaction(String id) async {
+    await _api.deleteTransaction(id);
+    await _db.deleteTransaction(id);
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<void> createTransfer({
+    required String fromAccountId,
+    required String toAccountId,
+    required double amount,
+    required DateTime date,
+    String? notes,
+    bool isCardPayment = false,
+  }) async {
+    final payload = {
+      'from_account_id': fromAccountId,
+      'to_account_id': toAccountId,
+      'amount': amount,
+      'transfer_date': date.toUtc().toIso8601String(),
+      'notes': _blankToNull(notes),
+      'is_card_payment': isCardPayment,
+    };
+    await _api.createTransfer(payload);
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<void> updateAccount({
+    required String id,
+    required String name,
+    required String type,
+    required double openingBalance,
+    required String currency,
+    String? color,
+    String? icon,
+  }) async {
+    await _api.updateAccount(id, {
+      'name': name,
+      'type': type,
+      'opening_balance': openingBalance,
+      'currency': currency,
+      'color': _blankToNull(color),
+      'icon': _blankToNull(icon),
+    });
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<void> createAccount({
+    required String name,
+    required String type,
+    required double openingBalance,
+    required String currency,
+    String? color,
+    String? icon,
+    String? notes,
+    String? accountSubtype,
+  }) async {
+    await _api.createAccount({
+      'name': name,
+      'type': type,
+      'opening_balance': openingBalance,
+      'currency': currency,
+      'color': _blankToNull(color),
+      'icon': _blankToNull(icon),
+      'notes': _blankToNull(notes),
+      'account_subtype': _blankToNull(accountSubtype),
+    });
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<Map<String, dynamic>> createCategory({
+    required String name,
+    required String type,
+    String? parentId,
+  }) async {
+    final created = await _api.createCategory({
+      'name': name,
+      'type': type,
+      'parent_id': parentId,
+    });
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+    return created;
+  }
+
+  Future<void> upsertBudget({
+    required String categoryId,
+    required String month,
+    required double amount,
+  }) async {
+    await _api.upsertBudget({
+      'category_id': categoryId,
+      'month': month,
+      'amount': amount,
+    });
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<void> updateBudget({
+    required String id,
+    required double amount,
+  }) async {
+    await _api.updateBudget(id, {'amount': amount});
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<void> addStockHolding({
+    required String symbol,
+    required String name,
+    required double quantity,
+    required double price,
+    DateTime? date,
+    String? notes,
+  }) async {
+    await _api.createPortfolioTransaction({
+      'stock': {
+        'symbol': symbol.toUpperCase(),
+        'name': name,
+        'currency': state.asData?.value.session?.currency ?? 'BDT',
+        'last_price': price,
+      },
+      'txn_type': 'buy',
+      'quantity': quantity,
+      'price': price,
+      'txn_date': (date ?? DateTime.now()).toIso8601String().substring(0, 10),
+      'notes': _blankToNull(notes),
+    });
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<void> setCurrency(String currency) async {
+    await _session.saveCurrency(currency);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: await _session.load() ?? current?.session));
+  }
+
+  Future<void> setThemeMode(String themeMode) async {
+    await _session.saveThemeMode(themeMode);
+    final current = state.asData?.value;
+    state = AsyncData(
+      (await _readLocal(session: await _session.load() ?? current?.session))
+          .copyWith(themeMode: themeMode),
+    );
   }
 
   Future<void> archiveAccount(String accountId) async {
@@ -207,9 +403,11 @@ class AppController extends AsyncNotifier<AppSnapshot>
       budgets: await _db.budgets(),
       stocks: await _db.stocks(),
       portfolioTransactions: await _db.portfolioTransactions(),
+      portfolioSummary: await _db.portfolioSummary(),
       isSyncing: false,
       pendingWrites: await _db.pendingCount(),
       lastSyncAt: await _db.lastSyncAt(),
+      themeMode: await _session.loadThemeMode(),
     );
   }
 

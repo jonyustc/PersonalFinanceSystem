@@ -7,10 +7,14 @@ class TransactionTile extends StatelessWidget {
     super.key,
     required this.row,
     required this.currency,
+    this.onTap,
+    this.onDelete,
   });
 
   final Map<String, dynamic> row;
   final String currency;
+  final VoidCallback? onTap;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -20,8 +24,10 @@ class TransactionTile extends StatelessWidget {
     final amount = asDouble(row['amount']);
     final title = (row['merchant_name'] ?? row['description'] ?? type) as String;
 
-    return Card(
+    final tile = Card(
       child: ListTile(
+        onTap: onTap,
+        onLongPress: onDelete,
         leading: CircleAvatar(
           backgroundColor:
               isIncome ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
@@ -49,6 +55,25 @@ class TransactionTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+    if (onDelete == null) return tile;
+    return Dismissible(
+      key: ValueKey(row['id']),
+      direction: DismissDirection.endToStart,
+      confirmDismiss: (_) async {
+        onDelete?.call();
+        return false;
+      },
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          color: Colors.red.shade600,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Icon(Icons.delete_outline, color: Colors.white),
+      ),
+      child: tile,
     );
   }
 }

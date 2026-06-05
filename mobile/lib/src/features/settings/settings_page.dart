@@ -27,6 +27,44 @@ class SettingsPage extends ConsumerWidget {
           child: Column(
             children: [
               ListTile(
+                leading: const Icon(Icons.payments_outlined),
+                title: const Text('Currency'),
+                trailing: DropdownButton<String>(
+                  value: session?.currency ?? 'BDT',
+                  items: const [
+                    DropdownMenuItem(value: 'BDT', child: Text('BDT')),
+                    DropdownMenuItem(value: 'USD', child: Text('USD')),
+                    DropdownMenuItem(value: 'EUR', child: Text('EUR')),
+                    DropdownMenuItem(value: 'GBP', child: Text('GBP')),
+                    DropdownMenuItem(value: 'AED', child: Text('AED')),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      ref.read(appControllerProvider.notifier).setCurrency(value);
+                    }
+                  },
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.dark_mode_outlined),
+                title: const Text('Theme'),
+                trailing: DropdownButton<String>(
+                  value: snapshot?.themeMode ?? 'system',
+                  items: const [
+                    DropdownMenuItem(value: 'system', child: Text('System')),
+                    DropdownMenuItem(value: 'light', child: Text('Light')),
+                    DropdownMenuItem(value: 'dark', child: Text('Dark')),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      ref.read(appControllerProvider.notifier).setThemeMode(value);
+                    }
+                  },
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
                 leading: const Icon(Icons.storage_outlined),
                 title: const Text('Local database'),
                 subtitle: Text(

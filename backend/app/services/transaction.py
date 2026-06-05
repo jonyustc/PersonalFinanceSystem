@@ -384,4 +384,5 @@ class TransactionService:
                 details.statement_day = account.billing_cycle_day
                 details.due_day = account.payment_due_day
                 details.available_credit = max(details.credit_limit - account.current_outstanding, Decimal("0"))
-            self.db.add(AccountBalanceHistory(account_id=account.id, balance_date=datetime.now(UTC), closing_balance=account.balance))
+            closing_balance = account.current_outstanding if is_credit_card(account) else account.balance
+            self.db.add(AccountBalanceHistory(account_id=account.id, balance_date=datetime.now(UTC), closing_balance=closing_balance))

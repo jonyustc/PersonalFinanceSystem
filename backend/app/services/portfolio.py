@@ -259,26 +259,24 @@ class PortfolioService:
                 continue
             stock_data = aggregates.setdefault(
                 trx.stock_id,
-                {"buy_qty": ZERO, "sell_qty": ZERO, "buy_total": ZERO, "sell_total": ZERO, "dividend": ZERO},
+                {"quantity": ZERO, "cost_basis": ZERO, "realized": ZERO},
             )
             if trx.txn_type == "buy":
-                stock_data["buy_qty"] += trx.quantity
-                stock_data["buy_total"] += self._total_amount(trx)
+                stock_data["quantity"] += trx.quantity
+                stock_data["cost_basis"] += self._total_amount(trx)
             elif trx.txn_type == "sell":
-                stock_data["sell_qty"] += trx.quantity
-                stock_data["sell_total"] += self._total_amount(trx)
-            elif trx.txn_type == "income":
-                stock_data["dividend"] += trx.price
+                if trx.quantity > stock_data["quantity"]:
+                    raise HTTPException(400, "Sell quantity exceeds holding")
+                avg_cost = stock_data["cost_basis"] / stock_data["quantity"] if stock_data["quantity"] else ZERO
+                removed_cost = avg_cost * trx.quantity
+                stock_data["quantity"] -= trx.quantity
+                stock_data["cost_basis"] -= removed_cost
+                stock_data["realized"] += self._total_amount(trx) - removed_cost
 
         for stock_id, data in aggregates.items():
-            net_qty = data["buy_qty"] - data["sell_qty"]
-            if net_qty < ZERO:
-                raise HTTPException(400, "Sell quantity exceeds holding")
-            adjusted_cost_basis = data["buy_total"] - data["sell_total"] - data["dividend"]
-            realized_profit_loss = ZERO
-            if net_qty == ZERO:
-                realized_profit_loss = data["sell_total"] + data["dividend"] - data["buy_total"]
-                adjusted_cost_basis = ZERO
+            net_qty = data["quantity"]
+            adjusted_cost_basis = data["cost_basis"] if net_qty > ZERO else ZERO
+            realized_profit_loss = data["realized"]
             avg_buy_price = adjusted_cost_basis / net_qty if net_qty > ZERO else ZERO
             self.db.add(
                 Holding(

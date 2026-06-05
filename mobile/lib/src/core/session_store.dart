@@ -22,6 +22,7 @@ class SessionStore {
   static const _userName = 'user_name';
   static const _email = 'email';
   static const _currency = 'currency';
+  static const _themeMode = 'theme_mode';
 
   Future<Session?> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -38,6 +39,11 @@ class SessionStore {
     );
   }
 
+  Future<String> loadThemeMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_themeMode) ?? 'system';
+  }
+
   Future<void> saveFromAuth(Map<String, dynamic> auth) async {
     final prefs = await SharedPreferences.getInstance();
     final user = (auth['user'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -51,6 +57,16 @@ class SessionStore {
     );
   }
 
+  Future<void> saveCurrency(String currency) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_currency, currency);
+  }
+
+  Future<void> saveThemeMode(String themeMode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_themeMode, themeMode);
+  }
+
   Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_accessToken);
@@ -58,5 +74,6 @@ class SessionStore {
     await prefs.remove(_userName);
     await prefs.remove(_email);
     await prefs.remove(_currency);
+    await prefs.remove(_themeMode);
   }
 }

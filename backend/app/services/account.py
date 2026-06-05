@@ -4,6 +4,7 @@ import logging
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account, AccountBalanceHistory, AccountTransfer, CreditCardDetails
@@ -193,6 +194,30 @@ class AccountService:
 
     async def delete(self, user_id: UUID, account_id: UUID) -> None:
         account = await self.get(user_id, account_id)
+        transaction_count = await self.db.scalar(
+            select(func.count())
+            .select_from(Transaction)
+            .where(
+                Transaction.user_id == user_id,
+                or_(
+                    Transaction.account_id == account_id,
+                    Transaction.transfer_account_id == account_id,
+                ),
+            )
+        )
+        if transaction_count:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete an account that has transactions",
+            )
+
+        effective_balance = account.current_outstanding if is_credit_card(account) else account.balance
+        if effective_balance != ZERO:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete an account with a non-zero balance",
+            )
+
         account.is_active = False
         account.archived = True
         await self.db.commit()
@@ -386,7 +411,10 @@ class AccountService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="Non-card accounts cannot be adjusted below zero")
 
-        account.balance = payload.closing_balance
+        if is_credit_card(account):
+            account.current_outstanding = max(payload.closing_balance, ZERO)
+        else:
+            account.balance = payload.closing_balance
         self._refresh_card_credit(account)
         await self._record_balance(account)
         await self.db.commit()
@@ -421,7 +449,7 @@ class AccountService:
             AccountBalanceHistory(
                 account_id=account.id,
                 balance_date=datetime.now(UTC),
-                closing_balance=account.balance,
+                closing_balance=account.current_outstanding if is_credit_card(account) else account.balance,
             )
         )
 

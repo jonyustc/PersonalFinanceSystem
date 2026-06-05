@@ -13,10 +13,14 @@ class PersonalFinanceApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(appControllerProvider);
 
+    final snapshot = state.asData?.value;
+
     return MaterialApp(
       title: 'Personal Finance',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
+      darkTheme: buildAppTheme(brightness: Brightness.dark),
+      themeMode: _themeMode(snapshot?.themeMode ?? 'system'),
       home: state.when(
         data: (snapshot) =>
             snapshot.isAuthenticated ? const HomeShell() : const LoginPage(),
@@ -24,6 +28,14 @@ class PersonalFinanceApp extends ConsumerWidget {
         loading: () => const StartupLoading(),
       ),
     );
+  }
+
+  ThemeMode _themeMode(String value) {
+    return switch (value) {
+      'light' => ThemeMode.light,
+      'dark' => ThemeMode.dark,
+      _ => ThemeMode.system,
+    };
   }
 }
 

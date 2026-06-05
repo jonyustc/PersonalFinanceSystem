@@ -23,20 +23,25 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _index = 0;
 
-  static const _pages = [
-    DashboardPage(),
-    TransactionsPage(),
-    AccountsPage(),
-    BudgetsPage(),
-    CategoriesPage(),
-    ReportsPage(),
-    PortfolioPage(),
-    SettingsPage(),
-  ];
-
   @override
   Widget build(BuildContext context) {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
+    final pages = [
+      DashboardPage(
+        onAddExpense: () => showCreateTransactionSheet(context, initialType: 'expense'),
+        onAddIncome: () => showCreateTransactionSheet(context, initialType: 'income'),
+        onTransfer: () => setState(() => _index = 2),
+        onAddBudget: () => setState(() => _index = 3),
+        onAddStock: () => setState(() => _index = 6),
+      ),
+      const TransactionsPage(),
+      const AccountsPage(),
+      const BudgetsPage(),
+      const CategoriesPage(),
+      const ReportsPage(),
+      const PortfolioPage(),
+      const SettingsPage(),
+    ];
 
     return Scaffold(
       key: _scaffoldKey,
@@ -126,7 +131,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           ),
         ],
       ),
-      body: _pages[_index],
+      body: pages[_index],
       floatingActionButton: _index == 1 || _index == 0
           ? FloatingActionButton.extended(
               onPressed: () => showCreateTransactionSheet(context),

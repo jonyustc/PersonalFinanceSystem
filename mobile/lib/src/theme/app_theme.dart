@@ -1,45 +1,52 @@
 import 'package:flutter/material.dart';
 
-ThemeData buildAppTheme() {
+ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
   const seed = Color(0xFF0F766E);
+  final scheme = ColorScheme.fromSeed(
+    seedColor: seed,
+    brightness: brightness,
+    primary: seed,
+    secondary: const Color(0xFF2563EB),
+    tertiary: const Color(0xFFF59E0B),
+  );
+  final isDark = brightness == Brightness.dark;
 
   return ThemeData(
     useMaterial3: true,
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: seed,
-      brightness: Brightness.light,
-      primary: seed,
-      secondary: const Color(0xFF2563EB),
-      tertiary: const Color(0xFFF59E0B),
-      surface: const Color(0xFFF8FAFC),
-    ),
-    scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+    colorScheme: scheme,
+    scaffoldBackgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
     fontFamily: 'Roboto',
-    appBarTheme: const AppBarTheme(
+    appBarTheme: AppBarTheme(
       centerTitle: false,
       elevation: 0,
-      backgroundColor: Color(0xFFF8FAFC),
-      foregroundColor: Color(0xFF0F172A),
+      backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
+      foregroundColor: isDark ? const Color(0xFFE2E8F0) : const Color(0xFF0F172A),
     ),
     cardTheme: CardThemeData(
       elevation: 0,
-      color: Colors.white,
+      color: isDark ? const Color(0xFF111827) : Colors.white,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: Color(0xFFE2E8F0)),
+        side: BorderSide(
+          color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
+        ),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: Colors.white,
+      fillColor: isDark ? const Color(0xFF111827) : Colors.white,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+        borderSide: BorderSide(
+          color: isDark ? const Color(0xFF475569) : const Color(0xFFCBD5E1),
+        ),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+        borderSide: BorderSide(
+          color: isDark ? const Color(0xFF475569) : const Color(0xFFCBD5E1),
+        ),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
