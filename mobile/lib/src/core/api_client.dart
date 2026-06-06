@@ -261,6 +261,14 @@ class ApiClient {
     return response.data ?? {};
   }
 
+  Future<List<Map<String, dynamic>>> searchDseStocks(String query) async {
+    final response = await _dio.get<List<dynamic>>(
+      '/portfolio/stocks/dse/search',
+      queryParameters: {'query': query, 'limit': 12},
+    );
+    return _asMapList(response.data);
+  }
+
   Future<List<Map<String, dynamic>>> getPortfolioTransactions({
     int limit = 100,
   }) async {

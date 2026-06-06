@@ -2,7 +2,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account
@@ -38,6 +38,18 @@ class PortfolioService:
         for field, value in data.items():
             if field == "currency" and value:
                 value = value.upper()
+            if field == "symbol" and value:
+                value = value.strip().upper()
+                existing = (
+                    await self.db.execute(
+                        select(type(stock)).where(
+                            func.upper(type(stock).symbol) == value,
+                            type(stock).id != stock_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing:
+                    raise HTTPException(409, "Stock symbol already exists")
             setattr(stock, field, value)
         await self.db.commit()
         await self.db.refresh(stock)

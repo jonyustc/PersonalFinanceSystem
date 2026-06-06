@@ -25,3 +25,11 @@ def test_parse_dse_latest_prices():
     assert prices["SQURPHARMA"].last_price == Decimal("225.5")
     assert prices["BRACBANK"].last_price == Decimal("51.2")
     assert prices["SQURPHARMA"].source == "DSE"
+
+
+def test_parse_dse_company_name():
+    page = '<h2 class="BodyHead"> Company Name: <i>Square Pharmaceuticals PLC.</i></h2>'
+
+    name = MarketPriceService()._parse_dse_company_name(page)
+
+    assert name == "Square Pharmaceuticals PLC."

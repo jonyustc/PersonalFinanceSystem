@@ -317,6 +317,22 @@ export const deletePortfolioTransaction = (id: string) =>
 
 export const fetchStocks = () => apiRequest<Stock[]>("/portfolio/stocks");
 
+export type DseStockSearchResult = {
+  symbol: string;
+  name: string;
+  last_price: string;
+  source: string;
+  fetched_at: string;
+};
+
+export const searchDseStocks = (query: string) =>
+  apiRequest<DseStockSearchResult[]>(
+    `/portfolio/stocks/dse/search?${new URLSearchParams({
+      query,
+      limit: "12",
+    }).toString()}`,
+  );
+
 export const refreshStockPrices = () =>
   apiRequest<{
     updated: number;
@@ -336,7 +352,7 @@ export const createStock = (payload: PortfolioTransactionPayload["stock"]) =>
 
 export const updateStock = (
   id: string,
-  payload: Partial<Pick<Stock, "name" | "exchange" | "currency" | "last_price">>,
+  payload: Partial<Pick<Stock, "symbol" | "name" | "exchange" | "currency" | "last_price">>,
 ) =>
   apiRequest<Stock>(`/portfolio/stocks/${id}`, {
     method: "PATCH",

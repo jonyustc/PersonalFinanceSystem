@@ -80,6 +80,9 @@ class _PortfolioPageState extends ConsumerState<PortfolioPage> {
                       onRefreshPrices: () => ref
                           .read(appControllerProvider.notifier)
                           .refreshStockPrices(),
+                      onSearchDseStock: (query) => ref
+                          .read(appControllerProvider.notifier)
+                          .searchDseStocks(query),
                       onSaveStock:
                           ({
                             id,
@@ -582,12 +585,15 @@ class _MarketView extends StatefulWidget {
     required this.stocks,
     required this.defaultCurrency,
     required this.onRefreshPrices,
+    required this.onSearchDseStock,
     required this.onSaveStock,
   });
 
   final List<Map<String, dynamic>> stocks;
   final String defaultCurrency;
   final Future<String> Function() onRefreshPrices;
+  final Future<List<Map<String, dynamic>>> Function(String query)
+  onSearchDseStock;
   final Future<void> Function({
     String? id,
     required String name,
@@ -654,12 +660,17 @@ class _MarketViewState extends State<_MarketView> {
                       : null,
                 ),
                 const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: _savingId == null ? _pickDseStock : null,
+                  icon: const Icon(Icons.search),
+                  label: const Text('Find stock from DSE'),
+                ),
+                const SizedBox(height: 10),
                 Row(
                   children: [
                     Expanded(
                       child: TextFormField(
                         controller: _symbol,
-                        enabled: _editingId == null,
                         textCapitalization: TextCapitalization.characters,
                         decoration: const InputDecoration(
                           labelText: 'Symbol',
@@ -853,6 +864,22 @@ class _MarketViewState extends State<_MarketView> {
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
+  }
+
+  Future<void> _pickDseStock() async {
+    final picked = await showDseStockPicker(
+      context: context,
+      search: widget.onSearchDseStock,
+      initialQuery: _symbol.text,
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _name.text = picked['name'] as String? ?? '';
+      _symbol.text = picked['symbol'] as String? ?? '';
+      _exchange.text = picked['source'] as String? ?? 'DSE';
+      _currency.text = 'BDT';
+      _lastPrice.text = _num(picked['last_price']).toStringAsFixed(4);
+    });
   }
 
   Future<void> _saveForm() async {
@@ -1068,6 +1095,12 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
               ],
               if (needsStock && _stockId == null) ...[
                 const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _pickDseStock,
+                  icon: const Icon(Icons.search),
+                  label: const Text('Find stock from DSE'),
+                ),
+                const SizedBox(height: 10),
                 TextFormField(
                   controller: _newStockName,
                   decoration: const InputDecoration(labelText: 'Stock name'),
@@ -1205,6 +1238,22 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
     if (picked != null) setState(() => _date = picked);
   }
 
+  Future<void> _pickDseStock() async {
+    final picked = await showDseStockPicker(
+      context: context,
+      search: (query) => ref
+          .read(appControllerProvider.notifier)
+          .searchDseStocks(query),
+      initialQuery: _newStockSymbol.text,
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _newStockName.text = picked['name'] as String? ?? '';
+      _newStockSymbol.text = picked['symbol'] as String? ?? '';
+      _price.text = _num(picked['last_price']).toStringAsFixed(4);
+    });
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
@@ -1245,6 +1294,157 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
     final trimmed = _fees.text.trim();
     if (trimmed.isEmpty) return null;
     return double.tryParse(trimmed);
+  }
+}
+
+Future<Map<String, dynamic>?> showDseStockPicker({
+  required BuildContext context,
+  required Future<List<Map<String, dynamic>>> Function(String query) search,
+  String? initialQuery,
+}) {
+  return showModalBottomSheet<Map<String, dynamic>>(
+    context: context,
+    isScrollControlled: true,
+    builder: (_) => _DseStockPicker(search: search, initialQuery: initialQuery),
+  );
+}
+
+class _DseStockPicker extends StatefulWidget {
+  const _DseStockPicker({required this.search, this.initialQuery});
+
+  final Future<List<Map<String, dynamic>>> Function(String query) search;
+  final String? initialQuery;
+
+  @override
+  State<_DseStockPicker> createState() => _DseStockPickerState();
+}
+
+class _DseStockPickerState extends State<_DseStockPicker> {
+  final _query = TextEditingController();
+  Future<List<Map<String, dynamic>>>? _results;
+
+  @override
+  void initState() {
+    super.initState();
+    _query.text = widget.initialQuery ?? '';
+    if (_query.text.trim().isNotEmpty) {
+      _runSearch();
+    }
+  }
+
+  @override
+  void dispose() {
+    _query.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16,
+          MediaQuery.of(context).viewInsets.bottom + 16,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Find DSE stock',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _query,
+              textCapitalization: TextCapitalization.characters,
+              decoration: InputDecoration(
+                labelText: 'DSE trading code',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: IconButton(
+                  tooltip: 'Search',
+                  onPressed: _runSearch,
+                  icon: const Icon(Icons.arrow_forward),
+                ),
+              ),
+              onSubmitted: (_) => _runSearch(),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 360,
+              child: FutureBuilder<List<Map<String, dynamic>>>(
+                future: _results,
+                builder: (context, snapshot) {
+                  if (_results == null) {
+                    return const Center(
+                      child: Text('Search by DSE trading code.'),
+                    );
+                  }
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return Center(child: Text(snapshot.error.toString()));
+                  }
+                  final rows = snapshot.data ?? const [];
+                  if (rows.isEmpty) {
+                    return const Center(child: Text('No DSE stocks found.'));
+                  }
+                  return ListView.separated(
+                    itemCount: rows.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final row = rows[index];
+                      return ListTile(
+                        leading: CircleAvatar(
+                          child: Text(
+                            (row['symbol'] as String? ?? 'S')
+                                .characters
+                                .first
+                                .toUpperCase(),
+                          ),
+                        ),
+                        title: Text(
+                          row['name'] as String? ?? row['symbol'] as String? ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        subtitle: Text('${row['symbol']} - ${row['source'] ?? 'DSE'}'),
+                        trailing: Text(
+                          money(_num(row['last_price']), currency: 'BDT'),
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        onTap: () => Navigator.of(context).pop(row),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _runSearch() {
+    setState(() {
+      _results = widget.search(_query.text.trim().toUpperCase());
+    });
   }
 }
 

@@ -408,15 +408,18 @@ class _PieSummary extends StatelessWidget {
                     final row = rows[index];
                     final selected = index == selectedIndex;
                     final percent = total <= 0 ? 0 : row.amount / total * 100;
+                    final color = _chartColors[index % _chartColors.length];
                     return PieChartSectionData(
                       value: row.amount,
-                      color: _chartColors[index % _chartColors.length],
+                      color: color,
                       radius: selected ? 78 : 68,
-                      title: '${percent.round()}%',
+                      title: '${_chartLabel(row.name)}\n${percent.round()}%',
+                      titlePositionPercentageOffset: 0.62,
                       titleStyle: TextStyle(
-                        color: scheme.onPrimary,
-                        fontSize: selected ? 15 : 13,
+                        color: _textOnColor(color),
+                        fontSize: selected ? 12 : 10,
                         fontWeight: FontWeight.w800,
+                        height: 1.05,
                       ),
                     );
                   }),
@@ -582,3 +585,13 @@ const _chartColors = [
   Color(0xFF16A34A),
   Color(0xFFDB2777),
 ];
+
+String _chartLabel(String value) {
+  final trimmed = value.trim();
+  if (trimmed.length <= 9) return trimmed;
+  return '${trimmed.substring(0, 8)}…';
+}
+
+Color _textOnColor(Color color) {
+  return color.computeLuminance() > 0.45 ? Colors.black87 : Colors.white;
+}

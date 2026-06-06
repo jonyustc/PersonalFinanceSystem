@@ -27,6 +27,7 @@ import {
   fetchPortfolioSummary,
   fetchPortfolioTransactions,
   fetchStocks,
+  searchDseStocks,
   refreshStockPrices,
   updatePortfolioTransaction,
 } from "@/services/finance-service";
@@ -97,6 +98,13 @@ export default function PortfolioPage() {
   const transactionsQuery = useQuery({ queryKey: ["portfolio", "transactions"], queryFn: () => fetchPortfolioTransactions(100) });
   const stocksQuery = useQuery({ queryKey: ["portfolio", "stocks"], queryFn: fetchStocks });
   const accountsQuery = useQuery({ queryKey: ["accounts"], queryFn: fetchAccounts });
+  const needsStock = ["buy", "sell", "income"].includes(form.txn_type);
+  const isTrade = ["buy", "sell"].includes(form.txn_type);
+  const dseQuery = useQuery({
+    queryKey: ["portfolio", "dse-search", form.new_stock_symbol],
+    queryFn: () => searchDseStocks(form.new_stock_symbol),
+    enabled: needsStock && !form.stock_id && form.new_stock_symbol.trim().length >= 2,
+  });
 
   const summary = summaryQuery.data;
   const transactions = transactionsQuery.data ?? [];
@@ -106,8 +114,6 @@ export default function PortfolioPage() {
     [accountsQuery.data],
   );
   const selectedStock = stocks.find((stock) => stock.id === form.stock_id);
-  const needsStock = ["buy", "sell", "income"].includes(form.txn_type);
-  const isTrade = ["buy", "sell"].includes(form.txn_type);
 
   async function refresh() {
     await Promise.all([
@@ -129,6 +135,7 @@ export default function PortfolioPage() {
           ? {
               symbol: (form.new_stock_symbol || form.new_stock_name).trim().toUpperCase(),
               name: form.new_stock_name.trim(),
+              exchange: "DSE",
               currency: "BDT",
               last_price: asNumber(form.price),
             }
@@ -307,19 +314,43 @@ export default function PortfolioPage() {
               </div>
 
               {needsStock && !form.stock_id ? (
-                <div className="grid gap-2 md:grid-cols-2">
-                  <input
-                    className="input"
-                    placeholder="Stock name"
-                    value={form.new_stock_name}
-                    onChange={(event) => setForm((current) => ({ ...current, new_stock_name: event.target.value }))}
-                  />
-                  <input
-                    className="input"
-                    placeholder="Symbol"
-                    value={form.new_stock_symbol}
-                    onChange={(event) => setForm((current) => ({ ...current, new_stock_symbol: event.target.value }))}
-                  />
+                <div className="space-y-2">
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <input
+                      className="input"
+                      placeholder="DSE trading code"
+                      value={form.new_stock_symbol}
+                      onChange={(event) => setForm((current) => ({ ...current, new_stock_symbol: event.target.value.toUpperCase() }))}
+                    />
+                    <input
+                      className="input"
+                      placeholder="Stock name from DSE"
+                      value={form.new_stock_name}
+                      onChange={(event) => setForm((current) => ({ ...current, new_stock_name: event.target.value }))}
+                    />
+                  </div>
+                  {dseQuery.data?.length ? (
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {dseQuery.data.map((stock) => (
+                        <button
+                          key={stock.symbol}
+                          type="button"
+                          onClick={() =>
+                            setForm((current) => ({
+                              ...current,
+                              new_stock_symbol: stock.symbol,
+                              new_stock_name: stock.name,
+                              price: String(asNumber(stock.last_price)),
+                            }))
+                          }
+                          className="min-w-0 rounded-md border border-line bg-surface p-2 text-left hover:border-brand-600"
+                        >
+                          <span className="block truncate text-xs font-semibold text-ink">{stock.symbol}</span>
+                          <span className="block truncate text-xs text-muted">{stock.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 

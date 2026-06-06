@@ -498,6 +498,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
               'symbol': (_blankToNull(newStockSymbol) ?? newStockName!.trim())
                   .toUpperCase(),
               'name': newStockName!.trim(),
+              'exchange': 'DSE',
               'currency': state.asData?.value.session?.currency ?? 'BDT',
               'last_price': price,
             }
@@ -597,6 +598,10 @@ class AppController extends AsyncNotifier<AppSnapshot>
     }
   }
 
+  Future<List<Map<String, dynamic>>> searchDseStocks(String query) {
+    return _api.searchDseStocks(query);
+  }
+
   Future<void> saveStock({
     String? id,
     required String name,
@@ -617,6 +622,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'last_price': lastPrice,
     };
     final updatePayload = {
+      'symbol': symbol.trim().toUpperCase(),
       'name': name.trim(),
       'exchange': _blankToNull(exchange),
       'currency': resolvedCurrency.isEmpty ? 'BDT' : resolvedCurrency,

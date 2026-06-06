@@ -18,6 +18,7 @@ class StockCreate(BaseModel):
 
 
 class StockUpdate(BaseModel):
+    symbol: str | None = Field(default=None, min_length=1, max_length=20)
     name: str | None = Field(default=None, min_length=1, max_length=255)
     exchange: str | None = Field(default=None, max_length=80)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
@@ -37,6 +38,14 @@ class StockPriceRefreshResponse(BaseModel):
     fetched_at: str
     missing_symbols: list[str] = Field(default_factory=list)
     stocks: list[StockResponse] = Field(default_factory=list)
+
+
+class DseStockSearchResponse(BaseModel):
+    symbol: str
+    name: str
+    last_price: Decimal
+    source: str
+    fetched_at: str
 
 
 class PortfolioTransactionCreate(BaseModel):

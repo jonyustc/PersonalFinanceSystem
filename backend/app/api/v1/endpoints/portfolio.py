@@ -6,6 +6,7 @@ from app.api.v1.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.stock import (
+    DseStockSearchResponse,
     DividendCreate,
     DividendResponse,
     PortfolioSummaryResponse,
@@ -16,6 +17,7 @@ from app.schemas.stock import (
     StockResponse,
     StockUpdate,
 )
+from app.services.market_price import MarketPriceService
 from app.services.portfolio import PortfolioService
 
 
@@ -25,6 +27,25 @@ router = APIRouter()
 @router.get("/stocks", response_model=list[StockResponse])
 async def list_stocks(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     return await PortfolioService(db).stocks()
+
+
+@router.get("/stocks/dse/search", response_model=list[DseStockSearchResponse])
+async def search_dse_stocks(
+    query: str = Query(default="", max_length=40),
+    limit: int = Query(default=20, ge=1, le=50),
+    current_user: User = Depends(get_current_user),
+):
+    quotes = await MarketPriceService().search_dse_stocks(query=query, limit=limit)
+    return [
+        {
+            "symbol": quote.symbol,
+            "name": quote.name,
+            "last_price": quote.last_price,
+            "source": quote.source,
+            "fetched_at": quote.fetched_at.isoformat(),
+        }
+        for quote in quotes
+    ]
 
 
 @router.post("/stocks/refresh-prices", response_model=StockPriceRefreshResponse)
