@@ -1,25 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
+import '../categories/categories_page.dart';
 
-void showCreateTransactionSheet(
+Future<void> showCreateTransactionSheet(
   BuildContext context, {
   Map<String, dynamic>? initial,
   String initialType = 'expense',
 }) {
-  showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    builder: (_) => CreateTransactionSheet(
-      initial: initial,
-      initialType: initialType,
+  return Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      fullscreenDialog: true,
+      builder: (_) =>
+          TransactionEntryPage(initial: initial, initialType: initialType),
     ),
   );
 }
 
-class CreateTransactionSheet extends ConsumerStatefulWidget {
-  const CreateTransactionSheet({
+class TransactionEntryPage extends ConsumerStatefulWidget {
+  const TransactionEntryPage({
     super.key,
     this.initial,
     this.initialType = 'expense',
@@ -29,30 +30,29 @@ class CreateTransactionSheet extends ConsumerStatefulWidget {
   final String initialType;
 
   @override
-  ConsumerState<CreateTransactionSheet> createState() =>
-      _CreateTransactionSheetState();
+  ConsumerState<TransactionEntryPage> createState() =>
+      _TransactionEntryPageState();
 }
 
-class _CreateTransactionSheetState extends ConsumerState<CreateTransactionSheet> {
-  final _formKey = GlobalKey<FormState>();
-  final _amount = TextEditingController();
-  final _merchant = TextEditingController();
-  final _description = TextEditingController();
+class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
+  final _note = TextEditingController();
+  final _payee = TextEditingController();
 
   String _type = 'expense';
+  String _amountText = '';
   String? _accountId;
   String? _transferAccountId;
-  String? _parentCategoryId;
   String? _categoryId;
   DateTime _date = DateTime.now();
   bool _busy = false;
   bool _initialized = false;
+  bool _calculatorOpen = true;
+  bool _noteOpen = false;
 
   @override
   void dispose() {
-    _amount.dispose();
-    _merchant.dispose();
-    _description.dispose();
+    _note.dispose();
+    _payee.dispose();
     super.dispose();
   }
 
@@ -63,253 +63,325 @@ class _CreateTransactionSheetState extends ConsumerState<CreateTransactionSheet>
     final categories = (snapshot?.categories ?? [])
         .where((row) => row['type'] == _type)
         .toList();
-    final parentCategories =
-        categories.where((row) => row['parent_id'] == null).toList();
-    final recentAccounts = accounts.take(4).toList();
-    final recentCategories = parentCategories.take(4).toList();
-    final subcategories = _parentCategoryId == null
-        ? <Map<String, dynamic>>[]
-        : categories
-            .where((row) => row['parent_id'] == _parentCategoryId)
-            .toList();
-
     _initialize(accounts, categories);
 
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 16,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-      ),
-      child: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    widget.initial == null ? 'New transaction' : 'Edit transaction',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(
-                    value: 'expense',
-                    label: Text('Expense'),
-                    icon: Icon(Icons.north_east),
-                  ),
-                  ButtonSegment(
-                    value: 'income',
-                    label: Text('Income'),
-                    icon: Icon(Icons.south_west),
-                  ),
-                  ButtonSegment(
-                    value: 'transfer',
-                    label: Text('Transfer'),
-                    icon: Icon(Icons.swap_horiz),
-                  ),
-                ],
-                selected: {_type},
-                onSelectionChanged: (value) {
-                  setState(() {
-                    _type = value.first;
-                    _parentCategoryId = null;
-                    _categoryId = null;
-                  });
-                },
-              ),
-              const SizedBox(height: 14),
-              TextFormField(
-                controller: _amount,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
-                  labelText: 'Amount',
-                  prefixIcon: Icon(Icons.payments_outlined),
-                ),
-                validator: (value) {
-                  final amount = double.tryParse(value ?? '');
-                  return amount == null || amount <= 0
-                      ? 'Enter a valid amount'
-                      : null;
-                },
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [100, 500, 1000, 5000]
-                    .map(
-                      (amount) => ActionChip(
-                        label: Text('$amount'),
-                        onPressed: () =>
-                            setState(() => _amount.text = '$amount'),
-                      ),
-                    )
-                    .toList(),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _accountId,
-                decoration: InputDecoration(
-                  labelText: _type == 'transfer' ? 'Source account' : 'Account',
-                  prefixIcon: const Icon(Icons.account_balance_wallet_outlined),
-                ),
-                items: accounts
-                    .map(
-                      (row) => DropdownMenuItem<String>(
-                        value: row['id'] as String,
-                        child: Text(row['name'] as String),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) => setState(() => _accountId = value),
-                validator: (value) =>
-                    value == null ? 'Sync or create an account first' : null,
-              ),
-              if (recentAccounts.length > 1) ...[
-                const SizedBox(height: 8),
-                _QuickSelectRow(
-                  rows: recentAccounts,
-                  selectedId: _accountId,
-                  onSelected: (value) => setState(() => _accountId = value),
-                ),
-              ],
-              if (_type == 'transfer')
-                _TransferFields(
-                  accounts: accounts,
-                  value: _transferAccountId,
-                  sourceAccountId: _accountId,
-                  onChanged: (value) => setState(() => _transferAccountId = value),
-                )
-              else
-                _CategoryFields(
-                  parentCategories: parentCategories,
-                  recentCategories: recentCategories,
-                  subcategories: subcategories,
-                  parentCategoryId: _parentCategoryId,
-                  categoryId: _categoryId,
-                  onParentChanged: (value) => setState(() {
-                    _parentCategoryId = value;
-                    _categoryId = value;
-                  }),
-                  onCategoryChanged: (value) => setState(
-                    () => _categoryId =
-                        value == null || value.isEmpty ? _parentCategoryId : value,
-                  ),
-                  onCreateParent: () => _createCategory(),
-                  onCreateChild: _parentCategoryId == null
-                      ? null
-                      : () => _createCategory(parentId: _parentCategoryId),
-                ),
-              if (_type != 'transfer') ...[
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _merchant,
-                  textInputAction: TextInputAction.next,
-                  decoration: const InputDecoration(
-                    labelText: 'Merchant',
-                    prefixIcon: Icon(Icons.storefront_outlined),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 12),
-              TextField(
-                controller: _description,
-                textInputAction: TextInputAction.done,
-                decoration: const InputDecoration(
-                  labelText: 'Note',
-                  prefixIcon: Icon(Icons.notes_outlined),
-                ),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: _pickDate,
-                icon: const Icon(Icons.calendar_today_outlined),
-                label: Text(_dateLabel),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: _busy ? null : _save,
-                icon: _busy
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.check),
-                label: Text(_type == 'transfer' ? 'Transfer' : 'Save'),
-              ),
+    final selectedAccount = _rowById(accounts, _accountId);
+    final transferAccount = _rowById(accounts, _transferAccountId);
+    final selectedCategory = _rowById(categories, _categoryId);
+
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF2F2F2F),
+        foregroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        titleSpacing: 0,
+        title: _TypeTabs(
+          value: _type,
+          onChanged: (value) {
+            setState(() {
+              _type = value;
+              _categoryId = null;
+            });
+          },
+        ),
+        actions: [
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'clear') _clear();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'clear', child: Text('Clear')),
             ],
           ),
+        ],
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  _AmountHeader(
+                    amountText: _amountText,
+                    type: _type,
+                    calculatorOpen: _calculatorOpen,
+                    onToggleCalculator: () {
+                      setState(() => _calculatorOpen = !_calculatorOpen);
+                    },
+                  ),
+                  _DateStrip(
+                    date: _date,
+                    onPrevious: () => setState(
+                      () => _date = _date.subtract(const Duration(days: 1)),
+                    ),
+                    onNext: () => setState(
+                      () => _date = _date.add(const Duration(days: 1)),
+                    ),
+                    onCalendar: _pickDate,
+                  ),
+                  if (_type != 'transfer')
+                    _EntryRow(
+                      label: 'Category:',
+                      value: _categoryLabel(selectedCategory, categories),
+                      icon: Icons.category_outlined,
+                      highlight: selectedCategory != null,
+                      onTap: _openCategoryManager,
+                    ),
+                  _EntryRow(
+                    label: _type == 'transfer' ? 'From:' : 'Account:',
+                    value:
+                        selectedAccount?['name'] as String? ?? 'Select account',
+                    icon: Icons.account_balance_wallet_outlined,
+                    highlight: selectedAccount != null,
+                    onTap: () => _pickAccount(accounts, destination: false),
+                  ),
+                  if (_type == 'transfer')
+                    _EntryRow(
+                      label: 'To:',
+                      value:
+                          transferAccount?['name'] as String? ??
+                          'Select destination',
+                      icon: Icons.move_down_outlined,
+                      highlight: transferAccount != null,
+                      onTap: () => _pickAccount(accounts, destination: true),
+                    ),
+                  _NoteSection(
+                    controller: _note,
+                    open: _noteOpen,
+                    onToggle: () => setState(() => _noteOpen = !_noteOpen),
+                    onChanged: () => setState(() {}),
+                  ),
+                ],
+              ),
+            ),
+            if (_calculatorOpen)
+              _Keypad(
+                busy: _busy,
+                onKey: _handleKey,
+                onDelete: _deleteDigit,
+                onClear: _clearAmount,
+                onOk: _applyAmountAndCloseCalculator,
+              )
+            else
+              _SaveBar(busy: _busy, onSave: _save),
+          ],
         ),
       ),
     );
   }
 
-  String get _dateLabel {
-    return '${_date.year}-${_date.month.toString().padLeft(2, '0')}-${_date.day.toString().padLeft(2, '0')}';
+  String _categoryLabel(
+    Map<String, dynamic>? selectedCategory,
+    List<Map<String, dynamic>> categories,
+  ) {
+    if (selectedCategory == null) return 'Select category';
+    final parentId = selectedCategory['parent_id'] as String?;
+    if (parentId == null) {
+      return selectedCategory['name'] as String? ?? 'Category';
+    }
+    final parent = _rowById(categories, parentId);
+    final parentName = parent?['name'] as String? ?? 'Category';
+    final childName = selectedCategory['name'] as String? ?? 'Subcategory';
+    return '$parentName - $childName';
+  }
+
+  Future<void> _openCategoryManager() async {
+    final picked = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => CategoriesPage(
+          initialType: _type,
+          selectedCategoryId: _categoryId,
+          pickerMode: true,
+        ),
+      ),
+    );
+    await ref.read(appControllerProvider.notifier).syncNow(silent: true);
+    final snapshot = ref.read(appControllerProvider).asData?.value;
+    final categories = (snapshot?.categories ?? [])
+        .where((row) => row['type'] == _type)
+        .toList();
+    if (!mounted) return;
+    if (picked != null) {
+      setState(() {
+        _categoryId = picked['id'] as String?;
+        if (_note.text.trim().isEmpty) {
+          _note.text = _categoryLabel(picked, categories);
+          _noteOpen = true;
+        }
+      });
+      return;
+    }
+    if (_categoryId != null && _rowById(categories, _categoryId) == null) {
+      setState(() => _categoryId = null);
+    }
+  }
+
+  Future<void> _pickAccount(
+    List<Map<String, dynamic>> accounts, {
+    required bool destination,
+  }) async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: ListView.separated(
+          shrinkWrap: true,
+          itemCount: accounts.length,
+          separatorBuilder: (_, _) => const Divider(height: 1),
+          itemBuilder: (context, index) {
+            final account = accounts[index];
+            return ListTile(
+              leading: const Icon(Icons.account_balance_wallet_outlined),
+              title: Text(account['name'] as String? ?? 'Account'),
+              subtitle: Text((account['type'] as String? ?? '').toUpperCase()),
+              trailing: Text(
+                money(
+                  asDouble(account['balance']),
+                  currency: account['currency'] as String? ?? 'BDT',
+                ),
+              ),
+              onTap: () => Navigator.of(context).pop(account['id'] as String),
+            );
+          },
+        ),
+      ),
+    );
+    if (picked == null) return;
+    setState(() {
+      if (destination) {
+        _transferAccountId = picked;
+      } else {
+        _accountId = picked;
+      }
+    });
+  }
+
+  void _handleKey(String key) {
+    if ('0123456789'.contains(key)) {
+      if (_amountText == '0') {
+        setState(() => _amountText = key);
+      } else {
+        setState(() => _amountText += key);
+      }
+      return;
+    }
+    if (key == '.' && !_amountText.contains('.')) {
+      setState(
+        () => _amountText = _amountText.isEmpty ? '0.' : '$_amountText.',
+      );
+      return;
+    }
+    if ('+-x/'.contains(key)) {
+      if (_amountText.isEmpty) return;
+      final last = _amountText[_amountText.length - 1];
+      if ('+-x/'.contains(last)) {
+        setState(
+          () => _amountText =
+              '${_amountText.substring(0, _amountText.length - 1)}$key',
+        );
+      } else {
+        setState(() => _amountText += key);
+      }
+    }
+  }
+
+  void _deleteDigit() {
+    if (_amountText.isEmpty) return;
+    setState(
+      () => _amountText = _amountText.substring(0, _amountText.length - 1),
+    );
+  }
+
+  void _clearAmount() => setState(() => _amountText = '');
+
+  void _clear() {
+    setState(() {
+      _amountText = '';
+      _categoryId = null;
+      _note.clear();
+      _payee.clear();
+    });
+  }
+
+  void _applyAmountAndCloseCalculator() {
+    final amount = _evaluateAmount(_amountText);
+    if (amount == null || amount <= 0) {
+      _showError('Enter a valid amount');
+      return;
+    }
+    setState(() {
+      _amountText = amount.toString();
+      _calculatorOpen = false;
+    });
   }
 
   Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
+    final amount = _evaluateAmount(_amountText);
+    if (amount == null || amount <= 0) {
+      _showError('Enter a valid amount');
+      return;
+    }
+    if (_accountId == null) {
+      _showError('Select an account');
+      return;
+    }
+    if (_type == 'transfer' &&
+        (_transferAccountId == null || _transferAccountId == _accountId)) {
+      _showError('Select two different accounts');
+      return;
+    }
+
     setState(() => _busy = true);
     final notifier = ref.read(appControllerProvider.notifier);
     final initial = widget.initial;
     try {
-      if (_type == 'transfer') {
+      if (_type == 'transfer' && initial == null) {
         await notifier.createTransfer(
           fromAccountId: _accountId!,
           toAccountId: _transferAccountId!,
-          amount: double.parse(_amount.text),
+          amount: amount,
           date: _date,
-          notes: _description.text,
+          notes: _note.text,
           isCardPayment: _isCreditCard(_transferAccountId),
         );
       } else if (initial == null) {
         await notifier.createTransaction(
           accountId: _accountId!,
           type: _type,
-          amount: double.parse(_amount.text),
+          amount: amount,
           date: _date,
           categoryId: _categoryId,
-          merchantName: _merchant.text,
-          description: _description.text,
+          merchantName: _payee.text,
+          description: _note.text,
         );
       } else {
         await notifier.updateTransaction(
           id: initial['id'] as String,
           accountId: _accountId!,
           type: _type,
-          amount: double.parse(_amount.text),
+          amount: amount,
           date: _date,
-          categoryId: _categoryId,
-          merchantName: _merchant.text,
-          description: _description.text,
+          categoryId: _type == 'transfer' ? null : _categoryId,
+          transferAccountId: _type == 'transfer' ? _transferAccountId : null,
+          merchantName: _payee.text,
+          description: _note.text,
         );
       }
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
-      );
+      _showError(error.toString());
     }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _pickDate() async {
@@ -331,7 +403,12 @@ class _CreateTransactionSheetState extends ConsumerState<CreateTransactionSheet>
     if (initial == null) {
       _type = widget.initialType;
       _accountId = accounts.isNotEmpty ? accounts.first['id'] as String : null;
-      _transferAccountId = accounts.length > 1 ? accounts[1]['id'] as String : null;
+      _transferAccountId = accounts.length > 1
+          ? accounts[1]['id'] as String
+          : null;
+      _categoryId = categories.isNotEmpty
+          ? categories.first['id'] as String
+          : null;
       _initialized = true;
       return;
     }
@@ -340,22 +417,47 @@ class _CreateTransactionSheetState extends ConsumerState<CreateTransactionSheet>
     _accountId = initial['account_id'] as String?;
     _transferAccountId = initial['transfer_account_id'] as String?;
     _categoryId = initial['category_id'] as String?;
-    _parentCategoryId = _categoryId;
-    for (final row in categories) {
-      if (row['id'] == _categoryId && row['parent_id'] != null) {
-        _parentCategoryId = row['parent_id'] as String?;
-        break;
-      }
-    }
-    _amount.text = (initial['amount'] ?? '').toString();
-    _merchant.text = initial['merchant_name'] as String? ?? '';
-    _description.text = initial['description'] as String? ?? '';
-    _date = DateTime.tryParse(initial['txn_date'] as String? ?? '') ?? DateTime.now();
+    _amountText = (initial['amount'] ?? '').toString();
+    _payee.text = initial['merchant_name'] as String? ?? '';
+    _note.text = initial['description'] as String? ?? '';
+    _noteOpen = _note.text.trim().isNotEmpty;
+    _date =
+        DateTime.tryParse(initial['txn_date'] as String? ?? '') ??
+        DateTime.now();
     _initialized = true;
   }
 
+  double? _evaluateAmount(String input) {
+    final tokens = RegExp(r'(\d+(?:\.\d+)?|[+\-x/])')
+        .allMatches(input.replaceAll(' ', ''))
+        .map((match) => match.group(0)!)
+        .toList();
+    if (tokens.isEmpty || '+-x/'.contains(tokens.last)) {
+      return double.tryParse(input);
+    }
+    final first = double.tryParse(tokens.first);
+    if (first == null) return null;
+    var current = first;
+    var index = 1;
+    while (index < tokens.length - 1) {
+      final operator = tokens[index];
+      final next = double.tryParse(tokens[index + 1]);
+      if (next == null) return null;
+      if (operator == '+') current += next;
+      if (operator == '-') current -= next;
+      if (operator == 'x') current *= next;
+      if (operator == '/') {
+        if (next == 0) return null;
+        current /= next;
+      }
+      index += 2;
+    }
+    return double.parse(current.toStringAsFixed(2));
+  }
+
   bool _isCreditCard(String? accountId) {
-    final accounts = ref.read(appControllerProvider).asData?.value.accounts ?? [];
+    final accounts =
+        ref.read(appControllerProvider).asData?.value.accounts ?? [];
     for (final account in accounts) {
       if (account['id'] == accountId) {
         final type = account['type'] as String? ?? '';
@@ -365,219 +467,421 @@ class _CreateTransactionSheetState extends ConsumerState<CreateTransactionSheet>
     return false;
   }
 
-  Future<void> _createCategory({String? parentId}) async {
-    final name = await _promptForName(
-      parentId == null ? 'New category' : 'New subcategory',
-    );
-    if (name == null || name.trim().isEmpty) return;
-    final created = await ref.read(appControllerProvider.notifier).createCategory(
-          name: name.trim(),
-          type: _type == 'income' ? 'income' : 'expense',
-          parentId: parentId,
-        );
-    final id = created['id']?.toString();
-    if (id == null) return;
-    setState(() {
-      if (parentId == null) {
-        _parentCategoryId = id;
-        _categoryId = id;
-      } else {
-        _parentCategoryId = parentId;
-        _categoryId = id;
-      }
-    });
+  Map<String, dynamic>? _rowById(List<Map<String, dynamic>> rows, String? id) {
+    if (id == null) return null;
+    for (final row in rows) {
+      if (row['id'] == id) return row;
+    }
+    return null;
   }
+}
 
-  Future<String?> _promptForName(String title) {
-    final controller = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Name'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-            child: const Text('Create'),
-          ),
+class _TypeTabs extends StatelessWidget {
+  const _TypeTabs({required this.value, required this.onChanged});
+
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 3,
+      initialIndex: switch (value) {
+        'income' => 1,
+        'transfer' => 2,
+        _ => 0,
+      },
+      child: TabBar(
+        onTap: (index) => onChanged(['expense', 'income', 'transfer'][index]),
+        indicatorColor: const Color(0xFF5EEAD4),
+        labelColor: Colors.white,
+        unselectedLabelColor: Colors.white,
+        tabs: const [
+          Tab(text: 'EXPENSE'),
+          Tab(text: 'INCOME'),
+          Tab(text: 'TRANSFER'),
         ],
       ),
     );
   }
 }
 
-class _TransferFields extends StatelessWidget {
-  const _TransferFields({
-    required this.accounts,
-    required this.value,
-    required this.sourceAccountId,
-    required this.onChanged,
+class _AmountHeader extends StatelessWidget {
+  const _AmountHeader({
+    required this.amountText,
+    required this.type,
+    required this.calculatorOpen,
+    required this.onToggleCalculator,
   });
 
-  final List<Map<String, dynamic>> accounts;
-  final String? value;
-  final String? sourceAccountId;
-  final ValueChanged<String?> onChanged;
+  final String amountText;
+  final String type;
+  final bool calculatorOpen;
+  final VoidCallback onToggleCalculator;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final amountColor = type == 'income'
+        ? Colors.green.shade700
+        : type == 'transfer'
+        ? scheme.primary
+        : Colors.red.shade400;
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: DropdownButtonFormField<String>(
-        initialValue: value,
-        decoration: const InputDecoration(
-          labelText: 'Destination account',
-          prefixIcon: Icon(Icons.move_down_outlined),
-        ),
-        items: accounts
-            .map(
-              (row) => DropdownMenuItem<String>(
-                value: row['id'] as String,
-                child: Text(row['name'] as String),
-              ),
-            )
-            .toList(),
-        onChanged: onChanged,
-        validator: (value) {
-          if (value == null) return 'Choose destination account';
-          if (value == sourceAccountId) return 'Choose two different accounts';
-          return null;
-        },
-      ),
-    );
-  }
-}
-
-class _CategoryFields extends StatelessWidget {
-  const _CategoryFields({
-    required this.parentCategories,
-    required this.recentCategories,
-    required this.subcategories,
-    required this.parentCategoryId,
-    required this.categoryId,
-    required this.onParentChanged,
-    required this.onCategoryChanged,
-    required this.onCreateParent,
-    this.onCreateChild,
-  });
-
-  final List<Map<String, dynamic>> parentCategories;
-  final List<Map<String, dynamic>> recentCategories;
-  final List<Map<String, dynamic>> subcategories;
-  final String? parentCategoryId;
-  final String? categoryId;
-  final ValueChanged<String?> onParentChanged;
-  final ValueChanged<String?> onCategoryChanged;
-  final VoidCallback onCreateParent;
-  final VoidCallback? onCreateChild;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          initialValue: parentCategoryId,
-          decoration: const InputDecoration(
-            labelText: 'Category',
-            prefixIcon: Icon(Icons.category_outlined),
-          ),
-          items: parentCategories
-              .map(
-                (row) => DropdownMenuItem<String>(
-                  value: row['id'] as String,
-                  child: Text(row['name'] as String),
-                ),
-              )
-              .toList(),
-          onChanged: onParentChanged,
-        ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: onCreateParent,
-            icon: const Icon(Icons.add),
-            label: const Text('Create New Category'),
-          ),
-        ),
-        if (recentCategories.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          _QuickSelectRow(
-            rows: recentCategories,
-            selectedId: parentCategoryId,
-            onSelected: onParentChanged,
-          ),
-        ],
-        if (parentCategoryId != null && subcategories.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: subcategories.any((row) => row['id'] == categoryId)
-                ? categoryId
-                : '',
-            decoration: const InputDecoration(
-              labelText: 'Subcategory',
-              prefixIcon: Icon(Icons.sell_outlined),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onToggleCalculator,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: calculatorOpen ? scheme.primary : scheme.outlineVariant,
+              width: calculatorOpen ? 1.5 : 1,
             ),
-            items: [
-              const DropdownMenuItem<String>(
-                value: '',
-                child: Text('No subcategory'),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Amount',
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-              ...subcategories.map(
-                (row) => DropdownMenuItem<String>(
-                  value: row['id'] as String,
-                  child: Text(row['name'] as String),
+              Flexible(
+                flex: 2,
+                child: Text(
+                  amountText.isEmpty ? '0' : amountText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: amountColor,
+                    fontSize: 40,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
-            onChanged: onCategoryChanged,
           ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: onCreateChild,
-              icon: const Icon(Icons.add),
-              label: const Text('Create New Subcategory'),
-            ),
-          ),
-        ],
-      ],
+        ),
+      ),
     );
   }
 }
 
-class _QuickSelectRow extends StatelessWidget {
-  const _QuickSelectRow({
-    required this.rows,
-    required this.selectedId,
-    required this.onSelected,
+class _NoteSection extends StatelessWidget {
+  const _NoteSection({
+    required this.controller,
+    required this.open,
+    required this.onToggle,
+    required this.onChanged,
   });
 
-  final List<Map<String, dynamic>> rows;
-  final String? selectedId;
-  final ValueChanged<String> onSelected;
+  final TextEditingController controller;
+  final bool open;
+  final VoidCallback onToggle;
+  final VoidCallback onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: rows.map((row) {
-        final id = row['id'] as String;
-        return ChoiceChip(
-          selected: selectedId == id,
-          label: Text(row['name'] as String? ?? 'Item'),
-          onSelected: (_) => onSelected(id),
+    final note = controller.text.trim();
+    if (!open) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        child: OutlinedButton.icon(
+          onPressed: onToggle,
+          icon: const Icon(Icons.notes_outlined),
+          label: Text(note.isEmpty ? 'Add note' : 'Note: $note'),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: TextField(
+        controller: controller,
+        minLines: 1,
+        maxLines: 3,
+        textInputAction: TextInputAction.done,
+        decoration: InputDecoration(
+          labelText: 'Note',
+          hintText: 'Add a short memo',
+          prefixIcon: const Icon(Icons.notes_outlined),
+          suffixIcon: IconButton(
+            tooltip: 'Hide note',
+            onPressed: onToggle,
+            icon: const Icon(Icons.expand_less),
+          ),
+        ),
+        onChanged: (_) => onChanged(),
+      ),
+    );
+  }
+}
+
+class _SaveBar extends StatelessWidget {
+  const _SaveBar({required this.busy, required this.onSave});
+
+  final bool busy;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        child: FilledButton.icon(
+          onPressed: busy ? null : onSave,
+          icon: busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.check),
+          label: Text(busy ? 'Saving' : 'Save transaction'),
+        ),
+      ),
+    );
+  }
+}
+
+class _DateStrip extends StatelessWidget {
+  const _DateStrip({
+    required this.date,
+    required this.onPrevious,
+    required this.onNext,
+    required this.onCalendar,
+  });
+
+  final DateTime date;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+  final VoidCallback onCalendar;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            IconButton(
+              onPressed: onPrevious,
+              icon: const Icon(
+                Icons.chevron_left,
+                size: 42,
+                color: Colors.cyan,
+              ),
+            ),
+            Expanded(
+              child: Column(
+                children: [
+                  Text(
+                    '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}',
+                    style: const TextStyle(fontSize: 18),
+                  ),
+                  Text(
+                    TimeOfDay.fromDateTime(date).format(context),
+                    style: const TextStyle(fontSize: 18),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              onPressed: onCalendar,
+              icon: const Icon(Icons.calendar_month, color: Colors.redAccent),
+            ),
+            IconButton(
+              onPressed: onNext,
+              icon: const Icon(
+                Icons.chevron_right,
+                size: 42,
+                color: Colors.cyan,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EntryRow extends StatelessWidget {
+  const _EntryRow({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.onTap,
+    this.highlight = false,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        height: 58,
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: Theme.of(context).colorScheme.outlineVariant,
+            ),
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 22),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 108,
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 18,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                value,
+                textAlign: TextAlign.right,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 18,
+                  color: highlight ? Colors.green.shade700 : null,
+                  fontWeight: highlight ? FontWeight.w700 : FontWeight.w400,
+                ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Icon(icon, color: highlight ? Colors.green.shade700 : null),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Keypad extends StatelessWidget {
+  const _Keypad({
+    required this.busy,
+    required this.onKey,
+    required this.onDelete,
+    required this.onClear,
+    required this.onOk,
+  });
+
+  final bool busy;
+  final ValueChanged<String> onKey;
+  final VoidCallback onDelete;
+  final VoidCallback onClear;
+  final VoidCallback onOk;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 300,
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                _PadButton(
+                  label: 'AC',
+                  color: Colors.red.shade500,
+                  onTap: onClear,
+                ),
+                _PadButton(
+                  label: 'DEL',
+                  color: Colors.grey.shade700,
+                  onTap: onDelete,
+                ),
+                _PadButton(
+                  label: busy ? '...' : 'OK',
+                  color: Colors.green.shade500,
+                  onTap: busy ? null : onOk,
+                ),
+              ],
+            ),
+          ),
+          Expanded(child: _numberRow(['7', '8', '9', '/'])),
+          Expanded(child: _numberRow(['4', '5', '6', 'x'])),
+          Expanded(child: _numberRow(['1', '2', '3', '-'])),
+          Expanded(child: _numberRow(['0', '.', '+'])),
+        ],
+      ),
+    );
+  }
+
+  Widget _numberRow(List<String> labels) {
+    return Row(
+      children: labels.map((label) {
+        final operator = '+-x/'.contains(label);
+        final flex = label == '0' && labels.length == 3 ? 2 : 1;
+        return _PadButton(
+          label: label,
+          flex: flex,
+          color: operator ? const Color(0xFFF6B51E) : const Color(0xFF42A5F5),
+          onTap: () => onKey(label),
         );
       }).toList(),
+    );
+  }
+}
+
+class _PadButton extends StatelessWidget {
+  const _PadButton({
+    required this.label,
+    required this.color,
+    required this.onTap,
+    this.flex = 1,
+  });
+
+  final String label;
+  final Color color;
+  final VoidCallback? onTap;
+  final int flex;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      flex: flex,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(
+            color: color,
+            border: Border.all(color: Colors.white, width: 1),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 32,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -26,6 +26,11 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final authNotice = ref
+        .watch(appControllerProvider)
+        .asData
+        ?.value
+        .authNotice;
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -46,17 +51,48 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     const SizedBox(height: 20),
                     Text(
                       'Personal Finance',
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
+                      style: Theme.of(context).textTheme.headlineMedium
+                          ?.copyWith(fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 6),
                     Text(
                       'Sign in to sync, then work from your local Android data.',
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: Colors.blueGrey.shade700,
-                          ),
+                        color: Colors.blueGrey.shade700,
+                      ),
                     ),
+                    if (authNotice != null) ...[
+                      const SizedBox(height: 16),
+                      Material(
+                        color: Theme.of(context).colorScheme.errorContainer,
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.info_outline,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onErrorContainer,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  authNotice,
+                                  style: TextStyle(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onErrorContainer,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 28),
                     TextFormField(
                       controller: _email,
@@ -67,7 +103,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                         prefixIcon: Icon(Icons.mail_outline),
                       ),
                       validator: (value) =>
-                          value == null || !value.contains('@') ? 'Enter a valid email' : null,
+                          value == null || !value.contains('@')
+                          ? 'Enter a valid email'
+                          : null,
                     ),
                     const SizedBox(height: 14),
                     TextFormField(
@@ -78,11 +116,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                         prefixIcon: const Icon(Icons.lock_outline),
                         suffixIcon: IconButton(
                           onPressed: () => setState(() => _obscure = !_obscure),
-                          icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+                          icon: Icon(
+                            _obscure ? Icons.visibility : Icons.visibility_off,
+                          ),
                         ),
                       ),
-                      validator: (value) =>
-                          value == null || value.isEmpty ? 'Enter your password' : null,
+                      validator: (value) => value == null || value.isEmpty
+                          ? 'Enter your password'
+                          : null,
                     ),
                     const SizedBox(height: 22),
                     FilledButton.icon(
@@ -115,9 +156,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           .login(_email.text.trim(), _password.text);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Login failed: $error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Login failed: $error')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

@@ -9,6 +9,7 @@ from app.models.account import Account
 from app.models.stock import Dividend, Holding, PortfolioTransaction
 from app.repositories.stock import StockRepository
 from app.schemas.stock import DividendCreate, PortfolioTransactionCreate, StockCreate, StockUpdate
+from app.services.market_price import MarketPriceService
 
 
 ZERO = Decimal("0")
@@ -41,6 +42,62 @@ class PortfolioService:
         await self.db.commit()
         await self.db.refresh(stock)
         return stock
+
+    async def refresh_stock_price(self, stock_id: UUID):
+        stock = await self.repo.get_stock(stock_id)
+        if not stock:
+            raise HTTPException(404, "Stock not found")
+        price_map = await MarketPriceService().fetch_dse_latest_prices()
+        price = price_map.get(stock.symbol.upper())
+        if not price:
+            raise HTTPException(404, f"Latest DSE price not found for {stock.symbol}")
+        stock.last_price = price.last_price
+        if not stock.exchange:
+            stock.exchange = price.source
+        await self.db.commit()
+        await self.db.refresh(stock)
+        return {
+            "updated": 1,
+            "source": price.source,
+            "fetched_at": price.fetched_at.isoformat(),
+            "missing_symbols": [],
+            "stocks": [stock],
+        }
+
+    async def refresh_stock_prices(self):
+        stocks = await self.repo.stocks()
+        if not stocks:
+            return {
+                "updated": 0,
+                "source": "DSE",
+                "fetched_at": "",
+                "missing_symbols": [],
+                "stocks": [],
+            }
+        price_map = await MarketPriceService().fetch_dse_latest_prices()
+        updated = []
+        missing = []
+        fetched_at = ""
+        for stock in stocks:
+            price = price_map.get(stock.symbol.upper())
+            if not price:
+                missing.append(stock.symbol)
+                continue
+            stock.last_price = price.last_price
+            if not stock.exchange:
+                stock.exchange = price.source
+            fetched_at = price.fetched_at.isoformat()
+            updated.append(stock)
+        await self.db.commit()
+        for stock in updated:
+            await self.db.refresh(stock)
+        return {
+            "updated": len(updated),
+            "source": "DSE",
+            "fetched_at": fetched_at,
+            "missing_symbols": missing,
+            "stocks": updated,
+        }
 
     async def create_transaction(self, user_id: UUID, payload: PortfolioTransactionCreate):
         try:

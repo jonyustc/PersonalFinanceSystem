@@ -57,6 +57,15 @@ class SessionStore {
     );
   }
 
+  Future<void> saveTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_accessToken, accessToken);
+    await prefs.setString(_refreshToken, refreshToken);
+  }
+
   Future<void> saveCurrency(String currency) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_currency, currency);
@@ -67,13 +76,15 @@ class SessionStore {
     await prefs.setString(_themeMode, themeMode);
   }
 
-  Future<void> clear() async {
+  Future<void> clear({bool keepTheme = false}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_accessToken);
     await prefs.remove(_refreshToken);
     await prefs.remove(_userName);
     await prefs.remove(_email);
     await prefs.remove(_currency);
-    await prefs.remove(_themeMode);
+    if (!keepTheme) {
+      await prefs.remove(_themeMode);
+    }
   }
 }

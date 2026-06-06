@@ -317,6 +317,17 @@ export const deletePortfolioTransaction = (id: string) =>
 
 export const fetchStocks = () => apiRequest<Stock[]>("/portfolio/stocks");
 
+export const refreshStockPrices = () =>
+  apiRequest<{
+    updated: number;
+    source: string;
+    fetched_at: string;
+    missing_symbols: string[];
+    stocks: Stock[];
+  }>("/portfolio/stocks/refresh-prices", {
+    method: "POST",
+  });
+
 export const createStock = (payload: PortfolioTransactionPayload["stock"]) =>
   apiRequest<Stock>("/portfolio/stocks", {
     method: "POST",

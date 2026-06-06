@@ -31,6 +31,14 @@ class StockResponse(StockCreate):
         from_attributes = True
 
 
+class StockPriceRefreshResponse(BaseModel):
+    updated: int
+    source: str
+    fetched_at: str
+    missing_symbols: list[str] = Field(default_factory=list)
+    stocks: list[StockResponse] = Field(default_factory=list)
+
+
 class PortfolioTransactionCreate(BaseModel):
     stock_id: UUID | None = None
     stock: StockCreate | None = None

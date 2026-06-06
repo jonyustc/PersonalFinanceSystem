@@ -2,21 +2,22 @@ import 'package:dio/dio.dart';
 
 import 'session_store.dart';
 
-const productionApiBaseUrl = 'https://personalfinancesystem.onrender.com/api/v1';
+const productionApiBaseUrl =
+    'https://personalfinancesystem.onrender.com/api/v1';
 
 class ApiClient {
-  ApiClient(this._sessionStore)
-      : _dio = Dio(
-          BaseOptions(
-            baseUrl: const String.fromEnvironment(
-              'API_BASE_URL',
-              defaultValue: productionApiBaseUrl,
-            ),
-            connectTimeout: const Duration(seconds: 12),
-            receiveTimeout: const Duration(seconds: 20),
-            headers: {'Content-Type': 'application/json'},
+  ApiClient(this._sessionStore, {Future<void> Function()? onSessionExpired})
+    : _dio = Dio(
+        BaseOptions(
+          baseUrl: const String.fromEnvironment(
+            'API_BASE_URL',
+            defaultValue: productionApiBaseUrl,
           ),
-        ) {
+          connectTimeout: const Duration(seconds: 12),
+          receiveTimeout: const Duration(seconds: 20),
+          headers: {'Content-Type': 'application/json'},
+        ),
+      ) {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
@@ -26,12 +27,44 @@ class ApiClient {
           }
           handler.next(options);
         },
+        onError: (error, handler) async {
+          final status = error.response?.statusCode;
+          final isAuthRequest = error.requestOptions.extra['auth'] == false;
+          final alreadyRetried = error.requestOptions.extra['retried'] == true;
+
+          if (!isAuthRequest && status == 401 && !alreadyRetried) {
+            final refreshed = await _refreshSession();
+            if (refreshed) {
+              final session = await _sessionStore.load();
+              final retryOptions = error.requestOptions;
+              retryOptions.extra['retried'] = true;
+              if (session != null) {
+                retryOptions.headers['Authorization'] =
+                    'Bearer ${session.accessToken}';
+              }
+
+              try {
+                final response = await _dio.fetch<dynamic>(retryOptions);
+                handler.resolve(response);
+                return;
+              } on DioException {
+                // Fall through to the original auth-expiry handling below.
+              }
+            }
+          }
+
+          if (!isAuthRequest && (status == 401 || status == 403)) {
+            await onSessionExpired?.call();
+          }
+          handler.next(error);
+        },
       ),
     );
   }
 
   final Dio _dio;
   final SessionStore _sessionStore;
+  Future<bool>? _refreshFuture;
 
   Future<Map<String, dynamic>> login(String email, String password) async {
     final response = await _dio.post<Map<String, dynamic>>(
@@ -40,6 +73,42 @@ class ApiClient {
       options: Options(extra: {'auth': false}),
     );
     return response.data ?? {};
+  }
+
+  Future<bool> _refreshSession() {
+    final existing = _refreshFuture;
+    if (existing != null) return existing;
+
+    final future = _performRefresh().whenComplete(() {
+      _refreshFuture = null;
+    });
+    _refreshFuture = future;
+    return future;
+  }
+
+  Future<bool> _performRefresh() async {
+    final session = await _sessionStore.load();
+    if (session == null) return false;
+
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/auth/refresh',
+        data: {'refresh_token': session.refreshToken},
+        options: Options(extra: {'auth': false}),
+      );
+      final body = response.data ?? {};
+      final accessToken = body['access_token'] as String?;
+      final refreshToken = body['refresh_token'] as String?;
+      if (accessToken == null || refreshToken == null) return false;
+
+      await _sessionStore.saveTokens(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+      );
+      return true;
+    } on DioException {
+      return false;
+    }
   }
 
   Future<List<Map<String, dynamic>>> getAccounts() async {
@@ -71,12 +140,40 @@ class ApiClient {
     final body = response.data ?? {};
     return (body['categories'] as List? ?? [])
         .whereType<Map>()
-        .map((row) => {
-              ...row.cast<String, dynamic>(),
-              'month': body['month'] ?? month,
-              'amount': row['budget'],
-            })
+        .map(
+          (row) => {
+            ...row.cast<String, dynamic>(),
+            'month': body['month'] ?? month,
+            'amount': row['budget'],
+          },
+        )
         .toList();
+  }
+
+  Future<Map<String, dynamic>> getBudgetSummary(String month) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/budgets/summary',
+      queryParameters: {'month': month},
+    );
+    return response.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> getMonthlyIncome(String month) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/budgets/income',
+      queryParameters: {'month': month},
+    );
+    return response.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> saveMonthlyIncome(
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/budgets/income',
+      data: payload,
+    );
+    return response.data ?? {};
   }
 
   Future<Map<String, dynamic>> getTransactions({
@@ -119,7 +216,9 @@ class ApiClient {
     await _dio.delete('/transactions/$id');
   }
 
-  Future<Map<String, dynamic>> createTransfer(Map<String, dynamic> payload) async {
+  Future<Map<String, dynamic>> createTransfer(
+    Map<String, dynamic> payload,
+  ) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/transfers',
       data: payload,
@@ -147,6 +246,21 @@ class ApiClient {
     return _asMapList(response.data);
   }
 
+  Future<Map<String, dynamic>> createStock(Map<String, dynamic> payload) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/portfolio/stocks',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> refreshStockPrices() async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/portfolio/stocks/refresh-prices',
+    );
+    return response.data ?? {};
+  }
+
   Future<List<Map<String, dynamic>>> getPortfolioTransactions({
     int limit = 100,
   }) async {
@@ -162,7 +276,9 @@ class ApiClient {
     return response.data ?? {};
   }
 
-  Future<Map<String, dynamic>> createAccount(Map<String, dynamic> payload) async {
+  Future<Map<String, dynamic>> createAccount(
+    Map<String, dynamic> payload,
+  ) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/accounts',
       data: payload,
@@ -170,7 +286,9 @@ class ApiClient {
     return response.data ?? {};
   }
 
-  Future<Map<String, dynamic>> createCategory(Map<String, dynamic> payload) async {
+  Future<Map<String, dynamic>> createCategory(
+    Map<String, dynamic> payload,
+  ) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/categories',
       data: payload,
@@ -178,7 +296,24 @@ class ApiClient {
     return response.data ?? {};
   }
 
-  Future<Map<String, dynamic>> upsertBudget(Map<String, dynamic> payload) async {
+  Future<Map<String, dynamic>> updateCategory(
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/categories/$id',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
+  Future<void> deleteCategory(String id) async {
+    await _dio.delete('/categories/$id');
+  }
+
+  Future<Map<String, dynamic>> upsertBudget(
+    Map<String, dynamic> payload,
+  ) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/budgets/upsert',
       data: payload,
@@ -197,6 +332,10 @@ class ApiClient {
     return response.data ?? {};
   }
 
+  Future<void> deleteBudget(String id) async {
+    await _dio.delete('/budgets/$id');
+  }
+
   Future<Map<String, dynamic>> createPortfolioTransaction(
     Map<String, dynamic> payload,
   ) async {
@@ -207,8 +346,46 @@ class ApiClient {
     return response.data ?? {};
   }
 
+  Future<Map<String, dynamic>> updatePortfolioTransaction(
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/portfolio/transactions/$id',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
+  Future<void> deletePortfolioTransaction(String id) async {
+    await _dio.delete('/portfolio/transactions/$id');
+  }
+
+  Future<Map<String, dynamic>> updateStock(
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/portfolio/stocks/$id',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
   Future<void> post(String path, Map<String, dynamic> payload) async {
     await _dio.post(path, data: payload);
+  }
+
+  Future<void> replayMutation(
+    String method,
+    String path,
+    Map<String, dynamic> payload,
+  ) async {
+    await _dio.request<void>(
+      path,
+      data: method == 'DELETE' ? null : payload,
+      options: Options(method: method),
+    );
   }
 
   static List<Map<String, dynamic>> _asMapList(List<dynamic>? rows) {

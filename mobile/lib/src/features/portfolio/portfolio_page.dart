@@ -1,231 +1,538 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/finance_summary.dart';
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../dashboard/dashboard_page.dart';
 
-class PortfolioPage extends ConsumerWidget {
+enum _PortfolioTab { dashboard, holding, trade, dividend, market }
+
+class PortfolioPage extends ConsumerStatefulWidget {
   const PortfolioPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PortfolioPage> createState() => _PortfolioPageState();
+}
+
+class _PortfolioPageState extends ConsumerState<PortfolioPage> {
+  _PortfolioTab _tab = _PortfolioTab.dashboard;
+
+  @override
+  Widget build(BuildContext context) {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
-    if (snapshot == null) return const Center(child: CircularProgressIndicator());
+    if (snapshot == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-    final holdings = buildPortfolioHoldings(
-      snapshot.stocks,
-      snapshot.portfolioTransactions,
-    );
     final currency = snapshot.session?.currency ?? 'BDT';
-    final backendSummary = snapshot.portfolioSummary;
-    final equityValue =
-        asDouble(backendSummary?['current_equity_value']) > 0
-            ? asDouble(backendSummary?['current_equity_value'])
-            : holdings.fold<double>(0, (sum, row) => sum + row.marketValue);
-    final costBasis = asDouble(backendSummary?['active_cost_basis']) > 0
-        ? asDouble(backendSummary?['active_cost_basis'])
-        : holdings.fold<double>(0, (sum, row) => sum + row.cost);
-    final dividend = asDouble(backendSummary?['dividend_income']);
-    final returnPercent = asDouble(backendSummary?['return_percent']);
-    final cash = snapshot.accounts
-        .where(_isBrokerAccount)
-        .fold<double>(0, (sum, row) => sum + asDouble(row['balance']));
-    final total = equityValue + cash;
-    final cashPercent = total <= 0 ? 0.0 : cash / total;
-    final equityPercent = total <= 0 ? 0.0 : equityValue / total;
+    final summary = snapshot.portfolioSummary ?? const <String, dynamic>{};
+    final brokerAccounts = _brokerAccounts(summary, snapshot.accounts);
+    final holdings = _holdings(summary);
 
-    return RefreshIndicator(
-      onRefresh: () => ref.read(appControllerProvider.notifier).syncNow(),
-      child: CustomScrollView(
-        slivers: [
-          const SliverAppBar(
-            title: Text('Portfolio'),
-            pinned: true,
-            automaticallyImplyLeading: false,
+    return Scaffold(
+      floatingActionButton: _tab == _PortfolioTab.trade
+          ? FloatingActionButton(
+              onPressed: () => _showTradeEditor(),
+              child: const Icon(Icons.add),
+            )
+          : null,
+      body: RefreshIndicator(
+        onRefresh: () => ref.read(appControllerProvider.notifier).syncNow(),
+        child: CustomScrollView(
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              sliver: SliverList.list(
+                children: [
+                  _PortfolioTabs(
+                    selected: _tab,
+                    onChanged: (tab) => setState(() => _tab = tab),
+                  ),
+                  const SizedBox(height: 16),
+                  switch (_tab) {
+                    _PortfolioTab.dashboard => _DashboardView(
+                      summary: summary,
+                      brokerAccounts: brokerAccounts,
+                      currency: currency,
+                    ),
+                    _PortfolioTab.holding => _HoldingView(
+                      summary: summary,
+                      holdings: holdings,
+                      currency: currency,
+                    ),
+                    _PortfolioTab.trade => _TradeView(
+                      transactions: snapshot.portfolioTransactions,
+                      stocks: snapshot.stocks,
+                      brokerAccounts: brokerAccounts,
+                      onAdd: () => _showTradeEditor(),
+                      onEdit: _showTradeEditor,
+                      onDelete: _confirmDeleteTrade,
+                    ),
+                    _PortfolioTab.dividend => _DividendView(
+                      summary: summary,
+                      currency: currency,
+                    ),
+                    _PortfolioTab.market => _MarketView(
+                      stocks: snapshot.stocks,
+                      defaultCurrency: currency,
+                      onRefreshPrices: () => ref
+                          .read(appControllerProvider.notifier)
+                          .refreshStockPrices(),
+                      onSaveStock:
+                          ({
+                            id,
+                            required name,
+                            required symbol,
+                            exchange,
+                            currency,
+                            required lastPrice,
+                          }) => ref
+                              .read(appControllerProvider.notifier)
+                              .saveStock(
+                                id: id,
+                                name: name,
+                                symbol: symbol,
+                                exchange: exchange,
+                                currency: currency,
+                                lastPrice: lastPrice,
+                              ),
+                    ),
+                  },
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showTradeEditor([Map<String, dynamic>? transaction]) async {
+    final snapshot = ref.read(appControllerProvider).asData?.value;
+    if (snapshot == null) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _TradeEditorSheet(
+        initial: transaction,
+        stocks: snapshot.stocks,
+        brokerAccounts: _brokerAccounts(
+          snapshot.portfolioSummary ?? const <String, dynamic>{},
+          snapshot.accounts,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteTrade(Map<String, dynamic> transaction) async {
+    final stock = _stockFromTransaction(transaction);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete stock transaction?'),
+        content: Text(
+          'Delete ${transaction['txn_type']} ${stock['name'] ?? ''}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
           ),
-          SliverPadding(
-            padding: const EdgeInsets.all(16),
-            sliver: SliverList.list(
-              children: [
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await ref
+        .read(appControllerProvider.notifier)
+        .deletePortfolioTransaction(transaction['id'] as String);
+  }
+}
+
+class _PortfolioTabs extends StatelessWidget {
+  const _PortfolioTabs({required this.selected, required this.onChanged});
+
+  final _PortfolioTab selected;
+  final ValueChanged<_PortfolioTab> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    const tabs = [
+      _PortfolioTab.dashboard,
+      _PortfolioTab.holding,
+      _PortfolioTab.trade,
+      _PortfolioTab.dividend,
+      _PortfolioTab.market,
+    ];
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: tabs.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final tab = tabs[index];
+          final active = selected == tab;
+          return ChoiceChip(
+            selected: active,
+            label: Text(_tabLabel(tab)),
+            avatar: Icon(_tabIcon(tab), size: 18),
+            onSelected: (_) => onChanged(tab),
+            labelStyle: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: active
+                  ? Theme.of(context).colorScheme.onPrimary
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            selectedColor: Theme.of(context).colorScheme.primary,
+            backgroundColor: Theme.of(
+              context,
+            ).colorScheme.surfaceContainerHighest,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _DashboardView extends StatelessWidget {
+  const _DashboardView({
+    required this.summary,
+    required this.brokerAccounts,
+    required this.currency,
+  });
+
+  final Map<String, dynamic> summary;
+  final List<Map<String, dynamic>> brokerAccounts;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+          childAspectRatio: 1.85,
+          children: [
+            _MetricCard(
+              label: 'Portfolio',
+              value: money(
+                _num(summary['total_portfolio_value']),
+                currency: currency,
+              ),
+              icon: Icons.trending_up,
+            ),
+            _MetricCard(
+              label: 'Broker cash',
+              value: money(_num(summary['cash_balance']), currency: currency),
+              icon: Icons.account_balance_wallet_outlined,
+              danger: _num(summary['cash_balance']) < 0,
+            ),
+            _MetricCard(
+              label: 'Equity value',
+              value: money(
+                _num(summary['current_equity_value']),
+                currency: currency,
+              ),
+              icon: Icons.paid_outlined,
+            ),
+            _MetricCard(
+              label: 'Profit/Loss',
+              value: money(
+                _num(summary['overall_profit_loss']),
+                currency: currency,
+              ),
+              icon: Icons.monetization_on_outlined,
+              danger: _num(summary['overall_profit_loss']) < 0,
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _Panel(
+          title: 'Portfolio Snapshot',
+          child: GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            childAspectRatio: 2.8,
+            children: [
+              _MiniMetric(
+                'Deposited',
+                money(_num(summary['invested_capital']), currency: currency),
+              ),
+              _MiniMetric(
+                'Cost Basis',
+                money(_num(summary['active_cost_basis']), currency: currency),
+              ),
+              _MiniMetric(
+                'Dividend',
+                money(_num(summary['dividend_income']), currency: currency),
+              ),
+              _MiniMetric(
+                'Return',
+                '${_num(summary['return_percent']).toStringAsFixed(1)}%',
+              ),
+            ],
+          ),
+        ),
+        if (brokerAccounts.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _Panel(
+            title: 'Broker Accounts',
+            child: Column(
+              children: brokerAccounts.map((account) {
+                return _ListAmountRow(
+                  title: account['name'] as String? ?? 'Broker',
+                  amount: money(
+                    _num(account['balance']),
+                    currency: account['currency'] as String? ?? currency,
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _HoldingView extends StatelessWidget {
+  const _HoldingView({
+    required this.summary,
+    required this.holdings,
+    required this.currency,
+  });
+
+  final Map<String, dynamic> summary;
+  final List<Map<String, dynamic>> holdings;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = _num(summary['total_portfolio_value']);
+    final equity = _num(summary['current_equity_value']);
+    final cash = _num(summary['cash_balance']);
+    final equityPercent = total == 0 ? 0.0 : equity / total * 100;
+    final cashPercent = total == 0 ? 0.0 : cash / total * 100;
+    final stockCountLabel =
+        '${holdings.length} ${holdings.length == 1 ? 'stock' : 'stocks'}';
+
+    return Column(
+      children: [
+        _HoldingAllocationSummary(
+          total: total,
+          equity: equity,
+          cash: cash,
+          equityPercent: equityPercent,
+          cashPercent: cashPercent,
+          stockCountLabel: stockCountLabel,
+          currency: currency,
+        ),
+        const SizedBox(height: 16),
+        if (holdings.isEmpty)
+          const EmptyPanel(
+            icon: Icons.show_chart,
+            title: 'No holdings yet',
+            body: 'Add stock transactions to build holdings.',
+          )
+        else
+          ...holdings.map((holding) {
+            final stock =
+                (holding['stock'] as Map?)?.cast<String, dynamic>() ?? {};
+            final marketValue = _num(holding['market_value']);
+            final weight = total == 0 ? 0.0 : marketValue / total;
+            final weightPercent = weight * 100;
+            final unrealized = _num(holding['unrealized_profit_loss']);
+            final quantity = _num(holding['quantity']);
+            final invested = _num(holding['invested_amount']);
+            final avgPrice = quantity == 0 ? 0.0 : invested / quantity;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _Panel(
+                title: stock['name'] as String? ?? 'Stock',
+                trailing: money(
+                  marketValue,
+                  currency: stock['currency'] as String? ?? currency,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${quantity.toStringAsFixed(4)} shares at avg ${money(avgPrice, currency: stock['currency'] as String? ?? currency)}',
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
                       children: [
-                        Text(
-                          'Allocation',
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w800,
-                              ),
-                        ),
-                        const SizedBox(height: 14),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _PortfolioMetric(
-                                label: 'Stocks',
-                                value: _percent(equityPercent),
-                                subValue: money(equityValue, currency: currency),
-                              ),
-                            ),
-                            Expanded(
-                              child: _PortfolioMetric(
-                                label: 'Cash',
-                                value: _percent(cashPercent),
-                                subValue: money(cash, currency: currency),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _PortfolioMetric(
-                                label: 'Cost',
-                                value: money(costBasis, currency: currency),
-                              ),
-                            ),
-                            Expanded(
-                              child: _PortfolioMetric(
-                                label: 'Dividend',
-                                value: money(dividend, currency: currency),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(999),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                flex: (equityPercent * 100).round().clamp(1, 100).toInt(),
-                                child: Container(
-                                  height: 12,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                              ),
-                              Expanded(
-                                flex: (cashPercent * 100).round().clamp(1, 100).toInt(),
-                                child: Container(
-                                  height: 12,
-                                  color: Theme.of(context).colorScheme.tertiary,
-                                ),
-                              ),
-                            ],
+                        Expanded(
+                          child: LinearProgressIndicator(
+                            value: weight.clamp(0, 1).toDouble(),
                           ),
                         ),
-                        const SizedBox(height: 14),
+                        const SizedBox(width: 10),
                         Text(
-                          money(total, currency: currency),
-                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                fontWeight: FontWeight.w900,
-                              ),
+                          '${weightPercent.toStringAsFixed(1)}%',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
-                        Text('Total portfolio value',
-                            style: Theme.of(context).textTheme.bodySmall),
-                        if (returnPercent != 0)
-                          Text('Return ${returnPercent.toStringAsFixed(1)}%',
-                              style: Theme.of(context).textTheme.bodySmall),
                       ],
                     ),
-                  ),
+                    const SizedBox(height: 12),
+                    GridView.count(
+                      crossAxisCount: 2,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      childAspectRatio: 2.6,
+                      children: [
+                        _MiniMetric(
+                          'Cost',
+                          money(invested, currency: currency),
+                        ),
+                        _MiniMetric(
+                          'Unrealized',
+                          money(unrealized, currency: currency),
+                          danger: unrealized < 0,
+                        ),
+                        _MiniMetric(
+                          'Gain %',
+                          '${_num(holding['unrealized_percent']).toStringAsFixed(2)}%',
+                        ),
+                        _MiniMetric(
+                          'Dividend',
+                          money(
+                            _num(holding['dividend_income']),
+                            currency: currency,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: () => _showAddHoldingSheet(context),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add holding'),
-                ),
-                const SizedBox(height: 16),
-                if (holdings.isEmpty)
-                  const EmptyPanel(
-                    icon: Icons.show_chart,
-                    title: 'No holdings cached',
-                    body: 'Sync stock transactions from the web app to review portfolio weight here.',
-                  )
-                else
-                  ...holdings.map((holding) {
-                    final weight = equityValue <= 0
-                        ? 0.0
-                        : holding.marketValue / (equityValue + cash);
-                    final gain = holding.marketValue - holding.cost;
-                    final gainPercent = holding.cost <= 0 ? 0.0 : gain / holding.cost;
+              ),
+            );
+          }),
+      ],
+    );
+  }
+}
+
+class _TradeView extends StatelessWidget {
+  const _TradeView({
+    required this.transactions,
+    required this.stocks,
+    required this.brokerAccounts,
+    required this.onAdd,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final List<Map<String, dynamic>> transactions;
+  final List<Map<String, dynamic>> stocks;
+  final List<Map<String, dynamic>> brokerAccounts;
+  final VoidCallback onAdd;
+  final ValueChanged<Map<String, dynamic>> onEdit;
+  final ValueChanged<Map<String, dynamic>> onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FilledButton.icon(
+          onPressed: onAdd,
+          icon: const Icon(Icons.add),
+          label: const Text('Add Stock Transaction'),
+        ),
+        const SizedBox(height: 16),
+        _Panel(
+          title: 'Transaction List',
+          child: transactions.isEmpty
+              ? const Text('No stock transactions yet.')
+              : Column(
+                  children: transactions.map((transaction) {
+                    final cashFlow = _num(transaction['cash_flow']);
+                    final stock = _stockFromTransaction(transaction);
+                    final positive = cashFlow >= 0;
                     return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.only(bottom: 10),
                       child: Card(
+                        color: Theme.of(context).colorScheme.surface,
                         child: Padding(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(12),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
                                 children: [
                                   CircleAvatar(
-                                    backgroundColor: const Color(0xFFE0F2FE),
-                                    foregroundColor: const Color(0xFF0369A1),
-                                    child: Text(
-                                      holding.symbol.characters.first.toUpperCase(),
-                                      style: const TextStyle(fontWeight: FontWeight.w900),
+                                    backgroundColor: positive
+                                        ? const Color(0xFFE0F2FE)
+                                        : const Color(0xFFFFEEF2),
+                                    child: Icon(
+                                      positive
+                                          ? Icons.south_west
+                                          : Icons.north_east,
+                                      color: positive
+                                          ? Colors.green
+                                          : Colors.red,
                                     ),
                                   ),
                                   const SizedBox(width: 12),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          holding.name,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(fontWeight: FontWeight.w800),
+                                          '${_labelTxn(transaction['txn_type'] as String? ?? '')} ${stock['name'] ?? ''}',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                          ),
                                         ),
-                                        Text('${holding.quantity.toStringAsFixed(2)} shares'),
+                                        Text(
+                                          '${transaction['txn_date']} - ${transaction['notes'] ?? 'No note'}',
+                                        ),
                                       ],
                                     ),
                                   ),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        money(holding.marketValue,
-                                            currency: holding.currency),
-                                        style: const TextStyle(fontWeight: FontWeight.w800),
-                                      ),
-                                      Text(_percent(weight)),
-                                    ],
-                                  ),
                                 ],
                               ),
-                              const SizedBox(height: 12),
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(999),
-                                child: LinearProgressIndicator(
-                                  minHeight: 9,
-                                  value: weight.clamp(0, 1),
-                                  backgroundColor: const Color(0xFFE2E8F0),
+                              const SizedBox(height: 10),
+                              Text(
+                                '${positive ? '+' : '-'}${money(cashFlow.abs(), currency: stock['currency'] as String? ?? 'BDT')}',
+                                style: TextStyle(
+                                  color: positive
+                                      ? Colors.green.shade700
+                                      : Colors.red.shade700,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 16,
                                 ),
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 10),
                               Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
                                 children: [
-                                  Expanded(
-                                    child: _PortfolioMetric(
-                                      label: 'Cost',
-                                      value: money(holding.cost,
-                                          currency: holding.currency),
-                                    ),
+                                  OutlinedButton.icon(
+                                    onPressed: () => onEdit(transaction),
+                                    icon: const Icon(Icons.edit_outlined),
+                                    label: const Text('Edit'),
                                   ),
-                                  Expanded(
-                                    child: _PortfolioMetric(
-                                      label: 'Gain',
-                                      value: _percent(gainPercent),
-                                      danger: gain < 0,
-                                    ),
+                                  const SizedBox(width: 8),
+                                  OutlinedButton.icon(
+                                    onPressed: () => onDelete(transaction),
+                                    icon: const Icon(Icons.delete_outline),
+                                    label: const Text('Delete'),
                                   ),
                                 ],
                               ),
@@ -234,52 +541,441 @@ class PortfolioPage extends ConsumerWidget {
                         ),
                       ),
                     );
-                  }),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddHoldingSheet(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => const _AddHoldingSheet(),
+                  }).toList(),
+                ),
+        ),
+      ],
     );
   }
 }
 
-class _AddHoldingSheet extends ConsumerStatefulWidget {
-  const _AddHoldingSheet();
+class _DividendView extends StatelessWidget {
+  const _DividendView({required this.summary, required this.currency});
+
+  final Map<String, dynamic> summary;
+  final String currency;
 
   @override
-  ConsumerState<_AddHoldingSheet> createState() => _AddHoldingSheetState();
+  Widget build(BuildContext context) {
+    final rows = (summary['dividend_report'] as List? ?? [])
+        .whereType<Map>()
+        .map((row) => row.cast<String, dynamic>())
+        .toList();
+    return _Panel(
+      title: 'Dividend Report',
+      child: rows.isEmpty
+          ? const Text('No dividends recorded.')
+          : Column(
+              children: rows.map((row) {
+                return _ListAmountRow(
+                  title: '${row['stock_name']} - ${row['year']}',
+                  amount: money(_num(row['dividend_gain']), currency: currency),
+                );
+              }).toList(),
+            ),
+    );
+  }
 }
 
-class _AddHoldingSheetState extends ConsumerState<_AddHoldingSheet> {
+class _MarketView extends StatefulWidget {
+  const _MarketView({
+    required this.stocks,
+    required this.defaultCurrency,
+    required this.onRefreshPrices,
+    required this.onSaveStock,
+  });
+
+  final List<Map<String, dynamic>> stocks;
+  final String defaultCurrency;
+  final Future<String> Function() onRefreshPrices;
+  final Future<void> Function({
+    String? id,
+    required String name,
+    required String symbol,
+    String? exchange,
+    String? currency,
+    required double lastPrice,
+  })
+  onSaveStock;
+
+  @override
+  State<_MarketView> createState() => _MarketViewState();
+}
+
+class _MarketViewState extends State<_MarketView> {
   final _formKey = GlobalKey<FormState>();
-  final _symbol = TextEditingController();
   final _name = TextEditingController();
-  final _quantity = TextEditingController();
-  final _price = TextEditingController();
-  final _notes = TextEditingController();
-  bool _busy = false;
+  final _symbol = TextEditingController();
+  final _exchange = TextEditingController();
+  final _currency = TextEditingController();
+  final _lastPrice = TextEditingController();
+  String? _savingId;
+  String? _editingId;
+  bool _refreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _currency.text = widget.defaultCurrency;
+  }
 
   @override
   void dispose() {
-    _symbol.dispose();
     _name.dispose();
+    _symbol.dispose();
+    _exchange.dispose();
+    _currency.dispose();
+    _lastPrice.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Panel(
+          title: _editingId == null ? 'Market Stock Form' : 'Edit Market Stock',
+          subtitle: 'Create stock master data and update latest market price.',
+          trailing: '${widget.stocks.length} stocks',
+          child: Form(
+            key: _formKey,
+            child: Column(
+              children: [
+                TextFormField(
+                  controller: _name,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Stock name',
+                    prefixIcon: Icon(Icons.business_outlined),
+                  ),
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? 'Enter stock name'
+                      : null,
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _symbol,
+                        enabled: _editingId == null,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: const InputDecoration(
+                          labelText: 'Symbol',
+                          prefixIcon: Icon(Icons.tag),
+                        ),
+                        validator: (value) =>
+                            value == null || value.trim().isEmpty
+                            ? 'Enter symbol'
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 104,
+                      child: TextFormField(
+                        controller: _currency,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: const InputDecoration(
+                          labelText: 'Currency',
+                        ),
+                        validator: (value) =>
+                            value == null || value.trim().length != 3
+                            ? '3 letters'
+                            : null,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _exchange,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: const InputDecoration(
+                          labelText: 'Exchange',
+                          prefixIcon: Icon(Icons.account_balance_outlined),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _lastPrice,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Initial price',
+                          prefixIcon: Icon(Icons.price_change_outlined),
+                          helperText: 'Use Fetch DSE to update latest price.',
+                        ),
+                        validator: (value) {
+                          final price = double.tryParse(value ?? '');
+                          return price == null || price < 0
+                              ? 'Enter valid price'
+                              : null;
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    if (_editingId != null) ...[
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _savingId == null ? _clearForm : null,
+                          icon: const Icon(Icons.close),
+                          label: const Text('Cancel'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _savingId == 'form' ? null : _saveForm,
+                        icon: _savingId == 'form'
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Icon(_editingId == null ? Icons.add : Icons.save),
+                        label: Text(
+                          _savingId == 'form'
+                              ? 'Saving'
+                              : _editingId == null
+                              ? 'Add stock'
+                              : 'Update stock',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _Panel(
+          title: 'Current Market Price',
+          subtitle: 'Fetch latest DSE LTP to refresh equity value and P/L.',
+          trailing: '${widget.stocks.length} stocks',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              FilledButton.icon(
+                onPressed: _refreshing || widget.stocks.isEmpty
+                    ? null
+                    : _refreshPrices,
+                icon: _refreshing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.sync),
+                label: Text(_refreshing ? 'Fetching DSE prices' : 'Fetch DSE prices'),
+              ),
+              const SizedBox(height: 12),
+              if (widget.stocks.isEmpty)
+                const EmptyPanel(
+                  icon: Icons.show_chart,
+                  title: 'No stock master data',
+                  body: 'Use the market form above to add your first stock.',
+                )
+              else
+                ...widget.stocks.map((stock) {
+                  final price = _num(stock['last_price']);
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: ListTile(
+                      tileColor: Theme.of(context).colorScheme.surface,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      leading: CircleAvatar(
+                        child: Text(
+                          (stock['symbol'] as String? ?? 'S').characters.first
+                              .toUpperCase(),
+                        ),
+                      ),
+                      title: Text(
+                        stock['name'] as String? ?? 'Stock',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      subtitle: Text(
+                        [
+                          stock['symbol'] as String? ?? '',
+                          stock['exchange'] as String? ?? 'DSE',
+                        ].where((value) => value.isNotEmpty).join(' - '),
+                      ),
+                      trailing: Text(
+                        money(
+                          price,
+                          currency:
+                              stock['currency'] as String? ??
+                              widget.defaultCurrency,
+                        ),
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      onTap: () => _editStock(stock),
+                    ),
+                  );
+                }),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _refreshPrices() async {
+    setState(() => _refreshing = true);
+    try {
+      final message = await widget.onRefreshPrices();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  Future<void> _saveForm() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _savingId = 'form');
+    try {
+      await widget.onSaveStock(
+        id: _editingId,
+        name: _name.text,
+        symbol: _symbol.text,
+        exchange: _exchange.text,
+        currency: _currency.text,
+        lastPrice: double.parse(_lastPrice.text),
+      );
+      if (mounted) {
+        setState(() {
+          _savingId = null;
+          _resetFormFields();
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _savingId = null);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  void _editStock(Map<String, dynamic> stock) {
+    setState(() {
+      _editingId = stock['id'] as String?;
+      _name.text = stock['name'] as String? ?? '';
+      _symbol.text = stock['symbol'] as String? ?? '';
+      _exchange.text = stock['exchange'] as String? ?? '';
+      _currency.text = stock['currency'] as String? ?? widget.defaultCurrency;
+      _lastPrice.text = _num(stock['last_price']).toStringAsFixed(4);
+    });
+  }
+
+  void _clearForm() {
+    setState(_resetFormFields);
+  }
+
+  void _resetFormFields() {
+    _editingId = null;
+    _name.clear();
+    _symbol.clear();
+    _exchange.clear();
+    _currency.text = widget.defaultCurrency;
+    _lastPrice.clear();
+  }
+}
+
+class _TradeEditorSheet extends ConsumerStatefulWidget {
+  const _TradeEditorSheet({
+    this.initial,
+    required this.stocks,
+    required this.brokerAccounts,
+  });
+
+  final Map<String, dynamic>? initial;
+  final List<Map<String, dynamic>> stocks;
+  final List<Map<String, dynamic>> brokerAccounts;
+
+  @override
+  ConsumerState<_TradeEditorSheet> createState() => _TradeEditorSheetState();
+}
+
+class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _newStockName = TextEditingController();
+  final _newStockSymbol = TextEditingController();
+  final _quantity = TextEditingController();
+  final _price = TextEditingController();
+  final _fees = TextEditingController();
+  final _notes = TextEditingController();
+  String _txnType = 'buy';
+  String? _stockId;
+  String? _brokerAccountId;
+  DateTime _date = DateTime.now();
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initial;
+    if (initial != null) {
+      _txnType = initial['txn_type'] as String? ?? 'buy';
+      _stockId = initial['stock_id'] as String?;
+      _brokerAccountId = initial['broker_account_id'] as String?;
+      _quantity.text = _num(initial['quantity']) == 0
+          ? ''
+          : _num(initial['quantity']).toString();
+      _price.text = _num(initial['price']).toString();
+      _fees.text = _num(initial['fees']) == 0
+          ? ''
+          : _num(initial['fees']).toString();
+      _notes.text = initial['notes'] as String? ?? '';
+      _date =
+          DateTime.tryParse(initial['txn_date'] as String? ?? '') ??
+          DateTime.now();
+    }
+  }
+
+  @override
+  void dispose() {
+    _newStockName.dispose();
+    _newStockSymbol.dispose();
     _quantity.dispose();
     _price.dispose();
+    _fees.dispose();
     _notes.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final needsStock =
+        _txnType == 'buy' || _txnType == 'sell' || _txnType == 'income';
+    final isTrade = _txnType == 'buy' || _txnType == 'sell';
+    final autoFee = _defaultBrokerFee();
+    final hasManualFee = _fees.text.trim().isNotEmpty;
     return Padding(
       padding: EdgeInsets.only(
         left: 16,
@@ -292,15 +988,19 @@ class _AddHoldingSheetState extends ConsumerState<_AddHoldingSheet> {
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Add holding',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                  Expanded(
+                    child: Text(
+                      widget.initial == null
+                          ? 'Add Stock Transaction'
+                          : 'Edit Stock Transaction',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
@@ -309,65 +1009,163 @@ class _AddHoldingSheetState extends ConsumerState<_AddHoldingSheet> {
                 ],
               ),
               const SizedBox(height: 12),
-              TextFormField(
-                controller: _symbol,
-                textCapitalization: TextCapitalization.characters,
-                decoration: const InputDecoration(
-                  labelText: 'Symbol',
-                  prefixIcon: Icon(Icons.tag_outlined),
-                ),
-                validator: (value) =>
-                    value == null || value.trim().isEmpty ? 'Enter symbol' : null,
+              GridView.count(
+                crossAxisCount: 2,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                childAspectRatio: 3.2,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+                children: [
+                  _txnTypeButton('buy', 'Buy'),
+                  _txnTypeButton('sell', 'Sell'),
+                  _txnTypeButton('withdraw', 'Withdraw'),
+                  _txnTypeButton('income', 'Dividend'),
+                ],
               ),
               const SizedBox(height: 12),
-              TextFormField(
-                controller: _name,
-                decoration: const InputDecoration(
-                  labelText: 'Company name',
-                  prefixIcon: Icon(Icons.business_outlined),
+              DropdownButtonFormField<String>(
+                initialValue: _brokerAccountId,
+                decoration: const InputDecoration(labelText: 'Broker account'),
+                items: [
+                  const DropdownMenuItem<String>(
+                    value: '',
+                    child: Text('No broker account'),
+                  ),
+                  ...widget.brokerAccounts.map(
+                    (account) => DropdownMenuItem<String>(
+                      value: account['id'] as String,
+                      child: Text(account['name'] as String? ?? 'Broker'),
+                    ),
+                  ),
+                ],
+                onChanged: (value) => setState(
+                  () =>
+                      _brokerAccountId = value?.isEmpty == true ? null : value,
                 ),
-                validator: (value) =>
-                    value == null || value.trim().isEmpty ? 'Enter company name' : null,
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _quantity,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Quantity',
-                  prefixIcon: Icon(Icons.format_list_numbered),
+              if (needsStock) ...[
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: _stockId,
+                  decoration: const InputDecoration(labelText: 'Stock'),
+                  items: [
+                    const DropdownMenuItem<String>(
+                      value: '',
+                      child: Text('New stock'),
+                    ),
+                    ...widget.stocks.map(
+                      (stock) => DropdownMenuItem<String>(
+                        value: stock['id'] as String,
+                        child: Text('${stock['name']} (${stock['symbol']})'),
+                      ),
+                    ),
+                  ],
+                  onChanged: (value) => setState(
+                    () => _stockId = value?.isEmpty == true ? null : value,
+                  ),
                 ),
-                validator: _positiveNumber,
-              ),
-              const SizedBox(height: 12),
+              ],
+              if (needsStock && _stockId == null) ...[
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _newStockName,
+                  decoration: const InputDecoration(labelText: 'Stock name'),
+                  validator: (value) {
+                    if (!needsStock || _stockId != null) return null;
+                    return value == null || value.trim().isEmpty
+                        ? 'Enter stock name'
+                        : null;
+                  },
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _newStockSymbol,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(labelText: 'Symbol'),
+                ),
+              ],
+              if (isTrade) ...[
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _quantity,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(labelText: 'Quantity'),
+                  onChanged: (_) => setState(() {}),
+                  validator: _positiveValidator,
+                ),
+              ],
+              const SizedBox(height: 10),
               TextFormField(
                 controller: _price,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Buy price',
-                  prefixIcon: Icon(Icons.payments_outlined),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
                 ),
-                validator: _positiveNumber,
+                decoration: InputDecoration(
+                  labelText: _txnType == 'income'
+                      ? 'Dividend amount'
+                      : _txnType == 'withdraw'
+                      ? 'Amount'
+                      : 'Price/share',
+                ),
+                onChanged: (_) => setState(() {}),
+                validator: _positiveValidator,
               ),
-              const SizedBox(height: 12),
+              if (isTrade) ...[
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _fees,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: 'Broker fee',
+                    hintText: 'Auto ${autoFee.toStringAsFixed(2)}',
+                    helperText: hasManualFee
+                        ? 'Manual fee overrides backend auto fee.'
+                        : 'Blank uses backend auto fee: 0.4% of trade value.',
+                    suffixIcon: hasManualFee
+                        ? IconButton(
+                            tooltip: 'Use auto fee',
+                            onPressed: () => setState(() => _fees.clear()),
+                            icon: const Icon(Icons.auto_fix_high_outlined),
+                          )
+                        : null,
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Applied fee: ${hasManualFee ? _fees.text : autoFee.toStringAsFixed(2)}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: _pickDate,
+                icon: const Icon(Icons.calendar_today_outlined),
+                label: Text(_date.toIso8601String().substring(0, 10)),
+              ),
+              const SizedBox(height: 10),
               TextField(
                 controller: _notes,
-                decoration: const InputDecoration(
-                  labelText: 'Note',
-                  prefixIcon: Icon(Icons.notes_outlined),
-                ),
+                decoration: const InputDecoration(labelText: 'Note'),
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
                 onPressed: _busy ? null : _save,
-                icon: _busy
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.check),
-                label: const Text('Save holding'),
+                icon: const Icon(Icons.add),
+                label: Text(
+                  _busy
+                      ? 'Saving...'
+                      : widget.initial == null
+                      ? 'Save Transaction'
+                      : 'Update Transaction',
+                ),
               ),
             ],
           ),
@@ -376,44 +1174,194 @@ class _AddHoldingSheetState extends ConsumerState<_AddHoldingSheet> {
     );
   }
 
-  String? _positiveNumber(String? value) {
+  Widget _txnTypeButton(String value, String label) {
+    final active = _txnType == value;
+    return FilledButton(
+      style: FilledButton.styleFrom(
+        backgroundColor: active
+            ? null
+            : Theme.of(context).colorScheme.surfaceContainerHighest,
+        foregroundColor: active
+            ? null
+            : Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+      onPressed: () => setState(() => _txnType = value),
+      child: Text(label),
+    );
+  }
+
+  String? _positiveValidator(String? value) {
     final parsed = double.tryParse(value ?? '');
     return parsed == null || parsed <= 0 ? 'Enter a valid amount' : null;
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked != null) setState(() => _date = picked);
   }
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
-    await ref.read(appControllerProvider.notifier).addStockHolding(
-          symbol: _symbol.text.trim(),
-          name: _name.text.trim(),
-          quantity: double.parse(_quantity.text),
-          price: double.parse(_price.text),
-          notes: _notes.text,
-        );
-    if (mounted) Navigator.of(context).pop();
+    try {
+      await ref
+          .read(appControllerProvider.notifier)
+          .savePortfolioTransaction(
+            id: widget.initial?['id'] as String?,
+            txnType: _txnType,
+            stockId: _stockId,
+            brokerAccountId: _brokerAccountId,
+            newStockName: _newStockName.text,
+            newStockSymbol: _newStockSymbol.text,
+            quantity: double.tryParse(_quantity.text) ?? 0,
+            price: double.parse(_price.text),
+            fees: _manualBrokerFee(),
+            date: _date,
+            notes: _notes.text,
+          );
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  double _defaultBrokerFee() {
+    if (_txnType != 'buy' && _txnType != 'sell') return 0;
+    final quantity = double.tryParse(_quantity.text) ?? 0;
+    final price = double.tryParse(_price.text) ?? 0;
+    return quantity * price * 0.004;
+  }
+
+  double? _manualBrokerFee() {
+    final trimmed = _fees.text.trim();
+    if (trimmed.isEmpty) return null;
+    return double.tryParse(trimmed);
   }
 }
 
-bool _isBrokerAccount(Map<String, dynamic> row) {
-  final raw = row['raw_json'] as String? ?? '';
-  return raw.contains('"account_subtype":"stock_broker"') ||
-      raw.contains('"account_subtype": "stock_broker"');
-}
-
-String _percent(double value) => '${(value * 100).toStringAsFixed(1)}%';
-
-class _PortfolioMetric extends StatelessWidget {
-  const _PortfolioMetric({
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({
     required this.label,
     required this.value,
-    this.subValue,
+    required this.icon,
     this.danger = false,
   });
 
   final String label;
   final String value;
-  final String? subValue;
+  final IconData icon;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  icon,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ],
+            ),
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w900,
+                color: danger ? Colors.red.shade700 : null,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Panel extends StatelessWidget {
+  const _Panel({
+    required this.title,
+    required this.child,
+    this.subtitle,
+    this.trailing,
+  });
+
+  final String title;
+  final String? subtitle;
+  final String? trailing;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      if (subtitle != null) Text(subtitle!),
+                    ],
+                  ),
+                ),
+                if (trailing != null)
+                  Text(
+                    trailing!,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniMetric extends StatelessWidget {
+  const _MiniMetric(this.label, this.value, {this.danger = false});
+
+  final String label;
+  final String value;
   final bool danger;
 
   @override
@@ -422,18 +1370,269 @@ class _PortfolioMetric extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 4),
         Text(
           value,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: danger ? Colors.red.shade700 : null,
-              ),
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            color: danger ? Colors.red.shade700 : null,
+          ),
         ),
-        if (subValue != null) Text(subValue!, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
   }
+}
+
+class _ListAmountRow extends StatelessWidget {
+  const _ListAmountRow({required this.title, required this.amount});
+
+  final String title;
+  final String amount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          Text(amount),
+        ],
+      ),
+    );
+  }
+}
+
+class _HoldingAllocationSummary extends StatelessWidget {
+  const _HoldingAllocationSummary({
+    required this.total,
+    required this.equity,
+    required this.cash,
+    required this.equityPercent,
+    required this.cashPercent,
+    required this.stockCountLabel,
+    required this.currency,
+  });
+
+  final double total;
+  final double equity;
+  final double cash;
+  final double equityPercent;
+  final double cashPercent;
+  final String stockCountLabel;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _SummaryMetric(
+                    label: 'Portfolio',
+                    value: money(total, currency: currency),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: scheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                  child: Text(
+                    stockCountLabel,
+                    style: TextStyle(
+                      color: scheme.onPrimaryContainer,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(99),
+              child: LinearProgressIndicator(
+                minHeight: 12,
+                value: (equityPercent / 100).clamp(0, 1).toDouble(),
+                backgroundColor: Colors.amber.shade300,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: _SummaryMetric(
+                    label: 'Stocks',
+                    value: '${equityPercent.toStringAsFixed(1)}%',
+                    subValue: money(equity, currency: currency),
+                    markerColor: scheme.primary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _SummaryMetric(
+                    label: 'Cash',
+                    value: '${cashPercent.toStringAsFixed(2)}%',
+                    subValue: money(cash, currency: currency),
+                    markerColor: Colors.amber,
+                    danger: cash < 0,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryMetric extends StatelessWidget {
+  const _SummaryMetric({
+    required this.label,
+    required this.value,
+    this.subValue,
+    this.markerColor,
+    this.danger = false,
+  });
+
+  final String label;
+  final String value;
+  final String? subValue;
+  final Color? markerColor;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final valueColor = danger ? Colors.red.shade700 : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            if (markerColor != null) ...[
+              CircleAvatar(radius: 5, backgroundColor: markerColor),
+              const SizedBox(width: 6),
+            ],
+            Flexible(child: Text(label)),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w900,
+            color: valueColor,
+          ),
+        ),
+        if (subValue != null)
+          Text(
+            subValue!,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: valueColor),
+          ),
+      ],
+    );
+  }
+}
+
+List<Map<String, dynamic>> _holdings(Map<String, dynamic> summary) {
+  return (summary['holdings'] as List? ?? [])
+      .whereType<Map>()
+      .map((row) => row.cast<String, dynamic>())
+      .toList()
+    ..sort(
+      (a, b) => _num(b['market_value']).compareTo(_num(a['market_value'])),
+    );
+}
+
+List<Map<String, dynamic>> _brokerAccounts(
+  Map<String, dynamic> summary,
+  List<Map<String, dynamic>> accounts,
+) {
+  final summaryAccounts = (summary['broker_accounts'] as List? ?? [])
+      .whereType<Map>()
+      .map((row) => row.cast<String, dynamic>())
+      .toList();
+  if (summaryAccounts.isNotEmpty) return summaryAccounts;
+  return accounts.where((account) {
+    final raw = account['raw_json'] as String? ?? '';
+    return raw.contains('"account_subtype":"stock_broker"') ||
+        raw.contains('"account_subtype": "stock_broker"');
+  }).toList();
+}
+
+Map<String, dynamic> _stockFromTransaction(Map<String, dynamic> transaction) {
+  final raw = transaction['stock_json'];
+  if (raw is String && raw.isNotEmpty) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return decoded.cast<String, dynamic>();
+    } catch (_) {
+      return {};
+    }
+  }
+  final stock = transaction['stock'];
+  if (stock is Map) return stock.cast<String, dynamic>();
+  return {};
+}
+
+String _tabLabel(_PortfolioTab tab) {
+  return switch (tab) {
+    _PortfolioTab.dashboard => 'Dash',
+    _PortfolioTab.holding => 'Holding',
+    _PortfolioTab.trade => 'Trade',
+    _PortfolioTab.dividend => 'Dividend',
+    _PortfolioTab.market => 'Market',
+  };
+}
+
+IconData _tabIcon(_PortfolioTab tab) {
+  return switch (tab) {
+    _PortfolioTab.dashboard => Icons.dashboard_outlined,
+    _PortfolioTab.holding => Icons.pie_chart_outline,
+    _PortfolioTab.trade => Icons.swap_vert,
+    _PortfolioTab.dividend => Icons.payments_outlined,
+    _PortfolioTab.market => Icons.show_chart,
+  };
+}
+
+String _labelTxn(String value) {
+  return switch (value) {
+    'buy' => 'Buy',
+    'sell' => 'Sell',
+    'withdraw' => 'Withdraw',
+    'income' => 'Dividend',
+    _ => value,
+  };
+}
+
+double _num(Object? value) {
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value) ?? 0;
+  return 0;
 }

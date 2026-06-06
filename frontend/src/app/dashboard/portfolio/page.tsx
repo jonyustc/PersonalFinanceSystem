@@ -27,8 +27,8 @@ import {
   fetchPortfolioSummary,
   fetchPortfolioTransactions,
   fetchStocks,
+  refreshStockPrices,
   updatePortfolioTransaction,
-  updateStock,
 } from "@/services/finance-service";
 import type { Account, PortfolioSummaryV2, PortfolioTransaction, PortfolioTxnType, Stock } from "@/types/api";
 
@@ -688,21 +688,23 @@ function MarketPriceSection({
   loading: boolean;
   onSaved: () => Promise<void>;
 }) {
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [savingId, setSavingId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  async function save(stock: Stock) {
-    const nextPrice = asNumber(drafts[stock.id] ?? stock.last_price);
-    setSavingId(stock.id);
+  async function refreshPrices() {
+    setRefreshing(true);
     setError(null);
+    setNotice(null);
     try {
-      await updateStock(stock.id, { last_price: String(nextPrice) });
+      const result = await refreshStockPrices();
       await onSaved();
+      const missing = result.missing_symbols.length ? ` Missing: ${result.missing_symbols.join(", ")}.` : "";
+      setNotice(`Updated ${result.updated} prices from ${result.source}.${missing}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Market price update failed");
+      setError(err instanceof Error ? err.message : "Market price refresh failed");
     } finally {
-      setSavingId(null);
+      setRefreshing(false);
     }
   }
 
@@ -711,11 +713,15 @@ function MarketPriceSection({
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-ink">Current Market Price</h2>
-          <p className="text-xs text-muted">Update latest price to refresh equity value and P/L.</p>
+          <p className="text-xs text-muted">Fetch latest DSE LTP to refresh equity value and P/L.</p>
         </div>
-        <span className="text-xs font-semibold text-muted">{stocks.length} stocks</span>
+        <Button type="button" variant="secondary" onClick={refreshPrices} disabled={refreshing || stocks.length === 0}>
+          <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+          {refreshing ? "Fetching" : "Fetch DSE"}
+        </Button>
       </div>
       {error ? <p className="mb-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p> : null}
+      {notice ? <p className="mb-2 rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{notice}</p> : null}
       {loading ? (
         <p className="text-sm text-muted">Loading stocks...</p>
       ) : stocks.length === 0 ? (
@@ -733,17 +739,7 @@ function MarketPriceSection({
                   {formatCurrency(stock.last_price, stock.currency)}
                 </p>
               </div>
-              <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                <input
-                  className="input h-10"
-                  inputMode="decimal"
-                  value={drafts[stock.id] ?? stock.last_price}
-                  onChange={(event) => setDrafts((current) => ({ ...current, [stock.id]: event.target.value }))}
-                />
-                <Button type="button" variant="secondary" onClick={() => save(stock)} disabled={savingId === stock.id}>
-                  {savingId === stock.id ? "..." : "Save"}
-                </Button>
-              </div>
+              <p className="text-xs text-muted">Exchange: {stock.exchange || "DSE"} · Currency: {stock.currency}</p>
             </article>
           ))}
         </div>

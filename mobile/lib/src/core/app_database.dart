@@ -273,6 +273,12 @@ class AppDatabase {
     await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<Map<String, dynamic>?> transactionById(String id) async {
+    final db = await database;
+    final rows = await db.query('transactions', where: 'id = ?', whereArgs: [id]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
   Future<void> replaceStocks(List<Map<String, dynamic>> rows) async {
     final db = await database;
     await db.transaction((txn) async {
@@ -307,6 +313,44 @@ class AppDatabase {
     );
   }
 
+  Future<void> applyTransactionBalance(
+    Map<String, dynamic> row, {
+    bool reverse = false,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await _applyTransactionBalanceInTxn(txn, row, reverse: reverse);
+    });
+  }
+
+  Future<void> upsertPortfolioTransaction(
+    Map<String, dynamic> row, {
+    bool pending = false,
+  }) async {
+    final db = await database;
+    final normalized = {...row};
+    if (pending) normalized['pending'] = true;
+    await db.insert(
+      'portfolio_transactions',
+      _portfolioTransactionRow(normalized),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> deletePortfolioTransaction(String id) async {
+    final db = await database;
+    await db.delete('portfolio_transactions', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> upsertStock(Map<String, dynamic> row) async {
+    final db = await database;
+    await db.insert(
+      'stocks',
+      _stockRow(row),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
   Future<void> upsertBudget(Map<String, dynamic> row) async {
     final db = await database;
     await db.insert(
@@ -317,9 +361,17 @@ class AppDatabase {
   }
 
   Future<void> queuePost(String path, Map<String, dynamic> payload) async {
+    await queueMutation('POST', path, payload);
+  }
+
+  Future<void> queueMutation(
+    String method,
+    String path,
+    Map<String, dynamic> payload,
+  ) async {
     final db = await database;
     await db.insert('sync_queue', {
-      'method': 'POST',
+      'method': method,
       'path': path,
       'payload_json': jsonEncode(payload),
       'created_at': DateTime.now().toIso8601String(),
@@ -438,6 +490,95 @@ class AppDatabase {
       'stock_json': row['stock'] == null ? null : jsonEncode(row['stock']),
       'raw_json': jsonEncode(row),
     };
+  }
+
+  Future<void> _applyTransactionBalanceInTxn(
+    Transaction txn,
+    Map<String, dynamic> row, {
+    required bool reverse,
+  }) async {
+    final type = (row['type'] ?? 'expense').toString();
+    final amount = _num(row['amount']) * (reverse ? -1 : 1);
+    final accountId = row['account_id']?.toString();
+    final transferAccountId = row['transfer_account_id']?.toString();
+    if (accountId == null) return;
+
+    if (type == 'expense') {
+      await _adjustSpendingAccount(txn, accountId, amount);
+    } else if (type == 'income') {
+      await _adjustAccount(txn, accountId, amount);
+    } else if (type == 'transfer' && transferAccountId != null) {
+      await _adjustTransferSource(txn, accountId, amount);
+      await _adjustTransferDestination(txn, transferAccountId, amount);
+    }
+  }
+
+  Future<void> _adjustSpendingAccount(
+    Transaction txn,
+    String accountId,
+    double amount,
+  ) async {
+    final account = await _accountInTxn(txn, accountId);
+    if (account == null) return;
+    final delta = _isCreditCardRow(account) ? amount : -amount;
+    await _adjustAccount(txn, accountId, delta);
+  }
+
+  Future<void> _adjustTransferSource(
+    Transaction txn,
+    String accountId,
+    double amount,
+  ) async {
+    final account = await _accountInTxn(txn, accountId);
+    if (account == null) return;
+    final delta = _isCreditCardRow(account) ? amount : -amount;
+    await _adjustAccount(txn, accountId, delta);
+  }
+
+  Future<void> _adjustTransferDestination(
+    Transaction txn,
+    String accountId,
+    double amount,
+  ) async {
+    final account = await _accountInTxn(txn, accountId);
+    if (account == null) return;
+    final delta = _isCreditCardRow(account) ? -amount : amount;
+    await _adjustAccount(txn, accountId, delta);
+  }
+
+  Future<void> _adjustAccount(
+    Transaction txn,
+    String accountId,
+    double delta,
+  ) async {
+    final account = await _accountInTxn(txn, accountId);
+    if (account == null) return;
+    final isCreditCard = _isCreditCardRow(account);
+    final balance = _num(account['balance']) + delta;
+    final outstanding = isCreditCard ? balance : _num(account['current_outstanding']);
+    await txn.update(
+      'accounts',
+      {
+        'balance': balance,
+        'display_balance': balance,
+        'current_outstanding': outstanding,
+      },
+      where: 'id = ?',
+      whereArgs: [accountId],
+    );
+  }
+
+  Future<Map<String, Object?>?> _accountInTxn(
+    Transaction txn,
+    String accountId,
+  ) async {
+    final rows = await txn.query('accounts', where: 'id = ?', whereArgs: [accountId]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  bool _isCreditCardRow(Map<String, Object?> row) {
+    final type = (row['type'] ?? '').toString();
+    return type == 'card' || type == 'credit_card';
   }
 
   double _num(Object? value) {

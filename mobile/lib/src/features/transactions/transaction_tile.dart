@@ -20,20 +20,40 @@ class TransactionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final type = (row['type'] ?? 'expense') as String;
     final isIncome = type == 'income';
+    final isTransfer = type == 'transfer';
     final isPending = row['is_pending'] == 1;
     final amount = asDouble(row['amount']);
     final title = (row['merchant_name'] ?? row['description'] ?? type) as String;
+    final color = isTransfer
+        ? Theme.of(context).colorScheme.primary
+        : isIncome
+            ? const Color(0xFF15803D)
+            : const Color(0xFFB91C1C);
+    final backgroundColor = isTransfer
+        ? Theme.of(context).colorScheme.primaryContainer
+        : isIncome
+            ? const Color(0xFFDCFCE7)
+            : const Color(0xFFFEE2E2);
+    final sign = isIncome
+        ? '+'
+        : isTransfer
+            ? ''
+            : '-';
 
     final tile = Card(
       child: ListTile(
         onTap: onTap,
         onLongPress: onDelete,
         leading: CircleAvatar(
-          backgroundColor:
-              isIncome ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
-          foregroundColor:
-              isIncome ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
-          child: Icon(isIncome ? Icons.arrow_downward : Icons.arrow_upward),
+          backgroundColor: backgroundColor,
+          foregroundColor: color,
+          child: Icon(
+            isTransfer
+                ? Icons.swap_horiz
+                : isIncome
+                    ? Icons.arrow_downward
+                    : Icons.arrow_upward,
+          ),
         ),
         title: Text(
           title,
@@ -42,17 +62,36 @@ class TransactionTile extends StatelessWidget {
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         subtitle: Text(
-          '${compactDate(row['txn_date'] as String? ?? '')}${isPending ? ' - pending sync' : ''}',
+          [
+            compactDate(row['txn_date'] as String? ?? ''),
+            type.toUpperCase(),
+            if (isPending) 'PENDING SYNC',
+          ].join(' - '),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        trailing: Text(
-          '${isIncome ? '+' : '-'}${money(amount, currency: currency)}',
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            color:
-                isIncome ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
-          ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 132),
+              child: Text(
+                '$sign${money(amount, currency: currency)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: TextStyle(fontWeight: FontWeight.w800, color: color),
+              ),
+            ),
+            if (onTap != null) ...[
+              const SizedBox(width: 4),
+              Icon(
+                Icons.chevron_right,
+                size: 20,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ],
         ),
       ),
     );

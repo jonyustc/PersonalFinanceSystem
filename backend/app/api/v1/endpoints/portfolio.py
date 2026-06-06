@@ -12,6 +12,7 @@ from app.schemas.stock import (
     PortfolioTransactionCreate,
     PortfolioTransactionResponse,
     StockCreate,
+    StockPriceRefreshResponse,
     StockResponse,
     StockUpdate,
 )
@@ -26,9 +27,19 @@ async def list_stocks(db: AsyncSession = Depends(get_db), current_user: User = D
     return await PortfolioService(db).stocks()
 
 
+@router.post("/stocks/refresh-prices", response_model=StockPriceRefreshResponse)
+async def refresh_stock_prices(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return await PortfolioService(db).refresh_stock_prices()
+
+
 @router.post("/stocks", response_model=StockResponse, status_code=status.HTTP_201_CREATED)
 async def create_stock(payload: StockCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     return await PortfolioService(db).create_stock(payload)
+
+
+@router.post("/stocks/{stock_id}/refresh-price", response_model=StockPriceRefreshResponse)
+async def refresh_stock_price(stock_id: UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return await PortfolioService(db).refresh_stock_price(stock_id)
 
 
 @router.patch("/stocks/{stock_id}", response_model=StockResponse)

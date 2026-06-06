@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../dashboard/dashboard_page.dart';
-import 'create_transaction_sheet.dart';
+import 'transaction_details_page.dart';
 import 'transaction_tile.dart';
 
 class TransactionsPage extends ConsumerStatefulWidget {
@@ -14,8 +15,15 @@ class TransactionsPage extends ConsumerStatefulWidget {
 }
 
 class _TransactionsPageState extends ConsumerState<TransactionsPage> {
+  final _searchController = TextEditingController();
   String _type = 'all';
   String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -23,87 +31,97 @@ class _TransactionsPageState extends ConsumerState<TransactionsPage> {
     if (snapshot == null) return const Center(child: CircularProgressIndicator());
 
     final currency = snapshot.session?.currency ?? 'BDT';
-    final transactions = snapshot.transactions.where((row) {
-      final typeMatch = _type == 'all' || row['type'] == _type;
-      final haystack = [
-        row['merchant_name'],
-        row['description'],
-        row['type'],
-      ].whereType<String>().join(' ').toLowerCase();
-      final queryMatch = _query.trim().isEmpty ||
-          haystack.contains(_query.trim().toLowerCase());
-      return typeMatch && queryMatch;
-    }).toList();
+    final transactions = snapshot.transactions.where(_matchesFilters).toList()
+      ..sort((a, b) {
+        final left = DateTime.tryParse(a['txn_date'] as String? ?? '');
+        final right = DateTime.tryParse(b['txn_date'] as String? ?? '');
+        if (left == null && right == null) return 0;
+        if (left == null) return 1;
+        if (right == null) return -1;
+        return right.compareTo(left);
+      });
+    final sections = _groupByDate(transactions);
 
     return RefreshIndicator(
       onRefresh: () => ref.read(appControllerProvider.notifier).syncNow(),
-      child: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Column(
-                children: [
-                  SearchBar(
-                    hintText: 'Search merchant or note',
-                    leading: const Icon(Icons.search),
-                    onChanged: (value) => setState(() => _query = value),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      _TypeChip(
-                        label: 'All',
-                        selected: _type == 'all',
-                        onSelected: () => setState(() => _type = 'all'),
-                      ),
-                      _TypeChip(
-                        label: 'Expense',
-                        selected: _type == 'expense',
-                        onSelected: () => setState(() => _type = 'expense'),
-                      ),
-                      _TypeChip(
-                        label: 'Income',
-                        selected: _type == 'income',
-                        onSelected: () => setState(() => _type = 'income'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+        children: [
+          _SearchAndFilters(
+            controller: _searchController,
+            query: _query,
+            type: _type,
+            resultCount: transactions.length,
+            totalCount: snapshot.transactions.length,
+            onQueryChanged: (value) => setState(() => _query = value),
+            onTypeChanged: (value) => setState(() => _type = value),
+            onClear: _hasFilters
+                ? () => setState(() {
+                      _query = '';
+                      _type = 'all';
+                      _searchController.clear();
+                    })
+                : null,
           ),
+          const SizedBox(height: 14),
           if (transactions.isEmpty)
-            const SliverPadding(
-              padding: EdgeInsets.all(16),
-              sliver: SliverToBoxAdapter(
-                child: EmptyPanel(
-                  icon: Icons.receipt_long_outlined,
-                  title: 'No matching transactions',
-                  body: 'Pull to sync, add a transaction, or clear filters.',
-                ),
-              ),
+            const EmptyPanel(
+              icon: Icons.receipt_long_outlined,
+              title: 'No matching transactions',
+              body: 'Pull to sync, add a transaction, or clear filters.',
             )
           else
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-              sliver: SliverList.separated(
-                itemCount: transactions.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 10),
-                itemBuilder: (context, index) {
-                  return TransactionTile(
-                    row: transactions[index],
-                    currency: currency,
-                    onTap: () => showCreateTransactionSheet(
-                      context,
-                      initial: transactions[index],
-                    ),
-                    onDelete: () => _confirmDelete(transactions[index]),
-                  );
-                },
+            ...sections.map(
+              (section) => _TransactionSection(
+                title: section.title,
+                rows: section.rows,
+                currency: currency,
+                onOpen: _openDetails,
+                onDelete: _confirmDelete,
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  bool get _hasFilters => _query.trim().isNotEmpty || _type != 'all';
+
+  bool _matchesFilters(Map<String, dynamic> row) {
+    final type = row['type'] as String? ?? 'expense';
+    final typeMatch = _type == 'all' || type == _type;
+    final haystack = [
+      row['merchant_name'],
+      row['description'],
+      row['type'],
+      row['transaction_status'],
+    ].whereType<String>().join(' ').toLowerCase();
+    final query = _query.trim().toLowerCase();
+    return typeMatch && (query.isEmpty || haystack.contains(query));
+  }
+
+  List<_TransactionDateSection> _groupByDate(
+    List<Map<String, dynamic>> transactions,
+  ) {
+    final sections = <_TransactionDateSection>[];
+    String? currentTitle;
+    for (final row in transactions) {
+      final title = compactDate(row['txn_date'] as String? ?? '');
+      if (title != currentTitle) {
+        currentTitle = title;
+        sections.add(_TransactionDateSection(title: title, rows: []));
+      }
+      sections.last.rows.add(row);
+    }
+    return sections;
+  }
+
+  void _openDetails(Map<String, dynamic> row) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TransactionDetailsPage(
+          transactionId: row['id'] as String,
+        ),
       ),
     );
   }
@@ -135,14 +153,119 @@ class _TransactionsPageState extends ConsumerState<TransactionsPage> {
   }
 }
 
+class _SearchAndFilters extends StatelessWidget {
+  const _SearchAndFilters({
+    required this.controller,
+    required this.query,
+    required this.type,
+    required this.resultCount,
+    required this.totalCount,
+    required this.onQueryChanged,
+    required this.onTypeChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final String query;
+  final String type;
+  final int resultCount;
+  final int totalCount;
+  final ValueChanged<String> onQueryChanged;
+  final ValueChanged<String> onTypeChanged;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SearchBar(
+              controller: controller,
+              hintText: 'Search transactions',
+              leading: const Icon(Icons.search),
+              trailing: query.trim().isEmpty
+                  ? null
+                  : [
+                      IconButton(
+                        tooltip: 'Clear search',
+                        onPressed: () {
+                          controller.clear();
+                          onQueryChanged('');
+                        },
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+              onChanged: onQueryChanged,
+            ),
+            const SizedBox(height: 12),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _TypeChip(
+                    label: 'All',
+                    icon: Icons.list_alt,
+                    selected: type == 'all',
+                    onSelected: () => onTypeChanged('all'),
+                  ),
+                  _TypeChip(
+                    label: 'Expense',
+                    icon: Icons.arrow_upward,
+                    selected: type == 'expense',
+                    onSelected: () => onTypeChanged('expense'),
+                  ),
+                  _TypeChip(
+                    label: 'Income',
+                    icon: Icons.arrow_downward,
+                    selected: type == 'income',
+                    onSelected: () => onTypeChanged('income'),
+                  ),
+                  _TypeChip(
+                    label: 'Transfer',
+                    icon: Icons.swap_horiz,
+                    selected: type == 'transfer',
+                    onSelected: () => onTypeChanged('transfer'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '$resultCount of $totalCount transactions',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                if (onClear != null)
+                  TextButton.icon(
+                    onPressed: onClear,
+                    icon: const Icon(Icons.filter_alt_off, size: 18),
+                    label: const Text('Clear'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _TypeChip extends StatelessWidget {
   const _TypeChip({
     required this.label,
+    required this.icon,
     required this.selected,
     required this.onSelected,
   });
 
   final String label;
+  final IconData icon;
   final bool selected;
   final VoidCallback onSelected;
 
@@ -152,9 +275,66 @@ class _TypeChip extends StatelessWidget {
       padding: const EdgeInsets.only(right: 8),
       child: FilterChip(
         selected: selected,
+        avatar: Icon(icon, size: 18),
         label: Text(label),
         onSelected: (_) => onSelected(),
       ),
     );
   }
+}
+
+class _TransactionSection extends StatelessWidget {
+  const _TransactionSection({
+    required this.title,
+    required this.rows,
+    required this.currency,
+    required this.onOpen,
+    required this.onDelete,
+  });
+
+  final String title;
+  final List<Map<String, dynamic>> rows;
+  final String currency;
+  final ValueChanged<Map<String, dynamic>> onOpen;
+  final ValueChanged<Map<String, dynamic>> onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
+            child: Text(
+              title,
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w800,
+                  ),
+            ),
+          ),
+          ...rows.map(
+            (row) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: TransactionTile(
+                row: row,
+                currency: currency,
+                onTap: () => onOpen(row),
+                onDelete: () => onDelete(row),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TransactionDateSection {
+  _TransactionDateSection({required this.title, required this.rows});
+
+  final String title;
+  final List<Map<String, dynamic>> rows;
 }

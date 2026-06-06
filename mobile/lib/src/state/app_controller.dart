@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,14 +13,20 @@ import '../core/sync_service.dart';
 final sessionStoreProvider = Provider((ref) => SessionStore());
 final databaseProvider = Provider((ref) => AppDatabase());
 final apiClientProvider = Provider(
-  (ref) => ApiClient(ref.watch(sessionStoreProvider)),
+  (ref) => ApiClient(
+    ref.watch(sessionStoreProvider),
+    onSessionExpired: () =>
+        ref.read(appControllerProvider.notifier).expireSession(),
+  ),
 );
 final syncServiceProvider = Provider(
-  (ref) => SyncService(ref.watch(apiClientProvider), ref.watch(databaseProvider)),
+  (ref) =>
+      SyncService(ref.watch(apiClientProvider), ref.watch(databaseProvider)),
 );
 
-final appControllerProvider =
-    AsyncNotifierProvider<AppController, AppSnapshot>(AppController.new);
+final appControllerProvider = AsyncNotifierProvider<AppController, AppSnapshot>(
+  AppController.new,
+);
 
 class AppSnapshot {
   const AppSnapshot({
@@ -35,6 +42,7 @@ class AppSnapshot {
     required this.pendingWrites,
     required this.lastSyncAt,
     required this.themeMode,
+    this.authNotice,
     this.notice,
   });
 
@@ -50,6 +58,7 @@ class AppSnapshot {
   final int pendingWrites;
   final String? lastSyncAt;
   final String themeMode;
+  final String? authNotice;
   final String? notice;
 
   bool get isAuthenticated => session != null;
@@ -68,6 +77,7 @@ class AppSnapshot {
     int? pendingWrites,
     String? lastSyncAt,
     String? themeMode,
+    String? authNotice,
     String? notice,
   }) {
     return AppSnapshot(
@@ -84,6 +94,7 @@ class AppSnapshot {
       pendingWrites: pendingWrites ?? this.pendingWrites,
       lastSyncAt: lastSyncAt ?? this.lastSyncAt,
       themeMode: themeMode ?? this.themeMode,
+      authNotice: authNotice,
       notice: notice,
     );
   }
@@ -119,7 +130,11 @@ class AppController extends AsyncNotifier<AppSnapshot>
     final auth = await _api.login(email, password);
     await _session.saveFromAuth(auth);
     final session = await _session.load();
-    state = AsyncData((await _readLocal(session: session)).copyWith(isSyncing: true));
+    state = AsyncData(
+      (await _readLocal(
+        session: session,
+      )).copyWith(isSyncing: true, authNotice: null),
+    );
     _startPeriodicSync();
     await syncNow();
   }
@@ -128,6 +143,18 @@ class AppController extends AsyncNotifier<AppSnapshot>
     await _session.clear();
     _timer?.cancel();
     state = AsyncData(await _readLocal(session: null));
+  }
+
+  Future<void> expireSession() async {
+    await _session.clear(keepTheme: true);
+    _timer?.cancel();
+    final current = state.asData?.value;
+    if (current == null || current.session == null) return;
+    state = AsyncData(
+      (await _readLocal(
+        session: null,
+      )).copyWith(authNotice: 'Session expired. Please log in again.'),
+    );
   }
 
   Future<void> syncNow({bool silent = false}) async {
@@ -139,16 +166,21 @@ class AppController extends AsyncNotifier<AppSnapshot>
 
     try {
       await _sync.syncAll();
-      state = AsyncData(
-        (await _readLocal(session: await _session.load())).copyWith(
-          notice: 'Synced',
-        ),
-      );
+      final synced = await _readLocal(session: await _session.load());
+      final notice = synced.pendingWrites > 0
+          ? 'Synced. ${synced.pendingWrites} pending writes remain.'
+          : 'Synced';
+      state = AsyncData(synced.copyWith(notice: notice));
     } catch (error) {
+      final message = _syncErrorMessage(error);
+      if (message.contains('Session expired')) {
+        await expireSession();
+        return;
+      }
       state = AsyncData(
-        (await _readLocal(session: current.session)).copyWith(
-          notice: 'Using local data. Sync failed.',
-        ),
+        (await _readLocal(
+          session: message.contains('Session expired') ? null : current.session,
+        )).copyWith(notice: message),
       );
     }
   }
@@ -185,6 +217,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
         'payment_method': null,
       };
       await _db.upsertTransaction(local, pending: true);
+      await _db.applyTransactionBalance(local);
       await _db.queuePost('/transactions', payload);
     }
 
@@ -199,11 +232,13 @@ class AppController extends AsyncNotifier<AppSnapshot>
     required double amount,
     required DateTime date,
     String? categoryId,
+    String? transferAccountId,
     String? merchantName,
     String? description,
   }) async {
     final payload = {
       'account_id': accountId,
+      'transfer_account_id': transferAccountId,
       'category_id': categoryId,
       'type': type,
       'amount': amount,
@@ -214,17 +249,37 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'transaction_status': 'posted',
     };
 
-    final updated = await _api.updateTransaction(id, payload);
-    await _db.upsertTransaction(updated);
-    await syncNow(silent: true);
+    try {
+      final updated = await _api.updateTransaction(id, payload);
+      await _db.upsertTransaction(updated);
+      await syncNow(silent: true);
+    } catch (_) {
+      final oldRow = await _db.transactionById(id);
+      if (oldRow != null) {
+        await _db.applyTransactionBalance(_decodeRaw(oldRow), reverse: true);
+      }
+      final local = {...payload, 'id': id, 'payment_method': null};
+      await _db.upsertTransaction(local, pending: true);
+      await _db.applyTransactionBalance(local);
+      await _db.queueMutation('PATCH', '/transactions/$id', payload);
+    }
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
   }
 
   Future<void> deleteTransaction(String id) async {
-    await _api.deleteTransaction(id);
-    await _db.deleteTransaction(id);
-    await syncNow(silent: true);
+    try {
+      await _api.deleteTransaction(id);
+      await _db.deleteTransaction(id);
+      await syncNow(silent: true);
+    } catch (_) {
+      final oldRow = await _db.transactionById(id);
+      if (oldRow != null) {
+        await _db.applyTransactionBalance(_decodeRaw(oldRow), reverse: true);
+      }
+      await _db.deleteTransaction(id);
+      await _db.queueMutation('DELETE', '/transactions/$id', const {});
+    }
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
   }
@@ -245,8 +300,28 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'notes': _blankToNull(notes),
       'is_card_payment': isCardPayment,
     };
-    await _api.createTransfer(payload);
-    await syncNow(silent: true);
+    try {
+      await _api.createTransfer(payload);
+      await syncNow(silent: true);
+    } catch (_) {
+      final local = {
+        'id': const Uuid().v4(),
+        'account_id': fromAccountId,
+        'transfer_account_id': toAccountId,
+        'type': 'transfer',
+        'amount': amount,
+        'txn_date': date.toUtc().toIso8601String(),
+        'transaction_date': date.toUtc().toIso8601String(),
+        'description': _blankToNull(notes),
+        'merchant_name': null,
+        'payment_method': null,
+        'tags': <String>[],
+        'transaction_status': 'posted',
+      };
+      await _db.upsertTransaction(local, pending: true);
+      await _db.applyTransactionBalance(local);
+      await _db.queueMutation('POST', '/transfers', payload);
+    }
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
   }
@@ -302,16 +377,47 @@ class AppController extends AsyncNotifier<AppSnapshot>
     required String name,
     required String type,
     String? parentId,
+    String? color,
+    String? icon,
   }) async {
     final created = await _api.createCategory({
       'name': name,
       'type': type,
       'parent_id': parentId,
+      'color': _blankToNull(color),
+      'icon': _blankToNull(icon),
     });
     await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
     return created;
+  }
+
+  Future<void> updateCategory({
+    required String id,
+    required String name,
+    required String type,
+    String? parentId,
+    String? color,
+    String? icon,
+  }) async {
+    await _api.updateCategory(id, {
+      'name': name,
+      'type': type,
+      'parent_id': parentId,
+      'color': _blankToNull(color),
+      'icon': _blankToNull(icon),
+    });
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<void> deleteCategory(String id) async {
+    await _api.deleteCategory(id);
+    await syncNow(silent: true);
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
   }
 
   Future<void> upsertBudget({
@@ -365,18 +471,193 @@ class AppController extends AsyncNotifier<AppSnapshot>
     state = AsyncData(await _readLocal(session: current?.session));
   }
 
+  Future<void> savePortfolioTransaction({
+    String? id,
+    required String txnType,
+    String? stockId,
+    String? brokerAccountId,
+    String? newStockName,
+    String? newStockSymbol,
+    required double quantity,
+    required double price,
+    double? fees,
+    DateTime? date,
+    String? notes,
+  }) async {
+    final needsStock =
+        txnType == 'buy' || txnType == 'sell' || txnType == 'income';
+    final useNewStock =
+        needsStock &&
+        (stockId == null || stockId.isEmpty) &&
+        !_isBlank(newStockName);
+    final payload = {
+      'txn_type': txnType,
+      'stock_id': _blankToNull(stockId),
+      'stock': useNewStock
+          ? {
+              'symbol': (_blankToNull(newStockSymbol) ?? newStockName!.trim())
+                  .toUpperCase(),
+              'name': newStockName!.trim(),
+              'currency': state.asData?.value.session?.currency ?? 'BDT',
+              'last_price': price,
+            }
+          : null,
+      'broker_account_id': _blankToNull(brokerAccountId),
+      'quantity': txnType == 'income' ? 1 : quantity,
+      'price': price,
+      'fees': fees,
+      'txn_date': (date ?? DateTime.now()).toIso8601String().substring(0, 10),
+      'notes': _blankToNull(notes),
+    };
+    try {
+      if (id == null) {
+        await _api.createPortfolioTransaction(payload);
+      } else {
+        await _api.updatePortfolioTransaction(id, payload);
+      }
+      await syncNow(silent: true);
+    } catch (_) {
+      final localId = id ?? const Uuid().v4();
+      final stock = (payload['stock'] as Map?)?.cast<String, dynamic>();
+      final resolvedStockId = stockId ?? (stock == null ? null : localId);
+      if (stock != null) {
+        await _db.upsertStock({'id': resolvedStockId, ...stock});
+      }
+      final local = _localPortfolioTransaction(
+        id: localId,
+        payload: payload,
+        stockId: resolvedStockId,
+        stock: stock,
+      );
+      await _db.upsertPortfolioTransaction(local, pending: true);
+      await _db.queueMutation(
+        id == null ? 'POST' : 'PATCH',
+        id == null ? '/portfolio/transactions' : '/portfolio/transactions/$id',
+        payload,
+      );
+    }
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<void> deletePortfolioTransaction(String id) async {
+    try {
+      await _api.deletePortfolioTransaction(id);
+      await syncNow(silent: true);
+    } catch (_) {
+      await _db.deletePortfolioTransaction(id);
+      await _db.queueMutation(
+        'DELETE',
+        '/portfolio/transactions/$id',
+        const {},
+      );
+    }
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<void> updateStockPrice({
+    required String id,
+    required double lastPrice,
+  }) async {
+    try {
+      await _api.updateStock(id, {'last_price': lastPrice});
+      await syncNow(silent: true);
+    } catch (_) {
+      final current = state.asData?.value;
+      final existing = current?.stocks
+          .where((stock) => stock['id'] == id)
+          .firstOrNull;
+      if (existing != null) {
+        await _db.upsertStock({...existing, 'last_price': lastPrice});
+      }
+      await _db.queueMutation('PATCH', '/portfolio/stocks/$id', {
+        'last_price': lastPrice,
+      });
+    }
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Future<String> refreshStockPrices() async {
+    try {
+      final result = await _api.refreshStockPrices();
+      await syncNow(silent: true);
+      final updated = result['updated'] ?? 0;
+      final missing = (result['missing_symbols'] as List? ?? [])
+          .whereType<String>()
+          .toList();
+      final message = 'Updated $updated DSE prices';
+      return missing.isEmpty ? message : '$message. Missing: ${missing.join(', ')}';
+    } catch (error) {
+      throw Exception('DSE price refresh failed: $error');
+    } finally {
+      final current = state.asData?.value;
+      state = AsyncData(await _readLocal(session: current?.session));
+    }
+  }
+
+  Future<void> saveStock({
+    String? id,
+    required String name,
+    required String symbol,
+    String? exchange,
+    String? currency,
+    required double lastPrice,
+  }) async {
+    final resolvedCurrency =
+        (currency ?? state.asData?.value.session?.currency ?? 'BDT')
+            .trim()
+            .toUpperCase();
+    final createPayload = {
+      'name': name.trim(),
+      'symbol': symbol.trim().toUpperCase(),
+      'exchange': _blankToNull(exchange),
+      'currency': resolvedCurrency.isEmpty ? 'BDT' : resolvedCurrency,
+      'last_price': lastPrice,
+    };
+    final updatePayload = {
+      'name': name.trim(),
+      'exchange': _blankToNull(exchange),
+      'currency': resolvedCurrency.isEmpty ? 'BDT' : resolvedCurrency,
+      'last_price': lastPrice,
+    };
+    final payload = id == null ? createPayload : updatePayload;
+
+    try {
+      final saved = id == null
+          ? await _api.createStock(payload)
+          : await _api.updateStock(id, payload);
+      await _db.upsertStock(saved);
+      await syncNow(silent: true);
+    } catch (_) {
+      final localId = id ?? const Uuid().v4();
+      await _db.upsertStock({'id': localId, ...createPayload});
+      await _db.queueMutation(
+        id == null ? 'POST' : 'PATCH',
+        id == null ? '/portfolio/stocks' : '/portfolio/stocks/$id',
+        payload,
+      );
+    }
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
   Future<void> setCurrency(String currency) async {
     await _session.saveCurrency(currency);
     final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: await _session.load() ?? current?.session));
+    state = AsyncData(
+      await _readLocal(session: await _session.load() ?? current?.session),
+    );
   }
 
   Future<void> setThemeMode(String themeMode) async {
     await _session.saveThemeMode(themeMode);
     final current = state.asData?.value;
     state = AsyncData(
-      (await _readLocal(session: await _session.load() ?? current?.session))
-          .copyWith(themeMode: themeMode),
+      (await _readLocal(
+        session: await _session.load() ?? current?.session,
+      )).copyWith(themeMode: themeMode),
     );
   }
 
@@ -422,5 +703,90 @@ class AppController extends AsyncNotifier<AppSnapshot>
   String? _blankToNull(String? value) {
     final trimmed = value?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  bool _isBlank(String? value) => _blankToNull(value) == null;
+
+  String _syncErrorMessage(Object error) {
+    final raw = error.toString();
+    final marker = RegExp(
+      r'(Session expired\. Please log in again\.|[A-Za-z ]+ sync failed: [^)\n]+)',
+    );
+    final match = marker.firstMatch(raw);
+    if (match != null) {
+      return match.group(0)!;
+    }
+    return 'Using local data. Sync failed.';
+  }
+
+  Map<String, dynamic> _decodeRaw(Map<String, dynamic> row) {
+    final raw = row['raw_json'];
+    if (raw is String) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) return decoded.cast<String, dynamic>();
+      } catch (_) {
+        return row;
+      }
+    }
+    return row;
+  }
+
+  Map<String, dynamic> _localPortfolioTransaction({
+    required String id,
+    required Map<String, dynamic> payload,
+    required String? stockId,
+    required Map<String, dynamic>? stock,
+  }) {
+    final txnType = payload['txn_type'] as String;
+    final quantity = _asDouble(payload['quantity']);
+    final price = _asDouble(payload['price']);
+    final fees = payload['fees'] == null
+        ? _defaultPortfolioFee(txnType, quantity, price)
+        : _asDouble(payload['fees']);
+    final total = _portfolioTotal(txnType, quantity, price, fees);
+    return {
+      'id': id,
+      'stock_id': stockId,
+      'broker_account_id': payload['broker_account_id'],
+      'txn_type': txnType,
+      'quantity': quantity,
+      'price': price,
+      'fees': fees,
+      'total_amount': total,
+      'cash_flow': _portfolioCashFlow(txnType, total),
+      'txn_date': payload['txn_date'],
+      'notes': payload['notes'],
+      'stock': stock,
+    };
+  }
+
+  double _portfolioTotal(
+    String txnType,
+    double quantity,
+    double price,
+    double fees,
+  ) {
+    if (txnType == 'buy') return quantity * price + fees;
+    if (txnType == 'sell') return quantity * price - fees;
+    return price;
+  }
+
+  double _defaultPortfolioFee(String txnType, double quantity, double price) {
+    if (txnType == 'buy' || txnType == 'sell') {
+      return quantity * price * 0.004;
+    }
+    return 0;
+  }
+
+  double _portfolioCashFlow(String txnType, double total) {
+    if (txnType == 'buy' || txnType == 'withdraw') return -total;
+    return total;
+  }
+
+  double _asDouble(Object? value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0;
+    return 0;
   }
 }

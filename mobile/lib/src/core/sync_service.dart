@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
+
 import 'api_client.dart';
 import 'app_database.dart';
 
@@ -12,28 +14,34 @@ class SyncService {
   Future<void> syncAll() async {
     await _replayPendingWrites();
 
-    final results = await Future.wait<bool>([
+    final results = await Future.wait<_SyncResult>([
       _syncResource(
+        name: 'accounts',
         fetch: _api.getAccounts,
         replace: _db.replaceAccounts,
       ),
       _syncResource(
+        name: 'categories',
         fetch: _api.getCategories,
         replace: _db.replaceCategories,
       ),
       _syncResource(
+        name: 'transactions',
         fetch: () => _fetchTransactions(limit: 250),
         replace: _db.replaceTransactions,
       ),
       _syncResource(
+        name: 'budgets',
         fetch: () => _api.getBudgetSummaryRows(_monthKey(DateTime.now())),
         replace: _db.replaceBudgets,
       ),
       _syncResource(
+        name: 'stocks',
         fetch: _api.getStocks,
         replace: _db.replaceStocks,
       ),
       _syncResource(
+        name: 'portfolio transactions',
         fetch: () => _api.getPortfolioTransactions(limit: 250),
         replace: _db.replacePortfolioTransactions,
       ),
@@ -44,23 +52,31 @@ class SyncService {
       // Portfolio summary is an enhancement over local holdings; keep sync
       // usable when this endpoint is temporarily unavailable.
     }
-    if (!results.any((synced) => synced)) {
-      throw StateError('No sync endpoints completed');
+    if (!results.any((result) => result.synced)) {
+      String? firstError;
+      for (final result in results) {
+        if (result.error != null) {
+          firstError = result.error;
+          break;
+        }
+      }
+      throw StateError(firstError ?? 'No sync endpoints completed');
     }
     await _db.markSynced();
   }
 
-  Future<bool> _syncResource({
+  Future<_SyncResult> _syncResource({
+    required String name,
     required Future<List<Map<String, dynamic>>> Function() fetch,
     required Future<void> Function(List<Map<String, dynamic>>) replace,
   }) async {
     try {
       await replace(await fetch());
-      return true;
-    } catch (_) {
+      return _SyncResult.synced(name);
+    } catch (error) {
       // Keep other datasets syncing; stale local data is better than blocking
       // budgets or portfolio because one endpoint timed out.
-      return false;
+      return _SyncResult.failed(name, _syncError(name, error));
     }
   }
 
@@ -70,17 +86,54 @@ class SyncService {
       final id = item['id'] as int;
       final method = item['method'] as String;
       final path = item['path'] as String;
-      final payload =
-          (jsonDecode(item['payload_json'] as String) as Map).cast<String, dynamic>();
+      final payload = (jsonDecode(item['payload_json'] as String) as Map)
+          .cast<String, dynamic>();
 
-      if (method == 'POST') {
-        await _api.post(path, payload);
+      try {
+        await _api.replayMutation(
+          method,
+          path,
+          _normalizedReplayPayload(method, path, payload),
+        );
         await _db.deleteQueuedMutation(id);
+      } catch (_) {
+        // Keep the failed write queued, but do not block read sync. A single
+        // rejected stale mutation should not prevent accounts, transactions,
+        // and reports from refreshing.
       }
     }
   }
 
-  Future<List<Map<String, dynamic>>> _fetchTransactions({int limit = 250}) async {
+  String _syncError(String name, Object error) {
+    if (error is DioException) {
+      final status = error.response?.statusCode;
+      if (status == 401 || status == 403) {
+        return 'Session expired. Please log in again.';
+      }
+      if (status != null) {
+        return '$name sync failed: HTTP $status';
+      }
+      return '$name sync failed: ${error.type.name}';
+    }
+    return '$name sync failed';
+  }
+
+  Map<String, dynamic> _normalizedReplayPayload(
+    String method,
+    String path,
+    Map<String, dynamic> payload,
+  ) {
+    if (method == 'PATCH' && path.startsWith('/portfolio/stocks/')) {
+      final normalized = {...payload};
+      normalized.remove('symbol');
+      return normalized;
+    }
+    return payload;
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchTransactions({
+    int limit = 250,
+  }) async {
     final page = await _api.getTransactions(limit: limit, offset: 0);
     return (page['items'] as List? ?? [])
         .whereType<Map>()
@@ -91,4 +144,20 @@ class SyncService {
   String _monthKey(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}';
   }
+}
+
+class _SyncResult {
+  const _SyncResult({required this.name, required this.synced, this.error});
+
+  factory _SyncResult.synced(String name) {
+    return _SyncResult(name: name, synced: true);
+  }
+
+  factory _SyncResult.failed(String name, String error) {
+    return _SyncResult(name: name, synced: false, error: error);
+  }
+
+  final String name;
+  final bool synced;
+  final String? error;
 }
