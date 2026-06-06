@@ -294,12 +294,18 @@ class PortfolioService:
         return await self.repo.dividends(user_id)
 
     async def summary(self, user_id: UUID, include_auto_dividends: bool = False):
-        await self._rebuild_derived(user_id)
-        await self.db.commit()
+        transactions = await self.repo.transactions(user_id, 10000)
+        has_stock_activity = any(
+            transaction.stock_id and transaction.txn_type in {"buy", "sell", "income"}
+            for transaction in transactions
+        )
+        if has_stock_activity:
+            await self._rebuild_derived(user_id)
+            await self.db.commit()
+            transactions = await self.repo.transactions(user_id, 10000)
         holdings = await self.repo.holdings(user_id)
         dividends = await self.repo.dividends(user_id)
         broker_accounts = await self.repo.broker_accounts(user_id)
-        transactions = await self.repo.transactions(user_id, 10000)
 
         dividend_by_stock = {}
         dividend_report = {}
@@ -334,8 +340,10 @@ class PortfolioService:
             if holding.quantity <= ZERO:
                 realized_capital += holding.realized_profit_loss
                 continue
+            last_price = holding.stock.last_price or ZERO
+            market_price = last_price if last_price > ZERO else holding.avg_buy_price
             invested = holding.quantity * holding.avg_buy_price
-            market_value = holding.quantity * (holding.stock.last_price or ZERO)
+            market_value = holding.quantity * market_price
             unrealized = market_value - invested
             dividend_income = (
                 dividend_by_stock.get(holding.stock_id, ZERO)
@@ -363,7 +371,7 @@ class PortfolioService:
         principal = sum((self._total_amount(t) for t in transactions if t.txn_type == "deposit"), ZERO)
         derived_cash = sum((self._cash_flow(t) for t in transactions), ZERO)
         broker_cash = sum((account.balance for account in broker_accounts), ZERO)
-        cash_balance = derived_cash
+        cash_balance = broker_cash if broker_accounts else derived_cash
         total_portfolio = equity_value + cash_balance
         unrealized_gain_loss = equity_value - active_cost_basis
         dividend_income_total = sum((dividend.amount for dividend in dividends), ZERO) + sum(
