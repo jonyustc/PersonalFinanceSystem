@@ -293,7 +293,7 @@ class PortfolioService:
     async def dividends(self, user_id: UUID):
         return await self.repo.dividends(user_id)
 
-    async def summary(self, user_id: UUID):
+    async def summary(self, user_id: UUID, include_auto_dividends: bool = False):
         await self._rebuild_derived(user_id)
         await self.db.commit()
         holdings = await self.repo.holdings(user_id)
@@ -312,9 +312,13 @@ class PortfolioService:
             dividend_report[key] = dividend_report.get(key, ZERO) + dividend.amount
 
         manual_dividend_keys = set(dividend_report)
-        auto_dividend_report = await self._automatic_dividend_report(
-            transactions,
-            manual_dividend_keys,
+        auto_dividend_report = (
+            await self._automatic_dividend_report(
+                transactions,
+                manual_dividend_keys,
+            )
+            if include_auto_dividends
+            else []
         )
         auto_dividend_by_stock = {}
         for row in auto_dividend_report:
@@ -503,9 +507,7 @@ class PortfolioService:
         return ZERO
 
     async def _response_transaction(self, trx: PortfolioTransaction):
-        stock = trx.stock
-        if not stock and trx.stock_id:
-            stock = await self.repo.get_stock(trx.stock_id)
+        stock = await self.repo.get_stock(trx.stock_id) if trx.stock_id else None
         return {
             "id": trx.id,
             "stock_id": trx.stock_id,

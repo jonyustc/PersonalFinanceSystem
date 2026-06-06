@@ -27,7 +27,12 @@ class _PortfolioPageState extends ConsumerState<PortfolioPage> {
     }
 
     final currency = snapshot.session?.currency ?? 'BDT';
-    final summary = snapshot.portfolioSummary ?? const <String, dynamic>{};
+    final summary = _effectivePortfolioSummary(
+      snapshot.portfolioSummary ?? const <String, dynamic>{},
+      snapshot.stocks,
+      snapshot.portfolioTransactions,
+      snapshot.accounts,
+    );
     final brokerAccounts = _brokerAccounts(summary, snapshot.accounts);
     final holdings = _holdings(summary);
 
@@ -2133,6 +2138,144 @@ List<Map<String, dynamic>> _holdings(Map<String, dynamic> summary) {
     ..sort(
       (a, b) => _num(b['market_value']).compareTo(_num(a['market_value'])),
     );
+}
+
+Map<String, dynamic> _effectivePortfolioSummary(
+  Map<String, dynamic> backendSummary,
+  List<Map<String, dynamic>> stocks,
+  List<Map<String, dynamic>> transactions,
+  List<Map<String, dynamic>> accounts,
+) {
+  final hasBackendHoldings = (backendSummary['holdings'] as List? ?? []).isNotEmpty;
+  final hasBackendValue =
+      _num(backendSummary['current_equity_value']) != 0 ||
+      _num(backendSummary['total_portfolio_value']) != 0;
+  if (hasBackendHoldings || hasBackendValue || transactions.isEmpty) {
+    return backendSummary;
+  }
+
+  final stockById = <String, Map<String, dynamic>>{
+    for (final stock in stocks)
+      if (stock['id'] != null) stock['id'].toString(): stock,
+  };
+  final holdingState = <String, _LocalHoldingState>{};
+  var dividendIncome = 0.0;
+  var principal = 0.0;
+  var cashBalance = 0.0;
+
+  for (final transaction in transactions.reversed) {
+    final txnType = transaction['txn_type'] as String? ?? '';
+    final totalAmount = _num(transaction['total_amount']);
+    cashBalance += _num(transaction['cash_flow']);
+    if (txnType == 'deposit') principal += totalAmount;
+    if (txnType == 'income') {
+      dividendIncome += totalAmount;
+      continue;
+    }
+
+    final stockId = transaction['stock_id'] as String?;
+    if (stockId == null || stockId.isEmpty) continue;
+    final embeddedStock = _stockFromTransaction(transaction);
+    final stock = stockById[stockId] ?? embeddedStock;
+    final state = holdingState.putIfAbsent(
+      stockId,
+      () => _LocalHoldingState(stockId: stockId, stock: stock),
+    );
+    if (state.stock.isEmpty && stock.isNotEmpty) state.stock = stock;
+
+    final quantity = _num(transaction['quantity']);
+    final price = _num(transaction['price']);
+    final shareValue = quantity * price;
+    if (price > 0) state.lastTradePrice = price;
+    if (txnType == 'buy') {
+      state.quantity += quantity;
+      state.cost += shareValue;
+    } else if (txnType == 'sell' && state.quantity > 0) {
+      final soldQuantity = quantity.clamp(0, state.quantity).toDouble();
+      final removedCost = state.cost / state.quantity * soldQuantity;
+      state.realized += totalAmount - removedCost;
+      state.cost -= removedCost;
+      state.quantity -= soldQuantity;
+    }
+  }
+
+  final holdings = <Map<String, dynamic>>[];
+  var activeCostBasis = 0.0;
+  var equityValue = 0.0;
+  var realized = 0.0;
+  for (final state in holdingState.values) {
+    if (state.quantity <= 0) {
+      realized += state.realized;
+      continue;
+    }
+    final stock = state.stock;
+    final stockLastPrice = _num(stock['last_price']);
+    final lastPrice = stockLastPrice == 0 ? state.lastTradePrice : stockLastPrice;
+    final avgBuyPrice = state.quantity == 0 ? 0.0 : state.cost / state.quantity;
+    final marketValue = state.quantity * lastPrice;
+    final unrealized = marketValue - state.cost;
+    activeCostBasis += state.cost;
+    equityValue += marketValue;
+    realized += state.realized;
+    holdings.add({
+      'stock': {
+        'id': state.stockId,
+        'symbol': stock['symbol'] as String? ?? 'STOCK',
+        'name': stock['name'] as String? ?? 'Stock',
+        'currency': stock['currency'] as String? ?? 'BDT',
+        'last_price': lastPrice,
+      },
+      'quantity': state.quantity,
+      'avg_buy_price': avgBuyPrice,
+      'invested_amount': state.cost,
+      'market_value': marketValue,
+      'unrealized_profit_loss': unrealized,
+      'unrealized_percent': state.cost == 0 ? 0 : unrealized / state.cost * 100,
+      'realized_profit_loss': state.realized,
+      'dividend_income': 0,
+      'total_profit_loss': unrealized + state.realized,
+    });
+  }
+
+  holdings.sort(
+    (a, b) => _num(b['market_value']).compareTo(_num(a['market_value'])),
+  );
+  final brokerAccounts = _brokerAccounts(const <String, dynamic>{}, accounts);
+  final brokerCash = brokerAccounts.fold<double>(
+    0,
+    (sum, account) => sum + _num(account['balance']),
+  );
+  final fallbackCash = cashBalance == 0 ? brokerCash : cashBalance;
+  final overallProfitLoss = realized + (equityValue - activeCostBasis);
+  return {
+    ...backendSummary,
+    'total_principal_investment': principal,
+    'invested_capital': principal,
+    'active_cost_basis': activeCostBasis,
+    'current_equity_value': equityValue,
+    'unrealized_gain_loss': equityValue - activeCostBasis,
+    'cash_balance': fallbackCash,
+    'total_portfolio_value': equityValue + fallbackCash,
+    'total_realized_capital_gain_loss': realized,
+    'dividend_income': dividendIncome,
+    'total_realized_profit': realized,
+    'overall_profit_loss': overallProfitLoss,
+    'return_percent': principal == 0 ? 0 : overallProfitLoss / principal * 100,
+    'cagr_percent': 0,
+    'broker_accounts': brokerAccounts,
+    'holdings': holdings,
+  };
+}
+
+class _LocalHoldingState {
+  _LocalHoldingState({required this.stockId, required this.stock});
+
+  final String stockId;
+  Map<String, dynamic> stock;
+  double quantity = 0;
+  double cost = 0;
+  double realized = 0;
+  double lastTradePrice = 0;
 }
 
 List<Map<String, dynamic>> _brokerAccounts(

@@ -88,8 +88,15 @@ async def update_stock(stock_id: UUID, payload: StockUpdate, db: AsyncSession = 
 
 
 @router.get("/summary", response_model=PortfolioSummaryResponse)
-async def summary(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return await PortfolioService(db).summary(current_user.id)
+async def summary(
+    include_auto_dividends: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await PortfolioService(db).summary(
+        current_user.id,
+        include_auto_dividends=include_auto_dividends,
+    )
 
 
 @router.get("/transactions", response_model=list[PortfolioTransactionResponse])

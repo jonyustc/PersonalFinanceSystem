@@ -21,6 +21,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
   String? _parentId;
   String? _leafCategoryId;
   int _selectedIndex = 0;
+  String _reportMode = 'expenses';
   Future<Map<String, dynamic>>? _cardReportFuture;
   String? _cardReportKey;
 
@@ -41,7 +42,6 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
 
     final mainCategories = _mainExpenseCategories(snapshot.categories);
     final currency = snapshot.session?.currency ?? 'BDT';
-    final cardReportFuture = _cardReportFutureFor(ref);
     final rows = _buildRows(
       categories: snapshot.categories,
       transactions: snapshot.transactions,
@@ -71,55 +71,69 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: [
-            _ReportHeader(
-              title: title,
-              start: _start,
-              end: _end,
-              mainCategories: mainCategories,
-              selectedMainCategoryIds: _mainCategoryFilterIds,
-              canGoBack: canGoBack,
-              onBack: _back,
-              onMainCategoriesChanged: _setMainCategoryFilters,
-              onPrevious: _previousRange,
-              onNext: _nextRange,
-              onPickRange: _pickRange,
+            _ReportModeSwitch(
+              value: _reportMode,
+              onChanged: _setReportMode,
             ),
             const SizedBox(height: 14),
-            if (_leafCategoryId == null)
-              if (rows.isEmpty)
-                const EmptyPanel(
-                  icon: Icons.pie_chart_outline,
-                  title: 'No expense data',
-                  body:
-                      'Add categorized expense transactions or choose a wider date range.',
-                )
-              else ...[
-                _PieSummary(
-                  rows: rows,
-                  total: total,
-                  currency: currency,
-                  selectedIndex: _selectedIndex,
-                  onSelected: (index) => setState(() => _selectedIndex = index),
-                ),
-                const SizedBox(height: 16),
-                _CategoryBreakdown(
-                  rows: rows,
-                  total: total,
-                  currency: currency,
-                  selectedId: selected?.categoryId,
-                  onSelected: (row) => _openRow(row, snapshot.categories),
-                ),
-              ]
-            else
-              _TransactionList(
-                categoryName: title,
-                transactions: transactions,
-                currency: currency,
+            if (_reportMode == 'expenses') ...[
+              _ReportHeader(
+                title: title,
+                start: _start,
+                end: _end,
+                mainCategories: mainCategories,
+                selectedMainCategoryIds: _mainCategoryFilterIds,
+                canGoBack: canGoBack,
+                onBack: _back,
+                onMainCategoriesChanged: _setMainCategoryFilters,
+                onPrevious: _previousRange,
+                onNext: _nextRange,
+                onPickRange: _pickRange,
               ),
-            if (_leafCategoryId == null) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
+              if (_leafCategoryId == null)
+                if (rows.isEmpty)
+                  const EmptyPanel(
+                    icon: Icons.pie_chart_outline,
+                    title: 'No expense data',
+                    body:
+                        'Add categorized expense transactions or choose a wider date range.',
+                  )
+                else ...[
+                  _PieSummary(
+                    rows: rows,
+                    total: total,
+                    currency: currency,
+                    selectedIndex: _selectedIndex,
+                    onSelected: (index) =>
+                        setState(() => _selectedIndex = index),
+                  ),
+                  const SizedBox(height: 16),
+                  _CategoryBreakdown(
+                    rows: rows,
+                    total: total,
+                    currency: currency,
+                    selectedId: selected?.categoryId,
+                    onSelected: (row) => _openRow(row, snapshot.categories),
+                  ),
+                ]
+              else
+                _TransactionList(
+                  categoryName: title,
+                  transactions: transactions,
+                  currency: currency,
+                ),
+            ] else ...[
+              _CardReportHeader(
+                start: _start,
+                end: _end,
+                onPrevious: _previousRange,
+                onNext: _nextRange,
+                onPickRange: _pickRange,
+              ),
+              const SizedBox(height: 14),
               _CardReportSection(
-                future: cardReportFuture,
+                future: _cardReportFutureFor(ref),
                 currency: currency,
               ),
             ],
@@ -127,6 +141,15 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
         ),
       ),
     );
+  }
+
+  void _setReportMode(String value) {
+    setState(() {
+      _reportMode = value;
+      _parentId = null;
+      _leafCategoryId = null;
+      _selectedIndex = 0;
+    });
   }
 
   void _back() {
@@ -342,6 +365,108 @@ class _ReportRow {
   final double amount;
 }
 
+class _ReportModeSwitch extends StatelessWidget {
+  const _ReportModeSwitch({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<String>(
+      segments: const [
+        ButtonSegment<String>(
+          value: 'expenses',
+          icon: Icon(Icons.pie_chart_outline),
+          label: Text('Expenses'),
+        ),
+        ButtonSegment<String>(
+          value: 'cards',
+          icon: Icon(Icons.credit_card_outlined),
+          label: Text('Cards'),
+        ),
+      ],
+      selected: {value},
+      onSelectionChanged: (selection) => onChanged(selection.first),
+    );
+  }
+}
+
+class _CardReportHeader extends StatelessWidget {
+  const _CardReportHeader({
+    required this.start,
+    required this.end,
+    required this.onPrevious,
+    required this.onNext,
+    required this.onPickRange,
+  });
+
+  final DateTime start;
+  final DateTime end;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+  final VoidCallback onPickRange;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.credit_card_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Card spent and payments',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                IconButton.filledTonal(
+                  tooltip: 'Previous range',
+                  onPressed: onPrevious,
+                  icon: const Icon(Icons.chevron_left),
+                ),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onPickRange,
+                    icon: const Icon(Icons.date_range),
+                    label: Text(
+                      '${_date(start)} - ${_date(end)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+                IconButton.filledTonal(
+                  tooltip: 'Next range',
+                  onPressed: onNext,
+                  icon: const Icon(Icons.chevron_right),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ReportHeader extends StatelessWidget {
   const _ReportHeader({
     required this.title,
@@ -482,6 +607,8 @@ class _ReportHeader extends StatelessWidget {
   Future<void> _showMainCategoryPicker(BuildContext context) async {
     final picked = await showModalBottomSheet<Set<String>>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
       showDragHandle: true,
       builder: (context) => _MainCategoryPickerSheet(
         categories: mainCategories,
@@ -865,11 +992,11 @@ class _MainCategoryPickerSheetState extends State<_MainCategoryPickerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
+    return FractionallySizedBox(
+      heightFactor: 0.68,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
@@ -886,9 +1013,9 @@ class _MainCategoryPickerSheetState extends State<_MainCategoryPickerSheet> {
               title: const Text('All main categories'),
               onChanged: (_) => setState(_selectedIds.clear),
             ),
-            Flexible(
+            const Divider(height: 1),
+            Expanded(
               child: ListView(
-                shrinkWrap: true,
                 children: widget.categories.map((category) {
                   final id = category['id'] as String;
                   return CheckboxListTile(

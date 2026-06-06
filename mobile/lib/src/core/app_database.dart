@@ -11,7 +11,7 @@ class AppDatabase {
     final path = p.join(await getDatabasesPath(), 'personal_finance.db');
     _db = await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: _create,
       onUpgrade: _upgrade,
     );
@@ -30,6 +30,7 @@ class AppDatabase {
         current_outstanding REAL NOT NULL DEFAULT 0,
         credit_limit REAL,
         display_balance REAL NOT NULL DEFAULT 0,
+        account_subtype TEXT,
         color TEXT,
         icon TEXT,
         is_active INTEGER NOT NULL DEFAULT 1,
@@ -100,6 +101,9 @@ class AppDatabase {
     }
     if (oldVersion < 5) {
       await _addColumnSafely(db, 'portfolio_transactions', 'record_date', 'TEXT');
+    }
+    if (oldVersion < 6) {
+      await _addColumnSafely(db, 'accounts', 'account_subtype', 'TEXT');
     }
   }
 
@@ -440,6 +444,7 @@ class AppDatabase {
       'current_outstanding': _num(row['current_outstanding']),
       'credit_limit': row['credit_limit'] == null ? null : _num(row['credit_limit']),
       'display_balance': _num(displayBalance),
+      'account_subtype': row['account_subtype'],
       'color': row['color'],
       'icon': row['icon'],
       'is_active': row['is_active'] == false ? 0 : 1,
