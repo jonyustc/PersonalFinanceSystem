@@ -602,17 +602,26 @@ function AllocationMetric({
 }
 
 function DividendReportPanel({ summary }: { summary?: PortfolioSummaryV2 }) {
+  const rows = [...(summary?.dividend_report ?? [])].sort((a, b) => b.year - a.year || a.stock_name.localeCompare(b.stock_name));
   return (
     <Panel title="Dividend Report">
-      {!summary?.dividend_report.length ? (
+      {!rows.length ? (
         <p className="text-sm text-muted">No dividends recorded.</p>
       ) : (
-        summary.dividend_report.map((row) => (
-          <div key={`${row.stock_id}-${row.year}`} className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-surface p-2 text-sm">
-            <span className="min-w-0 truncate">
-              {row.stock_name} - {row.year}
-            </span>
-            <span className="shrink-0 font-semibold">{formatCurrency(row.dividend_gain, "BDT")}</span>
+        rows.map((row, index) => (
+          <div key={`${row.stock_id}-${row.year}-${row.source ?? "manual"}-${index}`} className="rounded-md bg-surface p-2 text-sm">
+            <div className="flex min-w-0 items-center justify-between gap-3">
+              <span className="min-w-0 truncate font-semibold text-ink">
+                {row.stock_name} - {row.year}
+              </span>
+              <span className="shrink-0 font-semibold">{formatCurrency(row.dividend_gain, "BDT")}</span>
+            </div>
+            <p className="mt-1 text-xs text-muted">
+              {(row.source ?? "manual").toUpperCase()}
+              {row.record_date ? ` · Record ${row.record_date}` : ""}
+              {row.eligible_quantity ? ` · ${asNumber(row.eligible_quantity).toFixed(4)} shares` : ""}
+              {row.cash_dividend_percent ? ` · ${asNumber(row.cash_dividend_percent).toFixed(2)}% cash` : ""}
+            </p>
           </div>
         ))
       )}

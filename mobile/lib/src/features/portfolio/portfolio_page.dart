@@ -563,16 +563,44 @@ class _DividendView extends StatelessWidget {
     final rows = (summary['dividend_report'] as List? ?? [])
         .whereType<Map>()
         .map((row) => row.cast<String, dynamic>())
-        .toList();
+        .toList()
+      ..sort((a, b) {
+        final yearCompare = _num(b['year']).compareTo(_num(a['year']));
+        if (yearCompare != 0) return yearCompare;
+        return (a['stock_name'] as String? ?? '').compareTo(
+          b['stock_name'] as String? ?? '',
+        );
+      });
     return _Panel(
       title: 'Dividend Report',
       child: rows.isEmpty
           ? const Text('No dividends recorded.')
           : Column(
               children: rows.map((row) {
-                return _ListAmountRow(
-                  title: '${row['stock_name']} - ${row['year']}',
-                  amount: money(_num(row['dividend_gain']), currency: currency),
+                return Card(
+                  child: ListTile(
+                    title: Text(
+                      '${row['stock_name']} - ${row['year']}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: Text(
+                      [
+                        (row['source'] as String? ?? 'manual').toUpperCase(),
+                        if (row['record_date'] != null)
+                          'Record ${row['record_date']}',
+                        if (row['eligible_quantity'] != null)
+                          '${_num(row['eligible_quantity']).toStringAsFixed(4)} shares',
+                        if (row['cash_dividend_percent'] != null)
+                          '${_num(row['cash_dividend_percent']).toStringAsFixed(2)}% cash',
+                      ].join(' - '),
+                    ),
+                    trailing: Text(
+                      money(_num(row['dividend_gain']), currency: currency),
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
                 );
               }).toList(),
             ),

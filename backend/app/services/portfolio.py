@@ -230,6 +230,11 @@ class PortfolioService:
             key = (dividend.stock_id, dividend.payment_date.year)
             dividend_report[key] = dividend_report.get(key, ZERO) + dividend.amount
 
+        auto_dividend_report = await self._automatic_dividend_report(transactions)
+        auto_dividend_by_stock = {}
+        for row in auto_dividend_report:
+            auto_dividend_by_stock[row["stock_id"]] = auto_dividend_by_stock.get(row["stock_id"], ZERO) + row["dividend_gain"]
+
         holding_rows = []
         active_cost_basis = ZERO
         equity_value = ZERO
@@ -241,7 +246,7 @@ class PortfolioService:
             invested = holding.quantity * holding.avg_buy_price
             market_value = holding.quantity * (holding.stock.last_price or ZERO)
             unrealized = market_value - invested
-            dividend_income = dividend_by_stock.get(holding.stock_id, ZERO)
+            dividend_income = dividend_by_stock.get(holding.stock_id, ZERO) + auto_dividend_by_stock.get(holding.stock_id, ZERO)
             total_pl = unrealized + holding.realized_profit_loss
             active_cost_basis += invested
             equity_value += market_value
@@ -267,7 +272,7 @@ class PortfolioService:
         cash_balance = derived_cash
         total_portfolio = equity_value + cash_balance
         unrealized_gain_loss = equity_value - active_cost_basis
-        dividend_income_total = sum((dividend.amount for dividend in dividends), ZERO)
+        dividend_income_total = sum((dividend.amount for dividend in dividends), ZERO) + sum((row["dividend_gain"] for row in auto_dividend_report), ZERO)
         realized_total = realized_capital
         overall = realized_total + unrealized_gain_loss
 
@@ -295,9 +300,11 @@ class PortfolioService:
                     "stock_name": next((d.stock.name for d in dividends if d.stock_id == stock_id), ""),
                     "year": year,
                     "dividend_gain": amount,
+                    "source": "manual",
                 }
                 for (stock_id, year), amount in sorted(dividend_report.items(), key=lambda item: (item[0][1], str(item[0][0])))
-            ],
+            ] + auto_dividend_report,
+            "auto_dividend_report": auto_dividend_report,
         }
 
     async def _apply_broker_cash(self, trx: PortfolioTransaction, broker_account: Account | None, reverse: bool = False):
@@ -409,3 +416,53 @@ class PortfolioService:
         if not base:
             return ZERO
         return value / base * Decimal("100")
+
+    async def _automatic_dividend_report(self, transactions: list[PortfolioTransaction]) -> list[dict]:
+        by_stock: dict[UUID, list[PortfolioTransaction]] = {}
+        for transaction in transactions:
+            if transaction.stock_id and transaction.txn_type in {"buy", "sell"}:
+                by_stock.setdefault(transaction.stock_id, []).append(transaction)
+
+        rows = []
+        market = MarketPriceService()
+        for stock_id, stock_transactions in by_stock.items():
+            stock = stock_transactions[0].stock or await self.repo.get_stock(stock_id)
+            if not stock:
+                continue
+            try:
+                events = await market.fetch_dse_dividend_events(stock.symbol)
+            except Exception:
+                continue
+            for event in events:
+                if event.record_date is None:
+                    continue
+                quantity = self._quantity_on_date(stock_transactions, event.record_date)
+                if quantity <= ZERO:
+                    continue
+                amount = quantity * event.face_value * event.cash_percent / Decimal("100")
+                if amount <= ZERO:
+                    continue
+                rows.append(
+                    {
+                        "stock_id": stock_id,
+                        "stock_name": stock.name,
+                        "year": event.year,
+                        "dividend_gain": amount,
+                        "record_date": event.record_date,
+                        "cash_dividend_percent": event.cash_percent,
+                        "eligible_quantity": quantity,
+                        "source": event.source,
+                    }
+                )
+        return sorted(rows, key=lambda row: (row["year"], row["stock_name"]), reverse=True)
+
+    def _quantity_on_date(self, transactions: list[PortfolioTransaction], record_date) -> Decimal:
+        quantity = ZERO
+        for transaction in sorted(transactions, key=lambda item: item.txn_date):
+            if transaction.txn_date > record_date:
+                continue
+            if transaction.txn_type == "buy":
+                quantity += transaction.quantity
+            elif transaction.txn_type == "sell":
+                quantity -= transaction.quantity
+        return quantity

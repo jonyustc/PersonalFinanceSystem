@@ -440,6 +440,10 @@ export type PortfolioDividendReportRow = {
   stock_name: string;
   year: number;
   dividend_gain: string;
+  record_date?: string | null;
+  cash_dividend_percent?: string | null;
+  eligible_quantity?: string | null;
+  source?: string;
 };
 
 export type PortfolioSummaryV2 = {
@@ -458,6 +462,7 @@ export type PortfolioSummaryV2 = {
   broker_accounts: { id: string; name: string; balance: string; currency: string }[];
   holdings: PortfolioHolding[];
   dividend_report: PortfolioDividendReportRow[];
+  auto_dividend_report?: PortfolioDividendReportRow[];
 };
 
 export type DashboardResponse = {

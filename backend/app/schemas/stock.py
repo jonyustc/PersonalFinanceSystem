@@ -128,6 +128,10 @@ class DividendReportRow(BaseModel):
     stock_name: str
     year: int
     dividend_gain: Decimal
+    record_date: date | None = None
+    cash_dividend_percent: Decimal | None = None
+    eligible_quantity: Decimal | None = None
+    source: str = "manual"
 
 
 class BrokerAccountSummary(BaseModel):
@@ -153,3 +157,4 @@ class PortfolioSummaryResponse(BaseModel):
     broker_accounts: list[BrokerAccountSummary]
     holdings: list[HoldingResponse]
     dividend_report: list[DividendReportRow]
+    auto_dividend_report: list[DividendReportRow] = Field(default_factory=list)
