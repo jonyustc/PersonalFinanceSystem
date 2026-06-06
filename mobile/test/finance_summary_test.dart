@@ -118,4 +118,46 @@ void main() {
     expect(holdings.single.cost / holdings.single.quantity, 200);
     expect(holdings.single.realized, closeTo(382.4, 0.001));
   });
+
+  test('stock broker account balance is excluded from assets when holdings exist', () {
+    final summary = buildFinanceSummary(
+      now: DateTime(2026, 6, 6),
+      accounts: [
+        {'id': 'cash', 'name': 'Cash', 'type': 'cash', 'balance': 1000},
+        {
+          'id': 'lbsl',
+          'name': 'LBSL',
+          'type': 'bank',
+          'account_subtype': 'stock_broker',
+          'balance': 5000,
+        },
+      ],
+      categories: const [],
+      transactions: const [],
+      budgets: const [],
+      stocks: const [
+        {
+          'id': 'stock',
+          'symbol': 'STOCK',
+          'name': 'Stock',
+          'currency': 'BDT',
+          'last_price': 20,
+        },
+      ],
+      portfolioTransactions: const [
+        {
+          'id': 'buy',
+          'stock_id': 'stock',
+          'txn_type': 'buy',
+          'quantity': 10,
+          'price': 15,
+          'total_amount': 150,
+          'txn_date': '2026-06-01',
+        },
+      ],
+    );
+
+    expect(summary.portfolioValue, 200);
+    expect(summary.assets, 1200);
+  });
 }

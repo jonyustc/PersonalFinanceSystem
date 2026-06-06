@@ -110,7 +110,9 @@ FinanceSummary buildFinanceSummary({
   final categoryById = {for (final row in categories) row['id'] as String: row};
   final accountById = {for (final row in accounts) row['id'] as String: row};
 
-  final cashAssets = accounts.where((row) => !isCreditCardAccount(row)).fold<double>(
+  final cashAssets = accounts
+      .where((row) => !isCreditCardAccount(row) && !isStockBrokerAccount(row))
+      .fold<double>(
         0,
         (sum, row) => sum + asDouble(row['balance']),
       );
@@ -334,6 +336,11 @@ class PortfolioHolding {
 bool isCreditCardAccount(Map<String, dynamic> row) {
   final type = (row['type'] as String? ?? '').toLowerCase();
   return type == 'card' || type == 'credit_card';
+}
+
+bool isStockBrokerAccount(Map<String, dynamic> row) {
+  return (row['account_subtype'] as String? ?? '').toLowerCase() ==
+      'stock_broker';
 }
 
 List<FinanceInsight> _buildInsights({

@@ -300,6 +300,20 @@ class ApiClient {
     return response.data ?? {};
   }
 
+  Future<Map<String, dynamic>> getCardReport({
+    required String fromDate,
+    required String toDate,
+  }) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/reports/cards',
+      queryParameters: {
+        'from_date': fromDate,
+        'to_date': toDate,
+      },
+    );
+    return response.data ?? {};
+  }
+
   Future<Map<String, dynamic>> createAccount(
     Map<String, dynamic> payload,
   ) async {

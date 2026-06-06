@@ -172,7 +172,10 @@ List<_BalanceDetailRow> _assetRows(
   String currency,
 ) {
   final rows = accounts
-      .where((account) => !isCreditCardAccount(account))
+      .where(
+        (account) =>
+            !isCreditCardAccount(account) && !isStockBrokerAccount(account),
+      )
       .map(
         (account) => _BalanceDetailRow(
           account['name'] as String? ?? 'Account',

@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.report import MonthlyExpenseReport, ReportRow, TrendPoint
+from app.schemas.report import CardReport, MonthlyExpenseReport, ReportRow, TrendPoint
 from app.services.report import ReportService
 
 router = APIRouter()
@@ -38,3 +38,13 @@ async def net_worth_trend(current_user: User = Depends(get_current_user), db: As
 @router.get("/portfolio-performance", response_model=list[ReportRow])
 async def portfolio_performance(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     return await ReportService(db).portfolio_performance(current_user.id)
+
+
+@router.get("/cards", response_model=CardReport)
+async def card_report(
+    from_date: str | None = Query(None),
+    to_date: str | None = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await ReportService(db).card_report(current_user.id, from_date, to_date)

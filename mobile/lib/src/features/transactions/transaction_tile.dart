@@ -41,57 +41,88 @@ class TransactionTile extends StatelessWidget {
             : '-';
 
     final tile = Card(
-      child: ListTile(
+      margin: EdgeInsets.zero,
+      child: InkWell(
         onTap: onTap,
         onLongPress: onDelete,
-        leading: CircleAvatar(
-          backgroundColor: backgroundColor,
-          foregroundColor: color,
-          child: Icon(
-            isTransfer
-                ? Icons.swap_horiz
-                : isIncome
-                    ? Icons.arrow_downward
-                    : Icons.arrow_upward,
-          ),
-        ),
-        title: Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-        subtitle: Text(
-          [
-            compactDate(row['txn_date'] as String? ?? ''),
-            type.toUpperCase(),
-            if (isPending) 'PENDING SYNC',
-          ].join(' - '),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 132),
-              child: Text(
-                '$sign${money(amount, currency: currency)}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: TextStyle(fontWeight: FontWeight.w800, color: color),
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: backgroundColor,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  isTransfer
+                      ? Icons.swap_horiz
+                      : isIncome
+                          ? Icons.arrow_downward
+                          : Icons.arrow_upward,
+                  color: color,
+                  size: 20,
+                ),
               ),
-            ),
-            if (onTap != null) ...[
-              const SizedBox(width: 4),
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            height: 1.15,
+                          ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      [
+                        compactDate(row['txn_date'] as String? ?? ''),
+                        type.toUpperCase(),
+                        if (isPending) 'PENDING SYNC',
+                      ].join(' - '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            height: 1.15,
+                          ),
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 116),
+                child: Text(
+                  '$sign${money(amount, currency: currency)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: color,
+                      ),
+                ),
+              ),
+              if (onTap != null) ...[
+                const SizedBox(width: 2),
+                Icon(
+                  Icons.chevron_right,
+                  size: 18,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

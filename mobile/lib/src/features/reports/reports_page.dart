@@ -17,10 +17,12 @@ class ReportsPage extends ConsumerStatefulWidget {
 class _ReportsPageState extends ConsumerState<ReportsPage> {
   late DateTime _start;
   late DateTime _end;
-  String? _mainCategoryFilterId;
+  final Set<String> _mainCategoryFilterIds = {};
   String? _parentId;
   String? _leafCategoryId;
   int _selectedIndex = 0;
+  Future<Map<String, dynamic>>? _cardReportFuture;
+  String? _cardReportKey;
 
   @override
   void initState() {
@@ -38,12 +40,13 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     }
 
     final mainCategories = _mainExpenseCategories(snapshot.categories);
-    final effectiveParentId = _parentId ?? _mainCategoryFilterId;
     final currency = snapshot.session?.currency ?? 'BDT';
+    final cardReportFuture = _cardReportFutureFor(ref);
     final rows = _buildRows(
       categories: snapshot.categories,
       transactions: snapshot.transactions,
-      parentId: effectiveParentId,
+      parentId: _parentId,
+      mainCategoryFilterIds: _mainCategoryFilterIds,
     );
     final transactions = _leafCategoryId == null
         ? <Map<String, dynamic>>[]
@@ -53,9 +56,9 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
         ? null
         : rows[_selectedIndex.clamp(0, rows.length - 1).toInt()];
     final title = _leafCategoryId == null
-        ? (effectiveParentId == null
+        ? (_parentId == null
               ? 'Expense categories'
-              : _categoryName(snapshot.categories, effectiveParentId) ??
+              : _categoryName(snapshot.categories, _parentId!) ??
                     'Subcategories')
         : _categoryName(snapshot.categories, _leafCategoryId!) ??
               'Transactions';
@@ -73,10 +76,10 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
               start: _start,
               end: _end,
               mainCategories: mainCategories,
-              selectedMainCategoryId: _mainCategoryFilterId,
+              selectedMainCategoryIds: _mainCategoryFilterIds,
               canGoBack: canGoBack,
               onBack: _back,
-              onMainCategoryChanged: _setMainCategoryFilter,
+              onMainCategoriesChanged: _setMainCategoryFilters,
               onPrevious: _previousRange,
               onNext: _nextRange,
               onPickRange: _pickRange,
@@ -113,6 +116,13 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
                 transactions: transactions,
                 currency: currency,
               ),
+            if (_leafCategoryId == null) ...[
+              const SizedBox(height: 16),
+              _CardReportSection(
+                future: cardReportFuture,
+                currency: currency,
+              ),
+            ],
           ],
         ),
       ),
@@ -135,12 +145,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
       (category) => category['parent_id'] == row.categoryId,
     );
     setState(() {
-      if (_mainCategoryFilterId == null && _parentId == null && hasChildren) {
-        _parentId = row.categoryId;
-        _leafCategoryId = null;
-      } else if (_parentId != row.categoryId &&
-          _mainCategoryFilterId != row.categoryId &&
-          hasChildren) {
+      if (hasChildren) {
         _parentId = row.categoryId;
         _leafCategoryId = null;
       } else {
@@ -200,9 +205,11 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     });
   }
 
-  void _setMainCategoryFilter(String? categoryId) {
+  void _setMainCategoryFilters(Set<String> categoryIds) {
     setState(() {
-      _mainCategoryFilterId = categoryId;
+      _mainCategoryFilterIds
+        ..clear()
+        ..addAll(categoryIds);
       _parentId = null;
       _leafCategoryId = null;
       _selectedIndex = 0;
@@ -213,6 +220,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     required List<Map<String, dynamic>> categories,
     required List<Map<String, dynamic>> transactions,
     required String? parentId,
+    required Set<String> mainCategoryFilterIds,
   }) {
     final categoryById = {
       for (final row in categories) row['id'] as String: row,
@@ -228,9 +236,14 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
       final category = categoryById[rawCategoryId];
       if (category == null) continue;
       final categoryParentId = category['parent_id'] as String?;
+      final mainCategoryId = categoryParentId ?? rawCategoryId;
+      if (mainCategoryFilterIds.isNotEmpty &&
+          !mainCategoryFilterIds.contains(mainCategoryId)) {
+        continue;
+      }
 
       final bucketId = parentId == null
-          ? categoryParentId ?? rawCategoryId
+          ? mainCategoryId
           : categoryParentId == parentId
           ? rawCategoryId
           : rawCategoryId == parentId
@@ -302,6 +315,19 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
         ),
       );
   }
+
+  Future<Map<String, dynamic>> _cardReportFutureFor(WidgetRef ref) {
+    final fromDate = _date(_start);
+    final toDate = _date(_end);
+    final key = '$fromDate:$toDate';
+    if (_cardReportFuture == null || _cardReportKey != key) {
+      _cardReportKey = key;
+      _cardReportFuture = ref
+          .read(apiClientProvider)
+          .getCardReport(fromDate: fromDate, toDate: toDate);
+    }
+    return _cardReportFuture!;
+  }
 }
 
 class _ReportRow {
@@ -322,10 +348,10 @@ class _ReportHeader extends StatelessWidget {
     required this.start,
     required this.end,
     required this.mainCategories,
-    required this.selectedMainCategoryId,
+    required this.selectedMainCategoryIds,
     required this.canGoBack,
     required this.onBack,
-    required this.onMainCategoryChanged,
+    required this.onMainCategoriesChanged,
     required this.onPrevious,
     required this.onNext,
     required this.onPickRange,
@@ -335,16 +361,20 @@ class _ReportHeader extends StatelessWidget {
   final DateTime start;
   final DateTime end;
   final List<Map<String, dynamic>> mainCategories;
-  final String? selectedMainCategoryId;
+  final Set<String> selectedMainCategoryIds;
   final bool canGoBack;
   final VoidCallback onBack;
-  final ValueChanged<String?> onMainCategoryChanged;
+  final ValueChanged<Set<String>> onMainCategoriesChanged;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final VoidCallback onPickRange;
 
   @override
   Widget build(BuildContext context) {
+    final selectedLabel = _categoryFilterLabel(
+      mainCategories,
+      selectedMainCategoryIds,
+    );
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -375,27 +405,48 @@ class _ReportHeader extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: selectedMainCategoryId ?? '',
-              decoration: const InputDecoration(
-                labelText: 'Main category',
-                prefixIcon: Icon(Icons.filter_list),
+            InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => _showMainCategoryPicker(context),
+              child: InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Main categories',
+                  prefixIcon: Icon(Icons.filter_list),
+                  suffixIcon: Icon(Icons.expand_more),
+                ),
+                child: Text(
+                  selectedLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
               ),
-              items: [
-                const DropdownMenuItem<String>(
-                  value: '',
-                  child: Text('All main categories'),
-                ),
-                ...mainCategories.map(
-                  (category) => DropdownMenuItem<String>(
-                    value: category['id'] as String,
-                    child: Text(category['name'] as String? ?? 'Category'),
-                  ),
-                ),
-              ],
-              onChanged: (value) =>
-                  onMainCategoryChanged(value == '' ? null : value),
             ),
+            if (selectedMainCategoryIds.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: mainCategories
+                    .where(
+                      (category) => selectedMainCategoryIds.contains(
+                        category['id'] as String,
+                      ),
+                    )
+                    .map(
+                      (category) => InputChip(
+                        label: Text(category['name'] as String? ?? 'Category'),
+                        onDeleted: () {
+                          final next = Set<String>.from(
+                            selectedMainCategoryIds,
+                          )..remove(category['id'] as String);
+                          onMainCategoriesChanged(next);
+                        },
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
             const SizedBox(height: 12),
             Row(
               children: [
@@ -419,6 +470,456 @@ class _ReportHeader extends StatelessWidget {
                   tooltip: 'Next range',
                   onPressed: onNext,
                   icon: const Icon(Icons.chevron_right),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showMainCategoryPicker(BuildContext context) async {
+    final picked = await showModalBottomSheet<Set<String>>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => _MainCategoryPickerSheet(
+        categories: mainCategories,
+        selectedIds: selectedMainCategoryIds,
+      ),
+    );
+    if (picked == null) return;
+    onMainCategoriesChanged(picked);
+  }
+}
+
+class _CardReportSection extends StatelessWidget {
+  const _CardReportSection({
+    required this.future,
+    required this.currency,
+  });
+
+  final Future<Map<String, dynamic>> future;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          );
+        }
+        if (snapshot.hasError) {
+          return Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'Card report unavailable. Pull to sync or try again.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+          );
+        }
+
+        final report = snapshot.data ?? {};
+        final cards = (report['cards'] as List? ?? [])
+            .whereType<Map>()
+            .map((row) => row.cast<String, dynamic>())
+            .toList();
+        final spentHistory = (report['spent_history'] as List? ?? [])
+            .whereType<Map>()
+            .map((row) => row.cast<String, dynamic>())
+            .toList();
+        final paymentHistory = (report['payment_history'] as List? ?? [])
+            .whereType<Map>()
+            .map((row) => row.cast<String, dynamic>())
+            .toList();
+
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.credit_card_outlined),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Cards',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _CardReportMetric(
+                        label: 'Spent',
+                        value: money(
+                          asDouble(report['total_spent']),
+                          currency: currency,
+                        ),
+                        color: const Color(0xFFB91C1C),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _CardReportMetric(
+                        label: 'Paid',
+                        value: money(
+                          asDouble(report['total_paid']),
+                          currency: currency,
+                        ),
+                        color: const Color(0xFF15803D),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                _CardReportMetric(
+                  label: 'Outstanding',
+                  value: money(
+                    asDouble(report['total_outstanding']),
+                    currency: currency,
+                  ),
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(height: 12),
+                if (cards.isEmpty)
+                  Text(
+                    'No credit cards found.',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  )
+                else
+                  ...cards.map(
+                    (card) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _CardReportCardRow(card: card, currency: currency),
+                    ),
+                  ),
+                const Divider(height: 22),
+                _CardHistoryList(
+                  title: 'Payment history',
+                  emptyText: 'No card payments in this range.',
+                  rows: paymentHistory,
+                  currency: currency,
+                  icon: Icons.payments_outlined,
+                  color: const Color(0xFF15803D),
+                ),
+                const SizedBox(height: 12),
+                _CardHistoryList(
+                  title: 'Spent history',
+                  emptyText: 'No card spending in this range.',
+                  rows: spentHistory,
+                  currency: currency,
+                  icon: Icons.shopping_bag_outlined,
+                  color: const Color(0xFFB91C1C),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CardReportMetric extends StatelessWidget {
+  const _CardReportMetric({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w900,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CardReportCardRow extends StatelessWidget {
+  const _CardReportCardRow({
+    required this.card,
+    required this.currency,
+  });
+
+  final Map<String, dynamic> card;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final spent = asDouble(card['spent']);
+    final paid = asDouble(card['paid']);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
+          children: [
+            const Icon(Icons.credit_card, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    card['name'] as String? ?? 'Card',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  Text(
+                    'Spent ${money(spent, currency: currency)} - Paid ${money(paid, currency: currency)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            Text(
+              money(asDouble(card['current_outstanding']), currency: currency),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CardHistoryList extends StatelessWidget {
+  const _CardHistoryList({
+    required this.title,
+    required this.emptyText,
+    required this.rows,
+    required this.currency,
+    required this.icon,
+    required this.color,
+  });
+
+  final String title;
+  final String emptyText;
+  final List<Map<String, dynamic>> rows;
+  final String currency;
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleRows = rows.take(6).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w900,
+              ),
+        ),
+        const SizedBox(height: 8),
+        if (visibleRows.isEmpty)
+          Text(
+            emptyText,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          )
+        else
+          ...visibleRows.map(
+            (row) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 16,
+                    backgroundColor: color.withValues(alpha: 0.12),
+                    foregroundColor: color,
+                    child: Icon(icon, size: 17),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          row['merchant_name'] as String? ??
+                              row['description'] as String? ??
+                              row['card_name'] as String? ??
+                              'Card transaction',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        Text(
+                          [
+                            row['txn_date'] as String? ?? '',
+                            row['card_name'] as String? ?? '',
+                            if ((row['account_name'] as String? ?? '').isNotEmpty)
+                              row['account_name'] as String,
+                          ].where((value) => value.isNotEmpty).join(' - '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    money(asDouble(row['amount']), currency: currency),
+                    style: TextStyle(
+                      color: color,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _MainCategoryPickerSheet extends StatefulWidget {
+  const _MainCategoryPickerSheet({
+    required this.categories,
+    required this.selectedIds,
+  });
+
+  final List<Map<String, dynamic>> categories;
+  final Set<String> selectedIds;
+
+  @override
+  State<_MainCategoryPickerSheet> createState() =>
+      _MainCategoryPickerSheetState();
+}
+
+class _MainCategoryPickerSheetState extends State<_MainCategoryPickerSheet> {
+  late final Set<String> _selectedIds;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedIds = Set<String>.from(widget.selectedIds);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Main categories',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 8),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _selectedIds.isEmpty,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text('All main categories'),
+              onChanged: (_) => setState(_selectedIds.clear),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: widget.categories.map((category) {
+                  final id = category['id'] as String;
+                  return CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: _selectedIds.contains(id),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: Text(category['name'] as String? ?? 'Category'),
+                    onChanged: (selected) {
+                      setState(() {
+                        if (selected == true) {
+                          _selectedIds.add(id);
+                        } else {
+                          _selectedIds.remove(id);
+                        }
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: () => setState(_selectedIds.clear),
+                  child: const Text('Clear'),
+                ),
+                const Spacer(),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(_selectedIds),
+                  child: const Text('Apply'),
                 ),
               ],
             ),
@@ -637,6 +1138,19 @@ class _TransactionList extends StatelessWidget {
 
 String _date(DateTime value) {
   return '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+}
+
+String _categoryFilterLabel(
+  List<Map<String, dynamic>> categories,
+  Set<String> selectedIds,
+) {
+  if (selectedIds.isEmpty) return 'All main categories';
+  final names = categories
+      .where((category) => selectedIds.contains(category['id'] as String))
+      .map((category) => category['name'] as String? ?? 'Category')
+      .toList();
+  if (names.length <= 2) return names.join(', ');
+  return '${names.take(2).join(', ')} +${names.length - 2}';
 }
 
 const _chartColors = [
