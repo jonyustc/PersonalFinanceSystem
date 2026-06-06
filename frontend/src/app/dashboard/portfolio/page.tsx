@@ -43,6 +43,10 @@ function asNumber(value: string | number | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Portfolio data failed to load";
+}
+
 function percentOf(value: string | number | null | undefined, total: string | number | null | undefined) {
   const totalValue = asNumber(total);
   if (totalValue <= 0) return 0;
@@ -51,6 +55,11 @@ function percentOf(value: string | number | null | undefined, total: string | nu
 
 function displayPercent(value: number) {
   return `${value.toFixed(value >= 10 ? 1 : 2)}%`;
+}
+
+function isBrokerAccount(account: Account) {
+  const subtype = (account.account_subtype ?? "").trim().toLowerCase().replace(/\s+/g, "_");
+  return ["stock_broker", "broker", "stock", "stocks"].includes(subtype);
 }
 
 function barWidth(value: number) {
@@ -110,10 +119,11 @@ export default function PortfolioPage() {
   const transactions = transactionsQuery.data ?? [];
   const stocks = stocksQuery.data ?? [];
   const brokerAccounts = useMemo(
-    () => (accountsQuery.data ?? []).filter((account) => account.account_subtype === "stock_broker" && account.is_active && !account.archived),
+    () => (accountsQuery.data ?? []).filter((account) => isBrokerAccount(account) && account.is_active && !account.archived),
     [accountsQuery.data],
   );
   const selectedStock = stocks.find((stock) => stock.id === form.stock_id);
+  const dataError = summaryQuery.error ?? transactionsQuery.error ?? stocksQuery.error ?? accountsQuery.error;
 
   async function refresh() {
     await Promise.all([
@@ -228,6 +238,7 @@ export default function PortfolioPage() {
       </section>
 
       {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
+      {dataError ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage(dataError)}</div> : null}
 
       {activeTab === "dashboard" ? (
         <>
@@ -240,7 +251,7 @@ export default function PortfolioPage() {
 
           <section className="grid gap-3 lg:grid-cols-2">
             <PortfolioSnapshot summary={summary} />
-            <BrokerAccountsPanel summary={summary} />
+            <BrokerAccountsPanel summary={summary} accounts={brokerAccounts} />
           </section>
         </>
       ) : null}
@@ -460,13 +471,15 @@ function PortfolioSnapshot({ summary }: { summary?: PortfolioSummaryV2 }) {
   );
 }
 
-function BrokerAccountsPanel({ summary }: { summary?: PortfolioSummaryV2 }) {
+function BrokerAccountsPanel({ summary, accounts }: { summary?: PortfolioSummaryV2; accounts: Account[] }) {
+  const brokerAccounts = summary?.broker_accounts.length ? summary.broker_accounts : accounts;
+
   return (
     <Panel title="Broker Accounts">
-      {!summary?.broker_accounts.length ? (
+      {!brokerAccounts.length ? (
         <p className="text-sm text-muted">Create an account with subtype stock_broker, then transfer funds into it.</p>
       ) : (
-        summary.broker_accounts.map((account) => (
+        brokerAccounts.map((account) => (
           <div key={account.id} className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-surface p-2 text-sm">
             <span className="min-w-0 truncate font-medium text-ink">{account.name}</span>
             <span className="shrink-0">{formatCurrency(account.balance, account.currency)}</span>

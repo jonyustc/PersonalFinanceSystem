@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -78,9 +78,26 @@ class StockRepository:
         return list(result.scalars())
 
     async def broker_accounts(self, user_id: UUID) -> list[Account]:
+        linked_broker_account_ids = (
+            select(PortfolioTransaction.broker_account_id)
+            .where(
+                PortfolioTransaction.user_id == user_id,
+                PortfolioTransaction.broker_account_id.is_not(None),
+            )
+            .distinct()
+        )
         result = await self.db.execute(
             select(Account)
-            .where(Account.user_id == user_id, Account.archived.is_(False), Account.account_subtype == "stock_broker")
+            .where(Account.user_id == user_id, Account.archived.is_(False))
+            .where(Account.is_active.is_(True))
+            .where(
+                or_(
+                    func.lower(func.replace(Account.account_subtype, " ", "_")).in_(
+                        ("stock_broker", "broker", "stock", "stocks")
+                    ),
+                    Account.id.in_(linked_broker_account_ids),
+                )
+            )
             .order_by(Account.name)
         )
         return list(result.scalars())

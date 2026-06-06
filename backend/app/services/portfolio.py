@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+import logging
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -16,6 +17,7 @@ from app.services.market_price import MarketPriceService
 ZERO = Decimal("0")
 BROKER_FEE_RATE = Decimal("0.004")
 DEFAULT_DIVIDEND_TAX_RATE = Decimal("10")
+logger = logging.getLogger("app.portfolio")
 
 
 class PortfolioService:
@@ -300,9 +302,16 @@ class PortfolioService:
             for transaction in transactions
         )
         if has_stock_activity:
-            await self._rebuild_derived(user_id)
-            await self.db.commit()
-            transactions = await self.repo.transactions(user_id, 10000)
+            try:
+                await self._rebuild_derived(user_id)
+                await self.db.commit()
+                transactions = await self.repo.transactions(user_id, 10000)
+            except HTTPException as exc:
+                await self.db.rollback()
+                logger.warning(
+                    "portfolio_summary_rebuild_failed_using_existing_rows",
+                    extra={"user_id": str(user_id), "detail": exc.detail},
+                )
         holdings = await self.repo.holdings(user_id)
         dividends = await self.repo.dividends(user_id)
         broker_accounts = await self.repo.broker_accounts(user_id)
