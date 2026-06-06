@@ -48,6 +48,22 @@ class DseStockSearchResponse(BaseModel):
     fetched_at: str
 
 
+class DseDividendEstimateResponse(BaseModel):
+    symbol: str
+    found: bool
+    source: str | None = None
+    record_date: date | None = None
+    year: int | None = None
+    cash_dividend_percent: Decimal | None = None
+    dividend_per_share: Decimal | None = None
+    eligible_quantity: Decimal = Decimal("0")
+    gross_amount: Decimal = Decimal("0")
+    tax_rate_percent: Decimal = Decimal("10")
+    tax_amount: Decimal = Decimal("0")
+    net_amount: Decimal = Decimal("0")
+    message: str | None = None
+
+
 class PortfolioTransactionCreate(BaseModel):
     stock_id: UUID | None = None
     stock: StockCreate | None = None

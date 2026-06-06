@@ -121,6 +121,7 @@ class _PortfolioPageState extends ConsumerState<PortfolioPage> {
       builder: (_) => _TradeEditorSheet(
         initial: transaction,
         stocks: snapshot.stocks,
+        transactions: snapshot.portfolioTransactions,
         brokerAccounts: _brokerAccounts(
           snapshot.portfolioSummary ?? const <String, dynamic>{},
           snapshot.accounts,
@@ -966,11 +967,13 @@ class _TradeEditorSheet extends ConsumerStatefulWidget {
   const _TradeEditorSheet({
     this.initial,
     required this.stocks,
+    required this.transactions,
     required this.brokerAccounts,
   });
 
   final Map<String, dynamic>? initial;
   final List<Map<String, dynamic>> stocks;
+  final List<Map<String, dynamic>> transactions;
   final List<Map<String, dynamic>> brokerAccounts;
 
   @override
@@ -985,11 +988,18 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
   final _price = TextEditingController();
   final _fees = TextEditingController();
   final _notes = TextEditingController();
+  final _dividendPerShare = TextEditingController();
+  final _taxRate = TextEditingController(text: '10');
   String _txnType = 'buy';
   String? _stockId;
   String? _brokerAccountId;
   DateTime _date = DateTime.now();
   bool _busy = false;
+  bool _loadingDividend = false;
+  String? _dividendLookupMessage;
+  double? _eligibleDividendQuantity;
+  double? _grossDividendAmount;
+  double? _taxDividendAmount;
 
   @override
   void initState() {
@@ -1021,6 +1031,8 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
     _price.dispose();
     _fees.dispose();
     _notes.dispose();
+    _dividendPerShare.dispose();
+    _taxRate.dispose();
     super.dispose();
   }
 
@@ -1116,9 +1128,12 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
                       ),
                     ),
                   ],
-                  onChanged: (value) => setState(
-                    () => _stockId = value?.isEmpty == true ? null : value,
-                  ),
+                  onChanged: (value) {
+                    setState(
+                      () => _stockId = value?.isEmpty == true ? null : value,
+                    );
+                    _fetchDividendEstimateForCurrentStock();
+                  },
                 ),
               ],
               if (needsStock && _stockId == null) ...[
@@ -1156,6 +1171,45 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
                   decoration: const InputDecoration(labelText: 'Quantity'),
                   onChanged: (_) => setState(() {}),
                   validator: _positiveValidator,
+                ),
+              ],
+              if (_txnType == 'income') ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: TextFormField(
+                        controller: _dividendPerShare,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Dividend/share',
+                        ),
+                        onChanged: (_) => _recalculateManualDividend(),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _taxRate,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(labelText: 'Tax %'),
+                        onChanged: (_) => _recalculateManualDividend(),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                _DividendEstimateSummary(
+                  loading: _loadingDividend,
+                  message: _dividendLookupMessage,
+                  eligibleQuantity: _eligibleDividendQuantity,
+                  grossAmount: _grossDividendAmount,
+                  taxAmount: _taxDividendAmount,
                 ),
               ],
               const SizedBox(height: 10),
@@ -1246,7 +1300,10 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
             ? null
             : Theme.of(context).colorScheme.onSurfaceVariant,
       ),
-      onPressed: () => setState(() => _txnType = value),
+      onPressed: () {
+        setState(() => _txnType = value);
+        if (value == 'income') _fetchDividendEstimateForCurrentStock();
+      },
       child: Text(label),
     );
   }
@@ -1263,7 +1320,10 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
       firstDate: DateTime(2000),
       lastDate: DateTime.now().add(const Duration(days: 365)),
     );
-    if (picked != null) setState(() => _date = picked);
+    if (picked != null) {
+      setState(() => _date = picked);
+      if (_txnType == 'income') _recalculateManualDividend();
+    }
   }
 
   Future<void> _pickDseStock() async {
@@ -1278,8 +1338,159 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
     setState(() {
       _newStockName.text = picked['name'] as String? ?? '';
       _newStockSymbol.text = picked['symbol'] as String? ?? '';
-      _price.text = _num(picked['last_price']).toStringAsFixed(4);
+      if (_txnType != 'income') {
+        _price.text = _num(picked['last_price']).toStringAsFixed(4);
+      }
     });
+    await _fetchDividendEstimate(
+      symbol: _newStockSymbol.text,
+      stockId: _stockId,
+    );
+  }
+
+  Future<void> _fetchDividendEstimateForCurrentStock() async {
+    if (_txnType != 'income') return;
+    final symbol = _selectedStockSymbol();
+    if (symbol == null || symbol.isEmpty) {
+      setState(() {
+        _dividendLookupMessage = 'Select a stock or find one from DSE.';
+        _eligibleDividendQuantity = null;
+        _grossDividendAmount = null;
+        _taxDividendAmount = null;
+      });
+      return;
+    }
+    await _fetchDividendEstimate(symbol: symbol, stockId: _stockId);
+  }
+
+  Future<void> _fetchDividendEstimate({
+    required String symbol,
+    String? stockId,
+  }) async {
+    if (_txnType != 'income') return;
+    setState(() {
+      _loadingDividend = true;
+      _dividendLookupMessage = 'Fetching DSE dividend data...';
+    });
+    try {
+      final estimate = await ref
+          .read(appControllerProvider.notifier)
+          .getDseDividendEstimate(
+            symbol: symbol,
+            stockId: stockId,
+            taxRatePercent: double.tryParse(_taxRate.text) ?? 10,
+          );
+      if (!mounted) return;
+      setState(() {
+        _loadingDividend = false;
+        _applyDividendEstimate(estimate);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadingDividend = false;
+        _dividendLookupMessage =
+            'DSE dividend not found. Enter dividend/share, date, and amount manually.';
+      });
+    }
+  }
+
+  void _applyDividendEstimate(Map<String, dynamic> estimate) {
+    final found = estimate['found'] == true;
+    final recordDate = DateTime.tryParse(estimate['record_date'] as String? ?? '');
+    final dividendPerShare = _num(estimate['dividend_per_share']);
+    final netAmount = _num(estimate['net_amount']);
+    _eligibleDividendQuantity = _num(estimate['eligible_quantity']);
+    _grossDividendAmount = _num(estimate['gross_amount']);
+    _taxDividendAmount = _num(estimate['tax_amount']);
+
+    if (found && recordDate != null && dividendPerShare > 0) {
+      _date = recordDate;
+      _dividendPerShare.text = dividendPerShare.toStringAsFixed(4);
+      if (netAmount > 0) _price.text = netAmount.toStringAsFixed(2);
+      _dividendLookupMessage =
+          'DSE record ${_formatDate(recordDate)}. Edit DPS, tax, or amount if needed.';
+      _notes.text = _buildDividendNote();
+      return;
+    }
+
+    _dividendLookupMessage =
+        estimate['message'] as String? ??
+        'DSE dividend not found. Enter dividend/share, date, and amount manually.';
+  }
+
+  void _recalculateManualDividend() {
+    if (_txnType != 'income') return;
+    final dividendPerShare = double.tryParse(_dividendPerShare.text);
+    if (dividendPerShare == null || dividendPerShare <= 0) {
+      setState(() {
+        _eligibleDividendQuantity = null;
+        _grossDividendAmount = null;
+        _taxDividendAmount = null;
+      });
+      return;
+    }
+    final quantity = _quantityOnRecordDate();
+    final taxRate = double.tryParse(_taxRate.text) ?? 0;
+    final gross = quantity * dividendPerShare;
+    final tax = gross * taxRate / 100;
+    final net = gross - tax;
+    setState(() {
+      _eligibleDividendQuantity = quantity;
+      _grossDividendAmount = gross;
+      _taxDividendAmount = tax;
+      if (net > 0) _price.text = net.toStringAsFixed(2);
+      _dividendLookupMessage =
+          'Calculated from holding on ${_formatDate(_date)}. Amount remains editable.';
+      _notes.text = _buildDividendNote();
+    });
+  }
+
+  double _quantityOnRecordDate() {
+    final stockId = _stockId;
+    if (stockId == null || stockId.isEmpty) return 0;
+    var quantity = 0.0;
+    final sorted = [...widget.transactions]..sort((a, b) {
+      final aDate = a['txn_date'] as String? ?? '';
+      final bDate = b['txn_date'] as String? ?? '';
+      return aDate.compareTo(bDate);
+    });
+    for (final transaction in sorted) {
+      if (transaction['stock_id'] != stockId) continue;
+      final transactionDate = DateTime.tryParse(transaction['txn_date'] as String? ?? '');
+      if (transactionDate == null || transactionDate.isAfter(_date)) continue;
+      final type = transaction['txn_type'] as String? ?? '';
+      if (type == 'buy') quantity += _num(transaction['quantity']);
+      if (type == 'sell') quantity -= _num(transaction['quantity']);
+    }
+    return quantity < 0 ? 0 : quantity;
+  }
+
+  String? _selectedStockSymbol() {
+    final stockId = _stockId;
+    if (stockId != null && stockId.isNotEmpty) {
+      for (final stock in widget.stocks) {
+        if (stock['id'] == stockId) {
+          return (stock['symbol'] as String?)?.trim().toUpperCase();
+        }
+      }
+    }
+    return _newStockSymbol.text.trim().isEmpty
+        ? null
+        : _newStockSymbol.text.trim().toUpperCase();
+  }
+
+  String _formatDate(DateTime date) {
+    return date.toIso8601String().substring(0, 10);
+  }
+
+  String _buildDividendNote() {
+    final dps = double.tryParse(_dividendPerShare.text) ?? 0;
+    final quantity = _eligibleDividendQuantity ?? 0;
+    final gross = _grossDividendAmount ?? 0;
+    final tax = _taxDividendAmount ?? 0;
+    if (dps <= 0 || quantity <= 0) return _notes.text;
+    return 'Dividend DPS ${dps.toStringAsFixed(4)}, qty ${quantity.toStringAsFixed(4)}, gross ${gross.toStringAsFixed(2)}, tax ${tax.toStringAsFixed(2)}';
   }
 
   Future<void> _save() async {
@@ -1473,6 +1684,77 @@ class _DseStockPickerState extends State<_DseStockPicker> {
     setState(() {
       _results = widget.search(_query.text.trim().toUpperCase());
     });
+  }
+}
+
+class _DividendEstimateSummary extends StatelessWidget {
+  const _DividendEstimateSummary({
+    required this.loading,
+    required this.message,
+    required this.eligibleQuantity,
+    required this.grossAmount,
+    required this.taxAmount,
+  });
+
+  final bool loading;
+  final String? message;
+  final double? eligibleQuantity;
+  final double? grossAmount;
+  final double? taxAmount;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: loading
+          ? const Row(
+              children: [
+                SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 10),
+                Text('Fetching DSE dividend data'),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (message != null)
+                  Text(
+                    message!,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                if (eligibleQuantity != null ||
+                    grossAmount != null ||
+                    taxAmount != null) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 6,
+                    children: [
+                      if (eligibleQuantity != null)
+                        Text('Qty ${eligibleQuantity!.toStringAsFixed(4)}'),
+                      if (grossAmount != null)
+                        Text('Gross ${grossAmount!.toStringAsFixed(2)}'),
+                      if (taxAmount != null)
+                        Text('Tax ${taxAmount!.toStringAsFixed(2)}'),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+    );
   }
 }
 

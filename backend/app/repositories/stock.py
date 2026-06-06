@@ -19,6 +19,10 @@ class StockRepository:
     async def get_stock(self, stock_id: UUID) -> Stock | None:
         return await self.db.get(Stock, stock_id)
 
+    async def get_stock_by_symbol(self, symbol: str) -> Stock | None:
+        result = await self.db.execute(select(Stock).where(func.upper(Stock.symbol) == symbol.strip().upper()))
+        return result.scalar_one_or_none()
+
     async def get_or_create_stock(self, payload) -> Stock:
         symbol = payload.symbol.strip().upper()
         existing = (await self.db.execute(select(Stock).where(func.upper(Stock.symbol) == symbol))).scalar_one_or_none()

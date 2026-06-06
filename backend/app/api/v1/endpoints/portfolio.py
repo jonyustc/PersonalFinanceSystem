@@ -1,11 +1,14 @@
+from decimal import Decimal
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from uuid import UUID
 
 from app.api.v1.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.stock import (
+    DseDividendEstimateResponse,
     DseStockSearchResponse,
     DividendCreate,
     DividendResponse,
@@ -46,6 +49,22 @@ async def search_dse_stocks(
         }
         for quote in quotes
     ]
+
+
+@router.get("/stocks/dse/dividend-estimate", response_model=DseDividendEstimateResponse)
+async def dse_dividend_estimate(
+    symbol: str = Query(min_length=1, max_length=20),
+    stock_id: UUID | None = None,
+    tax_rate_percent: Decimal = Query(default=Decimal("10"), ge=0, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await PortfolioService(db).dse_dividend_estimate(
+        current_user.id,
+        symbol=symbol,
+        stock_id=stock_id,
+        tax_rate_percent=tax_rate_percent,
+    )
 
 
 @router.post("/stocks/refresh-prices", response_model=StockPriceRefreshResponse)

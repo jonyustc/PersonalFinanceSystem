@@ -269,6 +269,22 @@ class ApiClient {
     return _asMapList(response.data);
   }
 
+  Future<Map<String, dynamic>> getDseDividendEstimate({
+    required String symbol,
+    String? stockId,
+    double taxRatePercent = 10,
+  }) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/portfolio/stocks/dse/dividend-estimate',
+      queryParameters: {
+        'symbol': symbol,
+        if (stockId != null && stockId.isNotEmpty) 'stock_id': stockId,
+        'tax_rate_percent': taxRatePercent,
+      },
+    );
+    return response.data ?? {};
+  }
+
   Future<List<Map<String, dynamic>>> getPortfolioTransactions({
     int limit = 100,
   }) async {

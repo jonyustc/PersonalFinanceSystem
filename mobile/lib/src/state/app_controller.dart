@@ -602,6 +602,18 @@ class AppController extends AsyncNotifier<AppSnapshot>
     return _api.searchDseStocks(query);
   }
 
+  Future<Map<String, dynamic>> getDseDividendEstimate({
+    required String symbol,
+    String? stockId,
+    double taxRatePercent = 10,
+  }) {
+    return _api.getDseDividendEstimate(
+      symbol: symbol,
+      stockId: stockId,
+      taxRatePercent: taxRatePercent,
+    );
+  }
+
   Future<void> saveStock({
     String? id,
     required String name,

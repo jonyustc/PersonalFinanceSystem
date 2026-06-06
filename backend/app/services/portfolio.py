@@ -14,6 +14,7 @@ from app.services.market_price import MarketPriceService
 
 ZERO = Decimal("0")
 BROKER_FEE_RATE = Decimal("0.004")
+DEFAULT_DIVIDEND_TAX_RATE = Decimal("10")
 
 
 class PortfolioService:
@@ -109,6 +110,73 @@ class PortfolioService:
             "fetched_at": fetched_at,
             "missing_symbols": missing,
             "stocks": updated,
+        }
+
+    async def dse_dividend_estimate(
+        self,
+        user_id: UUID,
+        symbol: str,
+        stock_id: UUID | None = None,
+        tax_rate_percent: Decimal = DEFAULT_DIVIDEND_TAX_RATE,
+    ):
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            raise HTTPException(400, "Stock symbol is required")
+
+        stock = (
+            await self.repo.get_stock(stock_id)
+            if stock_id
+            else await self.repo.get_stock_by_symbol(normalized_symbol)
+        )
+        if stock_id and not stock:
+            raise HTTPException(404, "Stock not found")
+
+        try:
+            events = await MarketPriceService().fetch_dse_dividend_events(normalized_symbol)
+        except Exception as exc:
+            return self._empty_dividend_estimate(
+                normalized_symbol,
+                tax_rate_percent,
+                f"DSE dividend lookup failed: {exc}",
+            )
+
+        usable_events = [event for event in events if event.record_date is not None]
+        if not usable_events:
+            return self._empty_dividend_estimate(
+                normalized_symbol,
+                tax_rate_percent,
+                "DSE dividend record date or cash dividend was not found",
+            )
+
+        event = sorted(usable_events, key=lambda item: item.record_date, reverse=True)[0]
+        stock_transactions = []
+        if stock:
+            transactions = await self.repo.transactions(user_id, 10000)
+            stock_transactions = [
+                transaction
+                for transaction in transactions
+                if transaction.stock_id == stock.id
+                and transaction.txn_type in {"buy", "sell"}
+            ]
+        eligible_quantity = self._quantity_on_date(stock_transactions, event.record_date)
+        dividend_per_share = event.face_value * event.cash_percent / Decimal("100")
+        gross_amount = eligible_quantity * dividend_per_share
+        tax_amount = gross_amount * tax_rate_percent / Decimal("100")
+        net_amount = gross_amount - tax_amount
+        return {
+            "symbol": normalized_symbol,
+            "found": True,
+            "source": event.source,
+            "record_date": event.record_date,
+            "year": event.year,
+            "cash_dividend_percent": event.cash_percent,
+            "dividend_per_share": dividend_per_share,
+            "eligible_quantity": eligible_quantity,
+            "gross_amount": gross_amount,
+            "tax_rate_percent": tax_rate_percent,
+            "tax_amount": tax_amount,
+            "net_amount": net_amount,
+            "message": None if stock else "Stock exists in DSE, but no saved local holding was found",
         }
 
     async def create_transaction(self, user_id: UUID, payload: PortfolioTransactionCreate):
@@ -230,7 +298,8 @@ class PortfolioService:
             key = (dividend.stock_id, dividend.payment_date.year)
             dividend_report[key] = dividend_report.get(key, ZERO) + dividend.amount
 
-        auto_dividend_report = await self._automatic_dividend_report(transactions)
+        manual_dividend_keys = set(dividend_report)
+        auto_dividend_report = await self._automatic_dividend_report(transactions, manual_dividend_keys)
         auto_dividend_by_stock = {}
         for row in auto_dividend_report:
             auto_dividend_by_stock[row["stock_id"]] = auto_dividend_by_stock.get(row["stock_id"], ZERO) + row["dividend_gain"]
@@ -417,7 +486,29 @@ class PortfolioService:
             return ZERO
         return value / base * Decimal("100")
 
-    async def _automatic_dividend_report(self, transactions: list[PortfolioTransaction]) -> list[dict]:
+    def _empty_dividend_estimate(self, symbol: str, tax_rate_percent: Decimal, message: str):
+        return {
+            "symbol": symbol,
+            "found": False,
+            "source": None,
+            "record_date": None,
+            "year": None,
+            "cash_dividend_percent": None,
+            "dividend_per_share": None,
+            "eligible_quantity": ZERO,
+            "gross_amount": ZERO,
+            "tax_rate_percent": tax_rate_percent,
+            "tax_amount": ZERO,
+            "net_amount": ZERO,
+            "message": message,
+        }
+
+    async def _automatic_dividend_report(
+        self,
+        transactions: list[PortfolioTransaction],
+        manual_dividend_keys: set[tuple[UUID, int]] | None = None,
+    ) -> list[dict]:
+        manual_dividend_keys = manual_dividend_keys or set()
         by_stock: dict[UUID, list[PortfolioTransaction]] = {}
         for transaction in transactions:
             if transaction.stock_id and transaction.txn_type in {"buy", "sell"}:
@@ -436,10 +527,13 @@ class PortfolioService:
             for event in events:
                 if event.record_date is None:
                     continue
+                if (stock_id, event.year) in manual_dividend_keys:
+                    continue
                 quantity = self._quantity_on_date(stock_transactions, event.record_date)
                 if quantity <= ZERO:
                     continue
-                amount = quantity * event.face_value * event.cash_percent / Decimal("100")
+                gross_amount = quantity * event.face_value * event.cash_percent / Decimal("100")
+                amount = gross_amount - (gross_amount * DEFAULT_DIVIDEND_TAX_RATE / Decimal("100"))
                 if amount <= ZERO:
                     continue
                 rows.append(
