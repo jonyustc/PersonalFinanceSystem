@@ -32,7 +32,11 @@ class DashboardPage extends ConsumerWidget {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _BalanceSummary(summary: summary, currency: currency),
+          _BalanceSummary(
+            summary: summary,
+            currency: currency,
+            accounts: snapshot.accounts,
+          ),
           const SizedBox(height: 18),
           _RecentTransactions(
             snapshot.transactions,
@@ -46,10 +50,15 @@ class DashboardPage extends ConsumerWidget {
 }
 
 class _BalanceSummary extends StatelessWidget {
-  const _BalanceSummary({required this.summary, required this.currency});
+  const _BalanceSummary({
+    required this.summary,
+    required this.currency,
+    required this.accounts,
+  });
 
   final FinanceSummary summary;
   final String currency;
+  final List<Map<String, dynamic>> accounts;
 
   @override
   Widget build(BuildContext context) {
@@ -60,6 +69,14 @@ class _BalanceSummary extends StatelessWidget {
           value: money(summary.assets, currency: currency),
           icon: Icons.account_balance_wallet_outlined,
           color: const Color(0xFF15803D),
+          onTap: () => _showBalanceDetails(
+            context,
+            title: 'Assets',
+            rows: _assetRows(accounts, summary, currency),
+            totalLabel: 'Total assets',
+            total: summary.assets,
+            currency: currency,
+          ),
         ),
         const SizedBox(height: 10),
         _SummaryCard(
@@ -67,6 +84,14 @@ class _BalanceSummary extends StatelessWidget {
           value: money(summary.creditCardOutstanding, currency: currency),
           icon: Icons.credit_card_outlined,
           color: const Color(0xFFB91C1C),
+          onTap: () => _showBalanceDetails(
+            context,
+            title: 'Liabilities',
+            rows: _liabilityRows(accounts, currency),
+            totalLabel: 'Total liabilities',
+            total: summary.creditCardOutstanding,
+            currency: currency,
+          ),
         ),
         const SizedBox(height: 10),
         _SummaryCard(
@@ -74,6 +99,20 @@ class _BalanceSummary extends StatelessWidget {
           value: money(summary.netWorth, currency: currency),
           icon: Icons.balance_outlined,
           color: Theme.of(context).colorScheme.primary,
+          onTap: () => _showBalanceDetails(
+            context,
+            title: 'Balance',
+            rows: [
+              _BalanceDetailRow('Total assets', summary.assets),
+              _BalanceDetailRow(
+                'Total liabilities',
+                -summary.creditCardOutstanding,
+              ),
+            ],
+            totalLabel: 'Balance',
+            total: summary.netWorth,
+            currency: currency,
+          ),
         ),
       ],
     );
@@ -86,17 +125,20 @@ class _SummaryCard extends StatelessWidget {
     required this.value,
     required this.icon,
     required this.color,
+    this.onTap,
   });
 
   final String label;
   final String value;
   final IconData icon;
   final Color color;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       child: ListTile(
+        onTap: onTap,
         leading: CircleAvatar(
           backgroundColor: color.withValues(alpha: 0.12),
           foregroundColor: color,
@@ -114,6 +156,127 @@ class _SummaryCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _BalanceDetailRow {
+  const _BalanceDetailRow(this.label, this.amount, {this.currency});
+
+  final String label;
+  final double amount;
+  final String? currency;
+}
+
+List<_BalanceDetailRow> _assetRows(
+  List<Map<String, dynamic>> accounts,
+  FinanceSummary summary,
+  String currency,
+) {
+  final rows = accounts
+      .where((account) => !isCreditCardAccount(account))
+      .map(
+        (account) => _BalanceDetailRow(
+          account['name'] as String? ?? 'Account',
+          asDouble(account['balance']),
+          currency: account['currency'] as String? ?? currency,
+        ),
+      )
+      .toList();
+  if (summary.portfolioValue != 0) {
+    rows.add(_BalanceDetailRow('Stock portfolio', summary.portfolioValue));
+  }
+  rows.sort((a, b) => b.amount.compareTo(a.amount));
+  return rows;
+}
+
+List<_BalanceDetailRow> _liabilityRows(
+  List<Map<String, dynamic>> accounts,
+  String currency,
+) {
+  return accounts
+      .where(isCreditCardAccount)
+      .map(
+        (account) => _BalanceDetailRow(
+          account['name'] as String? ?? 'Credit card',
+          asDouble(account['balance']),
+          currency: account['currency'] as String? ?? currency,
+        ),
+      )
+      .toList()
+    ..sort((a, b) => b.amount.compareTo(a.amount));
+}
+
+void _showBalanceDetails(
+  BuildContext context, {
+  required String title,
+  required List<_BalanceDetailRow> rows,
+  required String totalLabel,
+  required double total,
+  required String currency,
+}) {
+  showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (_) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            if (rows.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 18),
+                child: Text('No rows to show.'),
+              )
+            else
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: rows.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final row = rows[index];
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        row.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: Text(
+                        money(row.amount, currency: row.currency ?? currency),
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            const Divider(height: 20),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                totalLabel,
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              trailing: Text(
+                money(total, currency: currency),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _RecentTransactions extends StatelessWidget {

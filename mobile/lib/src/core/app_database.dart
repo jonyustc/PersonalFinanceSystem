@@ -257,12 +257,22 @@ class AppDatabase {
         'transactions',
         where: 'is_pending = 1',
       );
+      final syncedReferences = rows
+          .map((row) => row['reference_number']?.toString())
+          .whereType<String>()
+          .toSet();
       await txn.delete('transactions');
       for (final row in rows) {
         await txn.insert('transactions', _transactionRow(row),
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
       for (final row in pendingRows) {
+        final localId = row['id']?.toString();
+        final rawReference = _rawReferenceNumber(row);
+        if (syncedReferences.contains(localId) ||
+            (rawReference != null && syncedReferences.contains(rawReference))) {
+          continue;
+        }
         await txn.insert(
           'transactions',
           row,
@@ -270,6 +280,18 @@ class AppDatabase {
         );
       }
     });
+  }
+
+  String? _rawReferenceNumber(Map<String, dynamic> row) {
+    final raw = row['raw_json'];
+    if (raw is! String || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return decoded['reference_number']?.toString();
+    } catch (_) {
+      return null;
+    }
+    return null;
   }
 
   Future<void> replaceBudgets(List<Map<String, dynamic>> rows) async {

@@ -25,6 +25,10 @@ class TransactionService:
 
     async def create(self, user_id: UUID, payload: TransactionCreate):
         try:
+            if payload.reference_number:
+                existing = await self._find_by_reference(user_id, payload.reference_number)
+                if existing:
+                    return existing
             trx = await self._build_and_apply(user_id, payload)
             await self.db.commit()
             await self.db.refresh(trx)
@@ -32,6 +36,15 @@ class TransactionService:
         except Exception:
             await self.db.rollback()
             raise
+
+    async def _find_by_reference(self, user_id: UUID, reference_number: str) -> Transaction | None:
+        result = await self.db.execute(
+            select(Transaction).where(
+                Transaction.user_id == user_id,
+                Transaction.reference_number == reference_number,
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def list(
         self,

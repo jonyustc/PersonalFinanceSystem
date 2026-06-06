@@ -194,6 +194,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? merchantName,
     String? description,
   }) async {
+    final localId = const Uuid().v4();
     final payload = {
       'account_id': accountId,
       'category_id': categoryId,
@@ -204,11 +205,12 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'description': _blankToNull(description),
       'tags': <String>[],
       'transaction_status': 'posted',
+      'reference_number': localId,
     };
 
     final local = {
       ...payload,
-      'id': const Uuid().v4(),
+      'id': localId,
       'payment_method': null,
     };
     await _db.upsertTransaction(local, pending: true);
