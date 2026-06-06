@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
@@ -140,15 +141,14 @@ class PortfolioService:
                 f"DSE dividend lookup failed: {exc}",
             )
 
-        usable_events = [event for event in events if event.record_date is not None]
-        if not usable_events:
+        if not events:
             return self._empty_dividend_estimate(
                 normalized_symbol,
                 tax_rate_percent,
-                "DSE dividend record date or cash dividend was not found",
+                "DSE cash dividend declaration was not found",
             )
 
-        event = sorted(usable_events, key=lambda item: item.record_date, reverse=True)[0]
+        event = sorted(events, key=lambda item: item.year, reverse=True)[0]
         stock_transactions = []
         if stock:
             transactions = await self.repo.transactions(user_id, 10000)
@@ -158,7 +158,11 @@ class PortfolioService:
                 if transaction.stock_id == stock.id
                 and transaction.txn_type in {"buy", "sell"}
             ]
-        eligible_quantity = self._quantity_on_date(stock_transactions, event.record_date)
+        eligible_quantity = (
+            self._quantity_on_date(stock_transactions, event.record_date)
+            if event.record_date is not None
+            else ZERO
+        )
         dividend_per_share = event.face_value * event.cash_percent / Decimal("100")
         gross_amount = eligible_quantity * dividend_per_share
         tax_amount = gross_amount * tax_rate_percent / Decimal("100")
@@ -168,6 +172,7 @@ class PortfolioService:
             "found": True,
             "source": event.source,
             "record_date": event.record_date,
+            "payment_date": date.today(),
             "year": event.year,
             "cash_dividend_percent": event.cash_percent,
             "dividend_per_share": dividend_per_share,
@@ -176,7 +181,7 @@ class PortfolioService:
             "tax_rate_percent": tax_rate_percent,
             "tax_amount": tax_amount,
             "net_amount": net_amount,
-            "message": None if stock else "Stock exists in DSE, but no saved local holding was found",
+            "message": self._dividend_estimate_message(stock is not None, event.record_date is not None),
         }
 
     async def create_transaction(self, user_id: UUID, payload: PortfolioTransactionCreate):
@@ -200,6 +205,7 @@ class PortfolioService:
                 price=payload.price,
                 fees=fees,
                 txn_date=payload.txn_date,
+                record_date=payload.record_date if payload.txn_type == "income" else None,
                 notes=payload.notes,
             )
             self.db.add(trx)
@@ -240,6 +246,7 @@ class PortfolioService:
             trx.price = payload.price
             trx.fees = payload.fees if payload.fees is not None else self._default_fee(payload)
             trx.txn_date = payload.txn_date
+            trx.record_date = payload.record_date if payload.txn_type == "income" else None
             trx.notes = payload.notes
             await self._apply_broker_cash(trx, new_broker)
             await self._rebuild_derived(user_id)
@@ -277,6 +284,7 @@ class PortfolioService:
             price=payload.amount,
             fees=ZERO,
             txn_date=payload.payment_date,
+            record_date=payload.record_date,
             notes=payload.notes,
         )
         await self.create_transaction(user_id, transaction)
@@ -286,6 +294,8 @@ class PortfolioService:
         return await self.repo.dividends(user_id)
 
     async def summary(self, user_id: UUID):
+        await self._rebuild_derived(user_id)
+        await self.db.commit()
         holdings = await self.repo.holdings(user_id)
         dividends = await self.repo.dividends(user_id)
         broker_accounts = await self.repo.broker_accounts(user_id)
@@ -294,15 +304,23 @@ class PortfolioService:
         dividend_by_stock = {}
         dividend_report = {}
         for dividend in dividends:
-            dividend_by_stock[dividend.stock_id] = dividend_by_stock.get(dividend.stock_id, ZERO) + dividend.amount
-            key = (dividend.stock_id, dividend.payment_date.year)
+            dividend_by_stock[dividend.stock_id] = (
+                dividend_by_stock.get(dividend.stock_id, ZERO) + dividend.amount
+            )
+            key_date = dividend.record_date or dividend.payment_date
+            key = (dividend.stock_id, key_date.year)
             dividend_report[key] = dividend_report.get(key, ZERO) + dividend.amount
 
         manual_dividend_keys = set(dividend_report)
-        auto_dividend_report = await self._automatic_dividend_report(transactions, manual_dividend_keys)
+        auto_dividend_report = await self._automatic_dividend_report(
+            transactions,
+            manual_dividend_keys,
+        )
         auto_dividend_by_stock = {}
         for row in auto_dividend_report:
-            auto_dividend_by_stock[row["stock_id"]] = auto_dividend_by_stock.get(row["stock_id"], ZERO) + row["dividend_gain"]
+            auto_dividend_by_stock[row["stock_id"]] = (
+                auto_dividend_by_stock.get(row["stock_id"], ZERO) + row["dividend_gain"]
+            )
 
         holding_rows = []
         active_cost_basis = ZERO
@@ -315,7 +333,10 @@ class PortfolioService:
             invested = holding.quantity * holding.avg_buy_price
             market_value = holding.quantity * (holding.stock.last_price or ZERO)
             unrealized = market_value - invested
-            dividend_income = dividend_by_stock.get(holding.stock_id, ZERO) + auto_dividend_by_stock.get(holding.stock_id, ZERO)
+            dividend_income = (
+                dividend_by_stock.get(holding.stock_id, ZERO)
+                + auto_dividend_by_stock.get(holding.stock_id, ZERO)
+            )
             total_pl = unrealized + holding.realized_profit_loss
             active_cost_basis += invested
             equity_value += market_value
@@ -341,9 +362,13 @@ class PortfolioService:
         cash_balance = derived_cash
         total_portfolio = equity_value + cash_balance
         unrealized_gain_loss = equity_value - active_cost_basis
-        dividend_income_total = sum((dividend.amount for dividend in dividends), ZERO) + sum((row["dividend_gain"] for row in auto_dividend_report), ZERO)
+        dividend_income_total = sum((dividend.amount for dividend in dividends), ZERO) + sum(
+            (row["dividend_gain"] for row in auto_dividend_report),
+            ZERO,
+        )
         realized_total = realized_capital
         overall = realized_total + unrealized_gain_loss
+        cagr_percent = self._cagr_percent(principal, total_portfolio, transactions)
 
         return {
             "total_principal_investment": principal,
@@ -358,6 +383,7 @@ class PortfolioService:
             "total_realized_profit": realized_total,
             "overall_profit_loss": overall,
             "return_percent": self._percent(overall, principal),
+            "cagr_percent": cagr_percent,
             "broker_accounts": [
                 {"id": account.id, "name": account.name, "balance": account.balance, "currency": account.currency}
                 for account in broker_accounts
@@ -399,7 +425,16 @@ class PortfolioService:
         aggregates: dict[UUID, dict[str, Decimal]] = {}
         for trx in transactions:
             if trx.txn_type == "income" and trx.stock_id:
-                self.db.add(Dividend(user_id=user_id, stock_id=trx.stock_id, amount=trx.price, payment_date=trx.txn_date, notes=trx.notes))
+                self.db.add(
+                    Dividend(
+                        user_id=user_id,
+                        stock_id=trx.stock_id,
+                        amount=trx.price,
+                        payment_date=trx.txn_date,
+                        record_date=trx.record_date,
+                        notes=trx.notes,
+                    )
+                )
             if not trx.stock_id:
                 continue
             stock_data = aggregates.setdefault(
@@ -408,7 +443,7 @@ class PortfolioService:
             )
             if trx.txn_type == "buy":
                 stock_data["quantity"] += trx.quantity
-                stock_data["cost_basis"] += self._total_amount(trx)
+                stock_data["cost_basis"] += self._share_value(trx)
             elif trx.txn_type == "sell":
                 if trx.quantity > stock_data["quantity"]:
                     raise HTTPException(400, "Sell quantity exceeds holding")
@@ -454,6 +489,11 @@ class PortfolioService:
             return gross + trx.fees
         return gross
 
+    def _share_value(self, trx: PortfolioTransaction) -> Decimal:
+        if trx.txn_type in {"buy", "sell"}:
+            return trx.quantity * trx.price
+        return trx.price
+
     def _cash_flow(self, trx: PortfolioTransaction) -> Decimal:
         amount = self._total_amount(trx)
         if trx.txn_type in {"buy", "withdraw"}:
@@ -477,6 +517,7 @@ class PortfolioService:
             "total_amount": self._total_amount(trx),
             "cash_flow": self._cash_flow(trx),
             "txn_date": trx.txn_date,
+            "record_date": trx.record_date,
             "notes": trx.notes,
             "stock": stock,
         }
@@ -486,12 +527,43 @@ class PortfolioService:
             return ZERO
         return value / base * Decimal("100")
 
+    def _cagr_percent(
+        self,
+        invested_capital: Decimal,
+        ending_value: Decimal,
+        transactions: list[PortfolioTransaction],
+    ) -> Decimal:
+        if invested_capital <= ZERO or ending_value <= ZERO:
+            return ZERO
+        start_date = self._portfolio_start_date(transactions)
+        if start_date is None:
+            return ZERO
+        days = max((date.today() - start_date).days, 1)
+        years = Decimal(days) / Decimal("365.25")
+        if years <= ZERO:
+            return ZERO
+        ratio = ending_value / invested_capital
+        try:
+            annualized = Decimal(str(float(ratio) ** (1 / float(years)))) - Decimal("1")
+        except (OverflowError, ValueError):
+            return ZERO
+        return annualized * Decimal("100")
+
+    def _portfolio_start_date(self, transactions: list[PortfolioTransaction]) -> date | None:
+        candidates = [
+            transaction.txn_date
+            for transaction in transactions
+            if transaction.txn_type in {"deposit", "buy"}
+        ]
+        return min(candidates) if candidates else None
+
     def _empty_dividend_estimate(self, symbol: str, tax_rate_percent: Decimal, message: str):
         return {
             "symbol": symbol,
             "found": False,
             "source": None,
             "record_date": None,
+            "payment_date": date.today(),
             "year": None,
             "cash_dividend_percent": None,
             "dividend_per_share": None,
@@ -502,6 +574,13 @@ class PortfolioService:
             "net_amount": ZERO,
             "message": message,
         }
+
+    def _dividend_estimate_message(self, has_stock: bool, has_record_date: bool) -> str | None:
+        if not has_stock:
+            return "DSE declaration found, but no saved local holding was found"
+        if not has_record_date:
+            return "DSE declaration found. Enter record date manually to calculate eligible holding"
+        return None
 
     async def _automatic_dividend_report(
         self,

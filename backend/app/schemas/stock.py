@@ -53,6 +53,7 @@ class DseDividendEstimateResponse(BaseModel):
     found: bool
     source: str | None = None
     record_date: date | None = None
+    payment_date: date | None = None
     year: int | None = None
     cash_dividend_percent: Decimal | None = None
     dividend_per_share: Decimal | None = None
@@ -73,6 +74,7 @@ class PortfolioTransactionCreate(BaseModel):
     price: Decimal = Field(default=Decimal("0"), ge=0)
     fees: Decimal | None = Field(default=None, ge=0)
     txn_date: date = Field(default_factory=date.today)
+    record_date: date | None = None
     notes: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
@@ -99,6 +101,7 @@ class PortfolioTransactionResponse(BaseModel):
     total_amount: Decimal
     cash_flow: Decimal
     txn_date: date
+    record_date: date | None = None
     notes: str | None = None
     stock: StockResponse | None = None
 
@@ -110,6 +113,7 @@ class DividendCreate(BaseModel):
     stock_id: UUID
     amount: Decimal = Field(gt=0)
     payment_date: date = Field(default_factory=date.today)
+    record_date: date | None = None
     notes: str | None = Field(default=None, max_length=255)
     broker_account_id: UUID | None = None
 
@@ -119,6 +123,7 @@ class DividendResponse(BaseModel):
     stock_id: UUID
     amount: Decimal
     payment_date: date
+    record_date: date | None = None
     notes: str | None = None
     stock: StockResponse | None = None
 
@@ -170,6 +175,7 @@ class PortfolioSummaryResponse(BaseModel):
     total_realized_profit: Decimal
     overall_profit_loss: Decimal
     return_percent: Decimal
+    cagr_percent: Decimal
     broker_accounts: list[BrokerAccountSummary]
     holdings: list[HoldingResponse]
     dividend_report: list[DividendReportRow]

@@ -288,6 +288,10 @@ class _DashboardView extends StatelessWidget {
                 'Return',
                 '${_num(summary['return_percent']).toStringAsFixed(1)}%',
               ),
+              _MiniMetric(
+                'CAGR',
+                '${_num(summary['cagr_percent']).toStringAsFixed(1)}%',
+              ),
             ],
           ),
         ),
@@ -362,7 +366,7 @@ class _HoldingView extends StatelessWidget {
             final unrealized = _num(holding['unrealized_profit_loss']);
             final quantity = _num(holding['quantity']);
             final invested = _num(holding['invested_amount']);
-            final avgPrice = quantity == 0 ? 0.0 : invested / quantity;
+            final avgPrice = _num(holding['avg_buy_price']);
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: _Panel(
@@ -994,6 +998,7 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
   String? _stockId;
   String? _brokerAccountId;
   DateTime _date = DateTime.now();
+  DateTime? _recordDate;
   bool _busy = false;
   bool _loadingDividend = false;
   String? _dividendLookupMessage;
@@ -1020,6 +1025,7 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
       _date =
           DateTime.tryParse(initial['txn_date'] as String? ?? '') ??
           DateTime.now();
+      _recordDate = DateTime.tryParse(initial['record_date'] as String? ?? '');
     }
   }
 
@@ -1260,11 +1266,33 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
                 ),
               ],
               const SizedBox(height: 10),
-              OutlinedButton.icon(
-                onPressed: _pickDate,
-                icon: const Icon(Icons.calendar_today_outlined),
-                label: Text(_date.toIso8601String().substring(0, 10)),
-              ),
+              if (_txnType == 'income') ...[
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _pickRecordDate,
+                      icon: const Icon(Icons.event_available_outlined),
+                      label: Text(
+                        _recordDate == null
+                            ? 'Record date'
+                            : 'Record ${_formatDate(_recordDate!)}',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: _pickPaymentDate,
+                      icon: const Icon(Icons.payments_outlined),
+                      label: Text('Payment ${_formatDate(_date)}'),
+                    ),
+                  ],
+                ),
+              ] else
+                OutlinedButton.icon(
+                  onPressed: _pickPaymentDate,
+                  icon: const Icon(Icons.calendar_today_outlined),
+                  label: Text(_formatDate(_date)),
+                ),
               const SizedBox(height: 10),
               TextField(
                 controller: _notes,
@@ -1313,7 +1341,7 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
     return parsed == null || parsed <= 0 ? 'Enter a valid amount' : null;
   }
 
-  Future<void> _pickDate() async {
+  Future<void> _pickPaymentDate() async {
     final picked = await showDatePicker(
       context: context,
       initialDate: _date,
@@ -1322,7 +1350,19 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
     );
     if (picked != null) {
       setState(() => _date = picked);
-      if (_txnType == 'income') _recalculateManualDividend();
+    }
+  }
+
+  Future<void> _pickRecordDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _recordDate ?? _date,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked != null) {
+      setState(() => _recordDate = picked);
+      _recalculateManualDividend();
     }
   }
 
@@ -1398,6 +1438,7 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
   void _applyDividendEstimate(Map<String, dynamic> estimate) {
     final found = estimate['found'] == true;
     final recordDate = DateTime.tryParse(estimate['record_date'] as String? ?? '');
+    final paymentDate = DateTime.tryParse(estimate['payment_date'] as String? ?? '');
     final dividendPerShare = _num(estimate['dividend_per_share']);
     final netAmount = _num(estimate['net_amount']);
     _eligibleDividendQuantity = _num(estimate['eligible_quantity']);
@@ -1405,12 +1446,22 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
     _taxDividendAmount = _num(estimate['tax_amount']);
 
     if (found && recordDate != null && dividendPerShare > 0) {
-      _date = recordDate;
+      _recordDate = recordDate;
+      if (widget.initial == null && paymentDate != null) _date = paymentDate;
       _dividendPerShare.text = dividendPerShare.toStringAsFixed(4);
       if (netAmount > 0) _price.text = netAmount.toStringAsFixed(2);
       _dividendLookupMessage =
-          'DSE record ${_formatDate(recordDate)}. Edit DPS, tax, or amount if needed.';
+          'DSE record ${_formatDate(recordDate)}. Payment date stays editable for broker cash.';
       _notes.text = _buildDividendNote();
+      return;
+    }
+
+    if (found && dividendPerShare > 0) {
+      if (widget.initial == null && paymentDate != null) _date = paymentDate;
+      _dividendPerShare.text = dividendPerShare.toStringAsFixed(4);
+      _dividendLookupMessage =
+          estimate['message'] as String? ??
+          'DSE declaration found. Enter record date to calculate eligible holding.';
       return;
     }
 
@@ -1441,14 +1492,17 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
       _taxDividendAmount = tax;
       if (net > 0) _price.text = net.toStringAsFixed(2);
       _dividendLookupMessage =
-          'Calculated from holding on ${_formatDate(_date)}. Amount remains editable.';
+          _recordDate == null
+              ? 'Enter record date to calculate eligible holding.'
+              : 'Calculated from holding on ${_formatDate(_recordDate!)}. Amount remains editable.';
       _notes.text = _buildDividendNote();
     });
   }
 
   double _quantityOnRecordDate() {
     final stockId = _stockId;
-    if (stockId == null || stockId.isEmpty) return 0;
+    final recordDate = _recordDate;
+    if (stockId == null || stockId.isEmpty || recordDate == null) return 0;
     var quantity = 0.0;
     final sorted = [...widget.transactions]..sort((a, b) {
       final aDate = a['txn_date'] as String? ?? '';
@@ -1458,7 +1512,7 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
     for (final transaction in sorted) {
       if (transaction['stock_id'] != stockId) continue;
       final transactionDate = DateTime.tryParse(transaction['txn_date'] as String? ?? '');
-      if (transactionDate == null || transactionDate.isAfter(_date)) continue;
+      if (transactionDate == null || transactionDate.isAfter(recordDate)) continue;
       final type = transaction['txn_type'] as String? ?? '';
       if (type == 'buy') quantity += _num(transaction['quantity']);
       if (type == 'sell') quantity -= _num(transaction['quantity']);
@@ -1510,6 +1564,7 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
             price: double.parse(_price.text),
             fees: _manualBrokerFee(),
             date: _date,
+            recordDate: _recordDate,
             notes: _notes.text,
           );
       if (mounted) Navigator.of(context).pop();

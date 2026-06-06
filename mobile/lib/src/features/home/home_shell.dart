@@ -27,7 +27,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   Widget build(BuildContext context) {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
     final pages = [
-      const DashboardPage(),
+      DashboardPage(onOpenTransactions: () => setState(() => _index = 1)),
       const TransactionsPage(),
       const AccountsPage(),
       const BudgetsPage(),

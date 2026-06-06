@@ -17,6 +17,7 @@ class ReportsPage extends ConsumerStatefulWidget {
 class _ReportsPageState extends ConsumerState<ReportsPage> {
   late DateTime _start;
   late DateTime _end;
+  String? _mainCategoryFilterId;
   String? _parentId;
   String? _leafCategoryId;
   int _selectedIndex = 0;
@@ -36,11 +37,13 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final mainCategories = _mainExpenseCategories(snapshot.categories);
+    final effectiveParentId = _parentId ?? _mainCategoryFilterId;
     final currency = snapshot.session?.currency ?? 'BDT';
     final rows = _buildRows(
       categories: snapshot.categories,
       transactions: snapshot.transactions,
-      parentId: _parentId,
+      parentId: effectiveParentId,
     );
     final transactions = _leafCategoryId == null
         ? <Map<String, dynamic>>[]
@@ -50,9 +53,9 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
         ? null
         : rows[_selectedIndex.clamp(0, rows.length - 1).toInt()];
     final title = _leafCategoryId == null
-        ? (_parentId == null
+        ? (effectiveParentId == null
               ? 'Expense categories'
-              : _categoryName(snapshot.categories, _parentId!) ??
+              : _categoryName(snapshot.categories, effectiveParentId) ??
                     'Subcategories')
         : _categoryName(snapshot.categories, _leafCategoryId!) ??
               'Transactions';
@@ -69,8 +72,11 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
               title: title,
               start: _start,
               end: _end,
+              mainCategories: mainCategories,
+              selectedMainCategoryId: _mainCategoryFilterId,
               canGoBack: canGoBack,
               onBack: _back,
+              onMainCategoryChanged: _setMainCategoryFilter,
               onPrevious: _previousRange,
               onNext: _nextRange,
               onPickRange: _pickRange,
@@ -129,7 +135,12 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
       (category) => category['parent_id'] == row.categoryId,
     );
     setState(() {
-      if (_parentId == null && hasChildren) {
+      if (_mainCategoryFilterId == null && _parentId == null && hasChildren) {
+        _parentId = row.categoryId;
+        _leafCategoryId = null;
+      } else if (_parentId != row.categoryId &&
+          _mainCategoryFilterId != row.categoryId &&
+          hasChildren) {
         _parentId = row.categoryId;
         _leafCategoryId = null;
       } else {
@@ -183,6 +194,15 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     setState(() {
       _start = _start.add(Duration(days: days));
       _end = _end.add(Duration(days: days));
+      _parentId = null;
+      _leafCategoryId = null;
+      _selectedIndex = 0;
+    });
+  }
+
+  void _setMainCategoryFilter(String? categoryId) {
+    setState(() {
+      _mainCategoryFilterId = categoryId;
       _parentId = null;
       _leafCategoryId = null;
       _selectedIndex = 0;
@@ -266,6 +286,22 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     }
     return null;
   }
+
+  List<Map<String, dynamic>> _mainExpenseCategories(
+    List<Map<String, dynamic>> categories,
+  ) {
+    return categories
+        .where(
+          (category) =>
+              category['type'] == 'expense' && category['parent_id'] == null,
+        )
+        .toList()
+      ..sort(
+        (a, b) => (a['name'] as String? ?? '').compareTo(
+          b['name'] as String? ?? '',
+        ),
+      );
+  }
 }
 
 class _ReportRow {
@@ -285,8 +321,11 @@ class _ReportHeader extends StatelessWidget {
     required this.title,
     required this.start,
     required this.end,
+    required this.mainCategories,
+    required this.selectedMainCategoryId,
     required this.canGoBack,
     required this.onBack,
+    required this.onMainCategoryChanged,
     required this.onPrevious,
     required this.onNext,
     required this.onPickRange,
@@ -295,8 +334,11 @@ class _ReportHeader extends StatelessWidget {
   final String title;
   final DateTime start;
   final DateTime end;
+  final List<Map<String, dynamic>> mainCategories;
+  final String? selectedMainCategoryId;
   final bool canGoBack;
   final VoidCallback onBack;
+  final ValueChanged<String?> onMainCategoryChanged;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final VoidCallback onPickRange;
@@ -331,6 +373,28 @@ class _ReportHeader extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: selectedMainCategoryId ?? '',
+              decoration: const InputDecoration(
+                labelText: 'Main category',
+                prefixIcon: Icon(Icons.filter_list),
+              ),
+              items: [
+                const DropdownMenuItem<String>(
+                  value: '',
+                  child: Text('All main categories'),
+                ),
+                ...mainCategories.map(
+                  (category) => DropdownMenuItem<String>(
+                    value: category['id'] as String,
+                    child: Text(category['name'] as String? ?? 'Category'),
+                  ),
+                ),
+              ],
+              onChanged: (value) =>
+                  onMainCategoryChanged(value == '' ? null : value),
             ),
             const SizedBox(height: 12),
             Row(

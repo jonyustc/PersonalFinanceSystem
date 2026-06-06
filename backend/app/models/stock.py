@@ -37,6 +37,7 @@ class PortfolioTransaction(UUIDMixin, TimestampMixin, Base):
     price: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
     fees: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
     txn_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    record_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     stock: Mapped[Stock | None] = relationship("Stock", back_populates="transactions")
@@ -63,6 +64,7 @@ class Dividend(UUIDMixin, TimestampMixin, Base):
     stock_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("stocks.id", ondelete="CASCADE"), nullable=False, index=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     payment_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    record_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     stock: Mapped[Stock] = relationship("Stock", back_populates="dividends")

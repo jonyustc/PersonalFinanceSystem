@@ -110,7 +110,7 @@ FinanceSummary buildFinanceSummary({
   final categoryById = {for (final row in categories) row['id'] as String: row};
   final accountById = {for (final row in accounts) row['id'] as String: row};
 
-  final assets = accounts.where((row) => !isCreditCardAccount(row)).fold<double>(
+  final cashAssets = accounts.where((row) => !isCreditCardAccount(row)).fold<double>(
         0,
         (sum, row) => sum + asDouble(row['balance']),
       );
@@ -177,6 +177,7 @@ FinanceSummary buildFinanceSummary({
   final holdings = buildPortfolioHoldings(stocks, portfolioTransactions);
   final portfolioValue = holdings.fold<double>(0, (sum, row) => sum + row.marketValue);
   final portfolioCost = holdings.fold<double>(0, (sum, row) => sum + row.cost);
+  final assets = cashAssets + portfolioValue;
 
   final topCategories = categoryTotals.entries.map((entry) {
     final category = categoryById[entry.key];
@@ -228,7 +229,7 @@ FinanceSummary buildFinanceSummary({
   );
 
   return FinanceSummary(
-    netWorth: assets - cardDebt + portfolioValue,
+    netWorth: assets - cardDebt,
     assets: assets,
     creditCardOutstanding: cardDebt,
     monthlyIncome: monthIncome,
@@ -279,10 +280,11 @@ List<PortfolioHolding> buildPortfolioHoldings(
     );
     final quantity = asDouble(row['quantity']);
     final total = asDouble(row['total_amount']);
+    final shareValue = quantity * asDouble(row['price']);
     switch (row['txn_type']) {
       case 'buy':
         holding.quantity += quantity;
-        holding.cost += total;
+        holding.cost += shareValue;
       case 'sell':
         if (holding.quantity <= 0) break;
         final soldQuantity = quantity.clamp(0, holding.quantity).toDouble();

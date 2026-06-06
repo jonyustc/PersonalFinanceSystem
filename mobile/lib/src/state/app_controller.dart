@@ -206,23 +206,17 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'transaction_status': 'posted',
     };
 
-    try {
-      final created = await _api.createTransaction(payload);
-      await _db.upsertTransaction(created);
-      await syncNow(silent: true);
-    } catch (_) {
-      final local = {
-        ...payload,
-        'id': const Uuid().v4(),
-        'payment_method': null,
-      };
-      await _db.upsertTransaction(local, pending: true);
-      await _db.applyTransactionBalance(local);
-      await _db.queuePost('/transactions', payload);
-    }
-
+    final local = {
+      ...payload,
+      'id': const Uuid().v4(),
+      'payment_method': null,
+    };
+    await _db.upsertTransaction(local, pending: true);
+    await _db.applyTransactionBalance(local);
+    await _db.queuePost('/transactions', payload);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
+    unawaited(syncNow(silent: true));
   }
 
   Future<void> updateTransaction({
@@ -300,30 +294,26 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'notes': _blankToNull(notes),
       'is_card_payment': isCardPayment,
     };
-    try {
-      await _api.createTransfer(payload);
-      await syncNow(silent: true);
-    } catch (_) {
-      final local = {
-        'id': const Uuid().v4(),
-        'account_id': fromAccountId,
-        'transfer_account_id': toAccountId,
-        'type': 'transfer',
-        'amount': amount,
-        'txn_date': date.toUtc().toIso8601String(),
-        'transaction_date': date.toUtc().toIso8601String(),
-        'description': _blankToNull(notes),
-        'merchant_name': null,
-        'payment_method': null,
-        'tags': <String>[],
-        'transaction_status': 'posted',
-      };
-      await _db.upsertTransaction(local, pending: true);
-      await _db.applyTransactionBalance(local);
-      await _db.queueMutation('POST', '/transfers', payload);
-    }
+    final local = {
+      'id': const Uuid().v4(),
+      'account_id': fromAccountId,
+      'transfer_account_id': toAccountId,
+      'type': 'transfer',
+      'amount': amount,
+      'txn_date': date.toUtc().toIso8601String(),
+      'transaction_date': date.toUtc().toIso8601String(),
+      'description': _blankToNull(notes),
+      'merchant_name': null,
+      'payment_method': null,
+      'tags': <String>[],
+      'transaction_status': 'posted',
+    };
+    await _db.upsertTransaction(local, pending: true);
+    await _db.applyTransactionBalance(local);
+    await _db.queueMutation('POST', '/transfers', payload);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
+    unawaited(syncNow(silent: true));
   }
 
   Future<void> updateAccount({
@@ -482,6 +472,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
     required double price,
     double? fees,
     DateTime? date,
+    DateTime? recordDate,
     String? notes,
   }) async {
     final needsStock =
@@ -508,6 +499,9 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'price': price,
       'fees': fees,
       'txn_date': (date ?? DateTime.now()).toIso8601String().substring(0, 10),
+      'record_date': txnType == 'income'
+          ? recordDate?.toIso8601String().substring(0, 10)
+          : null,
       'notes': _blankToNull(notes),
     };
     try {
@@ -774,6 +768,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'total_amount': total,
       'cash_flow': _portfolioCashFlow(txnType, total),
       'txn_date': payload['txn_date'],
+      'record_date': payload['record_date'],
       'notes': payload['notes'],
       'stock': stock,
     };

@@ -8,7 +8,9 @@ import '../transactions/transaction_details_page.dart';
 import '../transactions/transaction_tile.dart';
 
 class DashboardPage extends ConsumerWidget {
-  const DashboardPage({super.key});
+  const DashboardPage({super.key, this.onOpenTransactions});
+
+  final VoidCallback? onOpenTransactions;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -32,7 +34,11 @@ class DashboardPage extends ConsumerWidget {
         children: [
           _BalanceSummary(summary: summary, currency: currency),
           const SizedBox(height: 18),
-          _RecentTransactions(snapshot.transactions, currency: currency),
+          _RecentTransactions(
+            snapshot.transactions,
+            currency: currency,
+            onOpenTransactions: onOpenTransactions,
+          ),
         ],
       ),
     );
@@ -111,29 +117,33 @@ class _SummaryCard extends StatelessWidget {
 }
 
 class _RecentTransactions extends StatelessWidget {
-  const _RecentTransactions(this.transactions, {required this.currency});
+  const _RecentTransactions(
+    this.transactions, {
+    required this.currency,
+    this.onOpenTransactions,
+  });
 
   final List<Map<String, dynamic>> transactions;
   final String currency;
+  final VoidCallback? onOpenTransactions;
 
   @override
   Widget build(BuildContext context) {
-    final recent = transactions.take(8).toList();
+    final today = DateTime.now();
+    final recent = todayTransactions(transactions, today: today, limit: 8);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Recent transactions',
+          "Today's transactions",
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w800,
               ),
         ),
         const SizedBox(height: 10),
         if (recent.isEmpty)
-          const EmptyPanel(
-            icon: Icons.receipt_long_outlined,
-            title: 'No transactions yet',
-            body: 'Add an expense, income, or transfer to start tracking.',
+          _TodayEmptyPanel(
+            onOpenTransactions: onOpenTransactions,
           )
         else
           ...recent.map(
@@ -153,6 +163,65 @@ class _RecentTransactions extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+List<Map<String, dynamic>> todayTransactions(
+  List<Map<String, dynamic>> transactions, {
+  required DateTime today,
+  int limit = 8,
+}) {
+  final start = DateTime(today.year, today.month, today.day);
+  final end = start.add(const Duration(days: 1));
+  final rows = transactions.where((row) {
+    final parsed = DateTime.tryParse(row['txn_date'] as String? ?? '');
+    if (parsed == null) return false;
+    final localDate = parsed.toLocal();
+    return !localDate.isBefore(start) && localDate.isBefore(end);
+  }).toList()
+    ..sort((a, b) {
+      final left = DateTime.tryParse(a['txn_date'] as String? ?? '');
+      final right = DateTime.tryParse(b['txn_date'] as String? ?? '');
+      if (left == null && right == null) return 0;
+      if (left == null) return 1;
+      if (right == null) return -1;
+      return right.compareTo(left);
+    });
+  return rows.take(limit).toList();
+}
+
+class _TodayEmptyPanel extends StatelessWidget {
+  const _TodayEmptyPanel({this.onOpenTransactions});
+
+  final VoidCallback? onOpenTransactions;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Icon(Icons.today_outlined, size: 36, color: scheme.primary),
+            const SizedBox(height: 10),
+            Text('No transactions today', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text(
+              'Open transactions to review older entries.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: onOpenTransactions,
+              icon: const Icon(Icons.receipt_long_outlined),
+              label: const Text('View all transactions'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

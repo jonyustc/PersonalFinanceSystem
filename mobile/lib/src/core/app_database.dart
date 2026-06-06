@@ -11,7 +11,7 @@ class AppDatabase {
     final path = p.join(await getDatabasesPath(), 'personal_finance.db');
     _db = await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _create,
       onUpgrade: _upgrade,
     );
@@ -98,6 +98,9 @@ class AppDatabase {
       await _addColumnSafely(db, 'accounts', 'credit_limit', 'REAL');
       await _addColumnSafely(db, 'accounts', 'display_balance', 'REAL NOT NULL DEFAULT 0');
     }
+    if (oldVersion < 5) {
+      await _addColumnSafely(db, 'portfolio_transactions', 'record_date', 'TEXT');
+    }
   }
 
   Future<void> _createBudgetTables(Database db) async {
@@ -140,6 +143,7 @@ class AppDatabase {
         total_amount REAL NOT NULL DEFAULT 0,
         cash_flow REAL NOT NULL DEFAULT 0,
         txn_date TEXT NOT NULL,
+        record_date TEXT,
         notes TEXT,
         stock_json TEXT,
         raw_json TEXT NOT NULL
@@ -249,10 +253,21 @@ class AppDatabase {
   Future<void> replaceTransactions(List<Map<String, dynamic>> rows) async {
     final db = await database;
     await db.transaction((txn) async {
+      final pendingRows = await txn.query(
+        'transactions',
+        where: 'is_pending = 1',
+      );
       await txn.delete('transactions');
       for (final row in rows) {
         await txn.insert('transactions', _transactionRow(row),
             conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      for (final row in pendingRows) {
+        await txn.insert(
+          'transactions',
+          row,
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
       }
     });
   }
@@ -486,6 +501,7 @@ class AppDatabase {
       'total_amount': _num(row['total_amount']),
       'cash_flow': _num(row['cash_flow']),
       'txn_date': (row['txn_date'] ?? DateTime.now().toIso8601String()).toString(),
+      'record_date': row['record_date']?.toString(),
       'notes': row['notes'],
       'stock_json': row['stock'] == null ? null : jsonEncode(row['stock']),
       'raw_json': jsonEncode(row),
