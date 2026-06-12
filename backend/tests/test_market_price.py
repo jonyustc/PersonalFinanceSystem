@@ -1,6 +1,8 @@
 from decimal import Decimal
 from datetime import date
 
+import httpx
+
 from app.services.market_price import MarketPriceService
 
 
@@ -64,3 +66,12 @@ def test_parse_record_dates_text():
 
     assert dates["SQURPHARMA"] == date(2025, 12, 15)
     assert dates["GP"] == date(2026, 6, 3)
+
+
+def test_detects_dse_certificate_error():
+    service = MarketPriceService()
+    error = httpx.ConnectError(
+        "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"
+    )
+
+    assert service._is_certificate_error(error)

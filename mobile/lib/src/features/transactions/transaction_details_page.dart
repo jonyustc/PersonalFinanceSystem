@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/app_card.dart';
 import 'create_transaction_sheet.dart';
 
 class TransactionDetailsPage extends ConsumerWidget {
@@ -38,9 +40,7 @@ class TransactionDetailsPage extends ConsumerWidget {
     final category = _findById(snapshot.categories, row['category_id'] as String?);
     final amountColor = type == 'transfer'
         ? Theme.of(context).colorScheme.primary
-        : isIncome
-            ? const Color(0xFF15803D)
-            : const Color(0xFFB91C1C);
+        : AppColors.amount(context, positive: isIncome);
 
     return Scaffold(
       appBar: AppBar(
@@ -59,55 +59,67 @@ class TransactionDetailsPage extends ConsumerWidget {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+          AppCard(
+            padding: const EdgeInsets.all(AppSpacing.xl),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    '${isIncome ? '+' : type == 'transfer' ? '' : '-'}${money(amount, currency: currency)}',
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                          color: amountColor,
-                          fontWeight: FontWeight.w900,
-                        ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  '${isIncome ? '+' : type == 'transfer' ? '' : '-'}${money(amount, currency: currency)}',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    color: amountColor,
+                    fontWeight: FontWeight.w800,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
-          _DetailRow(label: 'Type', value: type.toUpperCase()),
-          _DetailRow(
-            label: type == 'transfer' ? 'From account' : 'Account',
-            value: account?['name'] as String? ?? 'Unknown',
-          ),
-          if (type == 'transfer')
-            _DetailRow(
-              label: 'To account',
-              value: transferAccount?['name'] as String? ?? 'Unknown',
+          const SizedBox(height: AppSpacing.md),
+          AppCard(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.lg,
+              vertical: AppSpacing.xs,
             ),
-          if (type != 'transfer')
-            _DetailRow(
-              label: 'Category',
-              value: category?['name'] as String? ?? 'Uncategorized',
+            child: Column(
+              children: [
+                _DetailRow(label: 'Type', value: type.toUpperCase()),
+                _DetailRow(
+                  label: type == 'transfer' ? 'From account' : 'Account',
+                  value: account?['name'] as String? ?? 'Unknown',
+                ),
+                if (type == 'transfer')
+                  _DetailRow(
+                    label: 'To account',
+                    value: transferAccount?['name'] as String? ?? 'Unknown',
+                  ),
+                if (type != 'transfer')
+                  _DetailRow(
+                    label: 'Category',
+                    value: category?['name'] as String? ?? 'Uncategorized',
+                  ),
+                _DetailRow(
+                  label: 'Date',
+                  value: compactDate(row['txn_date'] as String? ?? ''),
+                ),
+                _DetailRow(
+                  label: 'Status',
+                  value: row['is_pending'] == 1 ? 'Pending sync' : 'Synced',
+                ),
+                if ((row['description'] as String? ?? '').trim().isNotEmpty)
+                  _DetailRow(label: 'Note', value: row['description'] as String),
+              ],
             ),
-          _DetailRow(label: 'Date', value: compactDate(row['txn_date'] as String? ?? '')),
-          _DetailRow(
-            label: 'Status',
-            value: row['is_pending'] == 1 ? 'Pending sync' : 'Synced',
           ),
-          if ((row['description'] as String? ?? '').trim().isNotEmpty)
-            _DetailRow(label: 'Note', value: row['description'] as String),
         ],
       ),
     );
@@ -161,13 +173,29 @@ class _DetailRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        title: Text(label),
-        subtitle: Text(
-          value,
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.lg),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

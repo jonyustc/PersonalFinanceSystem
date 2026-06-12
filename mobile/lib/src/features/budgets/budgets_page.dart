@@ -3,6 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/app_card.dart';
+import '../../widgets/metric_grid.dart';
+import '../../widgets/section_header.dart';
+import '../../widgets/stat_card.dart';
 import '../dashboard/dashboard_page.dart';
 
 class BudgetsPage extends ConsumerStatefulWidget {
@@ -76,7 +81,12 @@ class _BudgetsPageState extends ConsumerState<BudgetsPage> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.md,
+          AppSpacing.lg,
+          AppSpacing.xxl,
+        ),
         children: [
           _MonthNavigator(
             label: _monthLabel(_month),
@@ -84,7 +94,7 @@ class _BudgetsPageState extends ConsumerState<BudgetsPage> {
             onCurrent: () => _setMonth(DateTime.now()),
             onNext: () => _changeMonth(1),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           _PlanCard(
             monthLabel: _monthLabel(_month),
             income: _income,
@@ -96,29 +106,18 @@ class _BudgetsPageState extends ConsumerState<BudgetsPage> {
             currency: currency,
             onChanged: () => setState(() {}),
           ),
-          const SizedBox(height: 18),
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Category budgets',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-                ),
-              ),
-              Text(
-                '${categories.length} categories',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
+          const SizedBox(height: AppSpacing.xl),
+          SectionHeader(
+            'Category budgets',
+            subtitle:
+                '${categories.length} categor${categories.length == 1 ? 'y' : 'ies'}',
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.md),
           if (_loading)
             ...List.generate(
               4,
               (_) => const Padding(
-                padding: EdgeInsets.only(bottom: 12),
+                padding: EdgeInsets.only(bottom: AppSpacing.md),
                 child: _BudgetSkeleton(),
               ),
             )
@@ -134,7 +133,7 @@ class _BudgetsPageState extends ConsumerState<BudgetsPage> {
               final planned = _number(_drafts[id]?.text);
               final spent = _spentByCategory[id] ?? 0;
               return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.only(bottom: AppSpacing.md),
                 child: _CategoryBudgetCard(
                   title: category['name'] as String? ?? 'Category',
                   amount: _drafts[id]!,
@@ -145,7 +144,7 @@ class _BudgetsPageState extends ConsumerState<BudgetsPage> {
                 ),
               );
             }),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           FilledButton.icon(
             onPressed: _saving ? null : () => _save(categories),
             icon: _saving
@@ -318,33 +317,40 @@ class _MonthNavigator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        IconButton.outlined(
-          tooltip: 'Previous month',
-          onPressed: onPrevious,
-          icon: const Icon(Icons.chevron_left),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: onCurrent,
-            icon: const Icon(Icons.calendar_month_outlined),
-            label: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w800),
+    final theme = Theme.of(context);
+    return AppCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs,
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Previous month',
+            onPressed: onPrevious,
+            icon: const Icon(Icons.chevron_left),
+          ),
+          Expanded(
+            child: TextButton.icon(
+              onPressed: onCurrent,
+              icon: const Icon(Icons.calendar_month_outlined, size: 18),
+              label: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 10),
-        IconButton.outlined(
-          tooltip: 'Next month',
-          onPressed: onNext,
-          icon: const Icon(Icons.chevron_right),
-        ),
-      ],
+          IconButton(
+            tooltip: 'Next month',
+            onPressed: onNext,
+            icon: const Icon(Icons.chevron_right),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -374,101 +380,79 @@ class _PlanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    return Column(
+      children: [
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'BUDGET PLAN · ${monthLabel.toUpperCase()}',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: muted,
+                  letterSpacing: 0.6,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Row(
+                children: [
+                  Expanded(
+                    child: _MoneyField(
+                      label: 'Income',
+                      controller: income,
+                      onChanged: onChanged,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: _MoneyField(
+                      label: 'Last month balance',
+                      controller: openingBalance,
+                      onChanged: onChanged,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        MetricGrid(
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'MONTHLY BUDGET PLAN',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Budget $monthLabel',
-                        style: Theme.of(context).textTheme.headlineSmall
-                            ?.copyWith(fontWeight: FontWeight.w900),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Plan category cost, then compare with real expense in reports.',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    Icons.account_balance_wallet_outlined,
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  ),
-                ),
-              ],
+            StatCard(
+              label: 'Total balance',
+              amount: totalBalance,
+              currency: currency,
             ),
-            const SizedBox(height: 18),
-            _MoneyField(
-              label: 'Total income',
-              controller: income,
-              onChanged: onChanged,
+            StatCard(
+              label: 'Planned cost',
+              amount: totalCost,
+              currency: currency,
             ),
-            const SizedBox(height: 12),
-            _MoneyField(
-              label: 'Last month balance',
-              controller: openingBalance,
-              onChanged: onChanged,
+            StatCard(
+              label: 'Plan balance',
+              amount: planBalance,
+              currency: currency,
+              signed: true,
+              amountColor: planBalance < 0
+                  ? AppColors.amount(context, positive: false)
+                  : null,
             ),
-            const SizedBox(height: 16),
-            GridView.count(
-              crossAxisCount: 2,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 2.1,
-              children: [
-                _PlanMetric(
-                  label: 'Total balance',
-                  value: money(totalBalance, currency: currency),
-                ),
-                _PlanMetric(
-                  label: 'Total cost',
-                  value: money(totalCost, currency: currency),
-                ),
-                _PlanMetric(
-                  label: 'Plan balance',
-                  value: money(planBalance, currency: currency),
-                  danger: planBalance < 0,
-                ),
-                _PlanMetric(
-                  label: 'Actual balance',
-                  value: money(actualBalance, currency: currency),
-                  danger: actualBalance < 0,
-                ),
-              ],
+            StatCard(
+              label: 'Actual balance',
+              amount: actualBalance,
+              currency: currency,
+              signed: true,
+              amountColor: actualBalance < 0
+                  ? AppColors.amount(context, positive: false)
+                  : null,
             ),
           ],
         ),
-      ),
+      ],
     );
   }
 }
@@ -489,59 +473,12 @@ class _MoneyField extends StatelessWidget {
     return TextField(
       controller: controller,
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      decoration: InputDecoration(labelText: label),
-      style: const TextStyle(fontWeight: FontWeight.w800),
+      decoration: InputDecoration(
+        labelText: label,
+        isDense: true,
+      ),
+      style: const TextStyle(fontWeight: FontWeight.w700),
       onChanged: (_) => onChanged(),
-    );
-  }
-}
-
-class _PlanMetric extends StatelessWidget {
-  const _PlanMetric({
-    required this.label,
-    required this.value,
-    this.danger = false,
-  });
-
-  final String label;
-  final String value;
-  final bool danger;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: danger
-            ? Colors.red.withValues(alpha: 0.08)
-            : Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: danger ? Colors.red.shade700 : null,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -565,106 +502,104 @@ class _CategoryBudgetCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
     final percent = planned <= 0 ? 0.0 : spent / planned * 100;
     final over = planned > 0 && spent > planned;
     final remaining = planned - spent;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Spent ${money(spent, currency: currency)} of ${money(planned, currency: currency)}',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                SizedBox(
-                  width: 132,
-                  child: TextField(
-                    controller: amount,
-                    textAlign: TextAlign.right,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 12,
+    final barColor = planned <= 0
+        ? muted
+        : AppColors.utilization(context, percent);
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    style: const TextStyle(fontWeight: FontWeight.w900),
-                    onChanged: (_) => onChanged(),
-                  ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Spent ${money(spent, currency: currency)} of ${money(planned, currency: currency)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(color: muted),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                minHeight: 9,
-                value: (percent / 100).clamp(0, 1).toDouble(),
-                backgroundColor: Theme.of(
-                  context,
-                ).colorScheme.surfaceContainerHighest,
-                color: over
-                    ? Colors.red.shade600
-                    : Theme.of(context).colorScheme.primary,
               ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Text(
-                  '${percent.toStringAsFixed(0)}% used',
-                  style: TextStyle(
-                    color: over
-                        ? Colors.red.shade700
-                        : Theme.of(context).colorScheme.onSurfaceVariant,
+              const SizedBox(width: AppSpacing.md),
+              SizedBox(
+                width: 116,
+                child: TextField(
+                  controller: amount,
+                  textAlign: TextAlign.right,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
                   ),
-                ),
-                const Spacer(),
-                Flexible(
-                  child: Text(
-                    'Remaining ${money(remaining, currency: currency)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      color: over
-                          ? Colors.red.shade700
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
-                      fontWeight: over ? FontWeight.w800 : FontWeight.w400,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    hintText: '0',
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.sm,
                     ),
                   ),
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                  onChanged: (_) => onChanged(),
                 ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadius.pill),
+            child: LinearProgressIndicator(
+              minHeight: 8,
+              value: (percent / 100).clamp(0, 1).toDouble(),
+              backgroundColor: AppColors.border(context),
+              valueColor: AlwaysStoppedAnimation(barColor),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              Text(
+                '${percent.toStringAsFixed(0)}% used',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: over ? barColor : muted,
+                  fontWeight: over ? FontWeight.w700 : FontWeight.w400,
+                ),
+              ),
+              const Spacer(),
+              Flexible(
+                child: Text(
+                  '${over ? 'Over by' : 'Remaining'} ${money(remaining.abs(), currency: currency)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: over
+                        ? AppColors.amount(context, positive: false)
+                        : muted,
+                    fontWeight: over ? FontWeight.w700 : FontWeight.w400,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -675,14 +610,10 @@ class _BudgetSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    return const AppCard(
       child: SizedBox(
-        height: 130,
-        child: Center(
-          child: CircularProgressIndicator(
-            color: Theme.of(context).colorScheme.primary,
-          ),
-        ),
+        height: 96,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
       ),
     );
   }

@@ -5,6 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/app_card.dart';
+import '../../widgets/metric_grid.dart';
+import '../../widgets/money_text.dart';
+import '../../widgets/stat_card.dart';
 import '../dashboard/dashboard_page.dart';
 
 enum _PortfolioTab { dashboard, holding, trade, dividend, market }
@@ -225,50 +230,44 @@ class _DashboardView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final profitLoss = _num(summary['overall_profit_loss']);
+    final cash = _num(summary['cash_balance']);
     return Column(
       children: [
-        GridView.count(
-          crossAxisCount: 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          childAspectRatio: 1.85,
+        MetricGrid(
           children: [
-            _MetricCard(
+            StatCard(
               label: 'Portfolio',
-              value: money(
-                _num(summary['total_portfolio_value']),
-                currency: currency,
-              ),
+              amount: _num(summary['total_portfolio_value']),
+              currency: currency,
               icon: Icons.trending_up,
             ),
-            _MetricCard(
+            StatCard(
               label: 'Broker cash',
-              value: money(_num(summary['cash_balance']), currency: currency),
+              amount: cash,
+              currency: currency,
               icon: Icons.account_balance_wallet_outlined,
-              danger: _num(summary['cash_balance']) < 0,
+              amountColor: cash < 0
+                  ? AppColors.amount(context, positive: false)
+                  : null,
             ),
-            _MetricCard(
+            StatCard(
               label: 'Equity value',
-              value: money(
-                _num(summary['current_equity_value']),
-                currency: currency,
-              ),
+              amount: _num(summary['current_equity_value']),
+              currency: currency,
               icon: Icons.paid_outlined,
             ),
-            _MetricCard(
-              label: 'Profit/Loss',
-              value: money(
-                _num(summary['overall_profit_loss']),
-                currency: currency,
-              ),
+            StatCard(
+              label: 'Profit / Loss',
+              amount: profitLoss,
+              currency: currency,
               icon: Icons.monetization_on_outlined,
-              danger: _num(summary['overall_profit_loss']) < 0,
+              signed: true,
+              amountColor: AppColors.amount(context, positive: profitLoss >= 0),
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.lg),
         _Panel(
           title: 'Portfolio Snapshot',
           child: GridView.count(
@@ -477,80 +476,95 @@ class _TradeView extends StatelessWidget {
                     final cashFlow = _num(transaction['cash_flow']);
                     final stock = _stockFromTransaction(transaction);
                     final positive = cashFlow >= 0;
+                    final accent = AppColors.amount(
+                      context,
+                      positive: positive,
+                    );
                     return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Card(
-                        color: Theme.of(context).colorScheme.surface,
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  CircleAvatar(
-                                    backgroundColor: positive
-                                        ? const Color(0xFFE0F2FE)
-                                        : const Color(0xFFFFEEF2),
-                                    child: Icon(
-                                      positive
-                                          ? Icons.south_west
-                                          : Icons.north_east,
-                                      color: positive
-                                          ? Colors.green
-                                          : Colors.red,
-                                    ),
+                      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                      child: AppCard(
+                        padding: const EdgeInsets.all(AppSpacing.md),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 19,
+                                  backgroundColor: accent.withValues(
+                                    alpha: 0.10,
                                   ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          '${_labelTxn(transaction['txn_type'] as String? ?? '')} ${stock['name'] ?? ''}',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                        ),
-                                        Text(
-                                          '${transaction['txn_date']} - ${transaction['notes'] ?? 'No note'}',
-                                        ),
-                                      ],
-                                    ),
+                                  foregroundColor: accent,
+                                  child: Icon(
+                                    positive
+                                        ? Icons.south_west
+                                        : Icons.north_east,
+                                    size: 19,
                                   ),
-                                ],
-                              ),
-                              const SizedBox(height: 10),
-                              Text(
-                                '${positive ? '+' : '-'}${money(cashFlow.abs(), currency: stock['currency'] as String? ?? 'BDT')}',
-                                style: TextStyle(
-                                  color: positive
-                                      ? Colors.green.shade700
-                                      : Colors.red.shade700,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
                                 ),
-                              ),
-                              const SizedBox(height: 10),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  OutlinedButton.icon(
-                                    onPressed: () => onEdit(transaction),
-                                    icon: const Icon(Icons.edit_outlined),
-                                    label: const Text('Edit'),
+                                const SizedBox(width: AppSpacing.md),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${_labelTxn(transaction['txn_type'] as String? ?? '')} ${stock['name'] ?? ''}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      Text(
+                                        '${transaction['txn_date']} · ${transaction['notes'] ?? 'No note'}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.onSurfaceVariant,
+                                            ),
+                                      ),
+                                    ],
                                   ),
-                                  const SizedBox(width: 8),
-                                  OutlinedButton.icon(
-                                    onPressed: () => onDelete(transaction),
-                                    icon: const Icon(Icons.delete_outline),
-                                    label: const Text('Delete'),
+                                ),
+                                Text(
+                                  '${positive ? '+' : '-'}${money(cashFlow.abs(), currency: stock['currency'] as String? ?? 'BDT')}',
+                                  style: TextStyle(
+                                    color: accent,
+                                    fontWeight: FontWeight.w800,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
                                   ),
-                                ],
-                              ),
-                            ],
-                          ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: AppSpacing.sm),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                TextButton.icon(
+                                  onPressed: () => onEdit(transaction),
+                                  icon: const Icon(Icons.edit_outlined, size: 18),
+                                  label: const Text('Edit'),
+                                ),
+                                const SizedBox(width: AppSpacing.xs),
+                                TextButton.icon(
+                                  onPressed: () => onDelete(transaction),
+                                  icon: const Icon(
+                                    Icons.delete_outline,
+                                    size: 18,
+                                  ),
+                                  label: const Text('Delete'),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
                     );
@@ -587,29 +601,52 @@ class _DividendView extends StatelessWidget {
           ? const Text('No dividends recorded.')
           : Column(
               children: rows.map((row) {
-                return Card(
-                  child: ListTile(
-                    title: Text(
-                      '${row['stock_name']} - ${row['year']}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    subtitle: Text(
-                      [
-                        (row['source'] as String? ?? 'manual').toUpperCase(),
-                        if (row['record_date'] != null)
-                          'Record ${row['record_date']}',
-                        if (row['eligible_quantity'] != null)
-                          '${_num(row['eligible_quantity']).toStringAsFixed(4)} shares',
-                        if (row['cash_dividend_percent'] != null)
-                          '${_num(row['cash_dividend_percent']).toStringAsFixed(2)}% cash',
-                      ].join(' - '),
-                    ),
-                    trailing: Text(
-                      money(_num(row['dividend_gain']), currency: currency),
-                      style: const TextStyle(fontWeight: FontWeight.w900),
-                    ),
+                final theme = Theme.of(context);
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${row['stock_name']} · ${row['year']}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              [
+                                (row['source'] as String? ?? 'manual')
+                                    .toUpperCase(),
+                                if (row['record_date'] != null)
+                                  'Record ${row['record_date']}',
+                                if (row['cash_dividend_percent'] != null)
+                                  '${_num(row['cash_dividend_percent']).toStringAsFixed(2)}% cash',
+                              ].join(' · '),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      MoneyText(
+                        _num(row['dividend_gain']),
+                        currency: currency,
+                        color: AppColors.amount(context, positive: true),
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
                   ),
                 );
               }).toList(),
@@ -1818,63 +1855,6 @@ class _DividendEstimateSummary extends StatelessWidget {
   }
 }
 
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({
-    required this.label,
-    required this.value,
-    required this.icon,
-    this.danger = false,
-  });
-
-  final String label;
-  final String value;
-  final IconData icon;
-  final bool danger;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Icon(
-                  icon,
-                  size: 20,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-              ],
-            ),
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w900,
-                color: danger ? Colors.red.shade700 : null,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _Panel extends StatelessWidget {
   const _Panel({
     required this.title,
@@ -1890,38 +1870,51 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w800),
+    final theme = Theme.of(context);
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
                       ),
-                      if (subtitle != null) Text(subtitle!),
-                    ],
+                    ),
+                    if (subtitle != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          subtitle!,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (trailing != null)
+                Text(
+                  trailing!,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                if (trailing != null)
-                  Text(
-                    trailing!,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            child,
-          ],
-        ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          child,
+        ],
       ),
     );
   }
@@ -1936,17 +1929,25 @@ class _MiniMetric extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: Theme.of(context).textTheme.bodySmall),
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 2),
         Text(
           value,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(
+          style: theme.textTheme.titleSmall?.copyWith(
             fontWeight: FontWeight.w800,
-            color: danger ? Colors.red.shade700 : null,
+            color: danger ? AppColors.amount(context, positive: false) : null,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
       ],
@@ -1962,22 +1963,28 @@ class _ListAmountRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
-      ),
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
       child: Row(
         children: [
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(fontWeight: FontWeight.w700),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
-          Text(amount),
+          Text(
+            amount,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
         ],
       ),
     );
@@ -2006,73 +2013,71 @@ class _HoldingAllocationSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: _SummaryMetric(
-                    label: 'Portfolio',
-                    value: money(total, currency: currency),
-                  ),
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _SummaryMetric(
+                  label: 'Portfolio value',
+                  value: money(total, currency: currency),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: scheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                  child: Text(
-                    stockCountLabel,
-                    style: TextStyle(
-                      color: scheme.onPrimaryContainer,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(99),
-              child: LinearProgressIndicator(
-                minHeight: 12,
-                value: (equityPercent / 100).clamp(0, 1).toDouble(),
-                backgroundColor: Colors.amber.shade300,
               ),
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: _SummaryMetric(
-                    label: 'Stocks',
-                    value: '${equityPercent.toStringAsFixed(1)}%',
-                    subValue: money(equity, currency: currency),
-                    markerColor: scheme.primary,
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.xs,
+                ),
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(AppRadius.pill),
+                ),
+                child: Text(
+                  stockCountLabel,
+                  style: TextStyle(
+                    color: scheme.primary,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _SummaryMetric(
-                    label: 'Cash',
-                    value: '${cashPercent.toStringAsFixed(2)}%',
-                    subValue: money(cash, currency: currency),
-                    markerColor: Colors.amber,
-                    danger: cash < 0,
-                  ),
-                ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadius.pill),
+            child: LinearProgressIndicator(
+              minHeight: 10,
+              value: (equityPercent / 100).clamp(0, 1).toDouble(),
+              backgroundColor: scheme.tertiary.withValues(alpha: 0.30),
+              valueColor: AlwaysStoppedAnimation(scheme.primary),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Row(
+            children: [
+              Expanded(
+                child: _SummaryMetric(
+                  label: 'Stocks',
+                  value: '${equityPercent.toStringAsFixed(1)}%',
+                  subValue: money(equity, currency: currency),
+                  markerColor: scheme.primary,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: _SummaryMetric(
+                  label: 'Cash',
+                  value: '${cashPercent.toStringAsFixed(2)}%',
+                  subValue: money(cash, currency: currency),
+                  markerColor: scheme.tertiary,
+                  danger: cash < 0,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -2095,27 +2100,43 @@ class _SummaryMetric extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final valueColor = danger ? Colors.red.shade700 : null;
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    final valueColor = danger ? AppColors.amount(context, positive: false) : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
             if (markerColor != null) ...[
-              CircleAvatar(radius: 5, backgroundColor: markerColor),
-              const SizedBox(width: 6),
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: markerColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
             ],
-            Flexible(child: Text(label)),
+            Flexible(
+              child: Text(
+                label,
+                style: theme.textTheme.labelMedium?.copyWith(color: muted),
+              ),
+            ),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: AppSpacing.xs),
         Text(
           value,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w900,
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.4,
             color: valueColor,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
         if (subValue != null)
@@ -2123,7 +2144,10 @@ class _SummaryMetric extends StatelessWidget {
             subValue!,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: valueColor),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: valueColor ?? muted,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
           ),
       ],
     );

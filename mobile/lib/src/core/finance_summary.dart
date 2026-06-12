@@ -6,6 +6,7 @@ class FinanceSummary {
   FinanceSummary({
     required this.netWorth,
     required this.assets,
+    required this.liabilities,
     required this.creditCardOutstanding,
     required this.monthlyIncome,
     required this.monthlyExpense,
@@ -20,11 +21,16 @@ class FinanceSummary {
     required this.topExpenseCategories,
     required this.monthlyTrend,
     required this.accountSpending,
+    required this.creditCards,
     required this.insights,
   });
 
   final double netWorth;
   final double assets;
+
+  /// Total liabilities: credit-card debt plus any overdrawn (negative) cash
+  /// account balances. Mirrors `AccountService.summary` in the backend.
+  final double liabilities;
   final double creditCardOutstanding;
   final double monthlyIncome;
   final double monthlyExpense;
@@ -39,7 +45,47 @@ class FinanceSummary {
   final List<CategoryTotal> topExpenseCategories;
   final List<MonthlyTotal> monthlyTrend;
   final List<AccountTotal> accountSpending;
+  final List<CardSummary> creditCards;
   final List<FinanceInsight> insights;
+}
+
+/// Per credit-card rollup, mirroring the backend `/dashboard/simple` card view.
+class CardSummary {
+  const CardSummary({
+    required this.id,
+    required this.name,
+    required this.creditLimit,
+    required this.outstanding,
+    required this.available,
+    required this.utilization,
+    required this.monthlySpending,
+    required this.monthlyPayment,
+  });
+
+  /// Builds a card view from a backend `/dashboard/simple` card entry.
+  factory CardSummary.fromBackend(Map<String, dynamic> row) {
+    return CardSummary(
+      id: row['id']?.toString() ?? '',
+      name: row['name'] as String? ?? 'Credit card',
+      creditLimit: asDouble(row['credit_limit']),
+      outstanding: asDouble(row['current_outstanding']),
+      available: asDouble(row['available_limit']),
+      utilization: asDouble(row['used_percentage']),
+      monthlySpending: asDouble(row['monthly_spending']),
+      monthlyPayment: asDouble(row['monthly_payment']),
+    );
+  }
+
+  final String id;
+  final String name;
+  final double creditLimit;
+  final double outstanding;
+  final double available;
+
+  /// Utilization as a percentage (0..100+).
+  final double utilization;
+  final double monthlySpending;
+  final double monthlyPayment;
 }
 
 class CategoryTotal {
@@ -74,7 +120,11 @@ class MonthlyTotal {
 }
 
 class AccountTotal {
-  const AccountTotal({required this.accountId, required this.name, required this.amount});
+  const AccountTotal({
+    required this.accountId,
+    required this.name,
+    required this.amount,
+  });
 
   final String accountId;
   final String name;
@@ -102,6 +152,7 @@ FinanceSummary buildFinanceSummary({
   required List<Map<String, dynamic>> budgets,
   required List<Map<String, dynamic>> stocks,
   required List<Map<String, dynamic>> portfolioTransactions,
+  Map<String, dynamic>? portfolioSummary,
   DateTime? now,
 }) {
   final today = now ?? DateTime.now();
@@ -110,33 +161,47 @@ FinanceSummary buildFinanceSummary({
   final categoryById = {for (final row in categories) row['id'] as String: row};
   final accountById = {for (final row in accounts) row['id'] as String: row};
 
-  final cashAssets = accounts
-      .where((row) => !isCreditCardAccount(row) && !isStockBrokerAccount(row))
-      .fold<double>(
-        0,
-        (sum, row) => sum + asDouble(row['balance']),
-      );
-  final cardDebt = accounts.where(isCreditCardAccount).fold<double>(
-        0,
-        (sum, row) => sum + asDouble(row['balance']),
-      );
+  // Mirror the backend AccountService.summary conventions: assets count only
+  // positive non-card, non-broker balances; overdrawn balances become
+  // liabilities; credit-card debt lives in `current_outstanding`, not
+  // `balance` (cards keep balance == 0).
+  final cashAccounts = accounts.where(
+    (row) => !isCreditCardAccount(row) && !isStockBrokerAccount(row),
+  );
+  final cashAssets = cashAccounts.fold<double>(0, (sum, row) {
+    final balance = asDouble(row['balance']);
+    return sum + (balance > 0 ? balance : 0);
+  });
+  final overdrawn = cashAccounts.fold<double>(0, (sum, row) {
+    final balance = asDouble(row['balance']);
+    return sum + (balance < 0 ? balance.abs() : 0);
+  });
+  final cardDebt = accounts
+      .where(isCreditCardAccount)
+      .fold<double>(0, (sum, row) => sum + asDouble(row['current_outstanding']));
 
   double monthIncome = 0;
   double monthExpense = 0;
   double previousExpense = 0;
   final categoryTotals = <String, double>{};
-  final monthBuckets = <String, ({int year, int month, double income, double expense})>{};
+  final monthBuckets =
+      <String, ({int year, int month, double income, double expense})>{};
   final accountSpending = <String, double>{};
+  final cardMonthlySpending = <String, double>{};
+  final cardMonthlyPayment = <String, double>{};
 
   for (final row in transactions) {
-    if ((row['transaction_status'] as String? ?? 'posted') != 'posted') continue;
+    if ((row['transaction_status'] as String? ?? 'posted') != 'posted') {
+      continue;
+    }
     final amount = asDouble(row['amount']);
     final type = row['type'] as String? ?? 'expense';
     final date = DateTime.tryParse(row['txn_date'] as String? ?? '');
     if (date == null) continue;
 
     final bucketKey = '${date.year}-${date.month.toString().padLeft(2, '0')}';
-    final bucket = monthBuckets[bucketKey] ??
+    final bucket =
+        monthBuckets[bucketKey] ??
         (year: date.year, month: date.month, income: 0.0, expense: 0.0);
     monthBuckets[bucketKey] = (
       year: bucket.year,
@@ -146,9 +211,10 @@ FinanceSummary buildFinanceSummary({
     );
 
     final rowMonth = DateTime(date.year, date.month);
-    if (type == 'income' && rowMonth == currentMonth) monthIncome += amount;
+    final isCurrentMonth = rowMonth == currentMonth;
+    if (type == 'income' && isCurrentMonth) monthIncome += amount;
     if (type == 'expense') {
-      if (rowMonth == currentMonth) monthExpense += amount;
+      if (isCurrentMonth) monthExpense += amount;
       if (rowMonth == previousMonth) previousExpense += amount;
 
       final rawCategoryId = row['category_id'] as String?;
@@ -160,6 +226,22 @@ FinanceSummary buildFinanceSummary({
       final accountId = row['account_id'] as String?;
       if (accountId != null) {
         accountSpending[accountId] = (accountSpending[accountId] ?? 0) + amount;
+        // Card spending = expenses booked against a credit-card account in the
+        // current month (backend: monthly_card_spending).
+        if (isCurrentMonth && isCreditCardAccount(accountById[accountId] ?? const {})) {
+          cardMonthlySpending[accountId] =
+              (cardMonthlySpending[accountId] ?? 0) + amount;
+        }
+      }
+    }
+    // Card payment = transfers into a credit-card account in the current month
+    // (backend: monthly_credit_card_payments).
+    if (type == 'transfer' && isCurrentMonth) {
+      final targetId = row['transfer_account_id'] as String?;
+      if (targetId != null &&
+          isCreditCardAccount(accountById[targetId] ?? const {})) {
+        cardMonthlyPayment[targetId] =
+            (cardMonthlyPayment[targetId] ?? 0) + amount;
       }
     }
   }
@@ -177,9 +259,60 @@ FinanceSummary buildFinanceSummary({
   );
 
   final holdings = buildPortfolioHoldings(stocks, portfolioTransactions);
-  final portfolioValue = holdings.fold<double>(0, (sum, row) => sum + row.marketValue);
-  final portfolioCost = holdings.fold<double>(0, (sum, row) => sum + row.cost);
+  final localPortfolioValue = holdings.fold<double>(
+    0,
+    (sum, row) => sum + row.marketValue,
+  );
+  final localPortfolioCost = holdings.fold<double>(
+    0,
+    (sum, row) => sum + row.cost,
+  );
+  final backendPortfolioValue = asDouble(
+    portfolioSummary?['total_portfolio_value'],
+  );
+  final backendPortfolioCost = asDouble(
+    portfolioSummary?['active_cost_basis'] ??
+        portfolioSummary?['invested_capital'],
+  );
+  final hasBackendPortfolioValue =
+      portfolioSummary != null &&
+      (backendPortfolioValue != 0 ||
+          (portfolioSummary['holdings'] as List? ?? const []).isNotEmpty ||
+          (portfolioSummary['broker_accounts'] as List? ?? const [])
+              .isNotEmpty);
+  final portfolioValue = hasBackendPortfolioValue
+      ? backendPortfolioValue
+      : localPortfolioValue;
+  final portfolioCost = hasBackendPortfolioValue
+      ? backendPortfolioCost
+      : localPortfolioCost;
+  final backendPortfolioGain = asDouble(
+    portfolioSummary?['overall_profit_loss'] ??
+        portfolioSummary?['unrealized_gain_loss'],
+  );
+  final portfolioGain = hasBackendPortfolioValue
+      ? backendPortfolioGain
+      : portfolioValue - portfolioCost;
   final assets = cashAssets + portfolioValue;
+  final liabilities = cardDebt + overdrawn;
+
+  final creditCards =
+      accounts.where(isCreditCardAccount).map((row) {
+        final id = row['id']?.toString() ?? '';
+        final limit = asDouble(row['credit_limit']);
+        final outstanding = asDouble(row['current_outstanding']);
+        return CardSummary(
+          id: id,
+          name: row['name'] as String? ?? 'Credit card',
+          creditLimit: limit,
+          outstanding: outstanding,
+          available: (limit - outstanding) > 0 ? limit - outstanding : 0,
+          utilization: limit > 0 ? outstanding / limit * 100 : 0,
+          monthlySpending: cardMonthlySpending[id] ?? 0,
+          monthlyPayment: cardMonthlyPayment[id] ?? 0,
+        );
+      }).toList()
+        ..sort((a, b) => b.outstanding.compareTo(a.outstanding));
 
   final topCategories = categoryTotals.entries.map((entry) {
     final category = categoryById[entry.key];
@@ -189,23 +322,23 @@ FinanceSummary buildFinanceSummary({
       amount: entry.value,
       parentId: category?['parent_id'] as String?,
     );
-  }).toList()
-    ..sort((a, b) => b.amount.compareTo(a.amount));
+  }).toList()..sort((a, b) => b.amount.compareTo(a.amount));
 
-  final trend = monthBuckets.values
-      .map(
-        (row) => MonthlyTotal(
-          year: row.year,
-          month: row.month,
-          income: row.income,
-          expense: row.expense,
-        ),
-      )
-      .toList()
-    ..sort((a, b) {
-      final yearCompare = a.year.compareTo(b.year);
-      return yearCompare != 0 ? yearCompare : a.month.compareTo(b.month);
-    });
+  final trend =
+      monthBuckets.values
+          .map(
+            (row) => MonthlyTotal(
+              year: row.year,
+              month: row.month,
+              income: row.income,
+              expense: row.expense,
+            ),
+          )
+          .toList()
+        ..sort((a, b) {
+          final yearCompare = a.year.compareTo(b.year);
+          return yearCompare != 0 ? yearCompare : a.month.compareTo(b.month);
+        });
 
   final accountRows = accountSpending.entries.map((entry) {
     final account = accountById[entry.key];
@@ -214,10 +347,11 @@ FinanceSummary buildFinanceSummary({
       name: account?['name'] as String? ?? 'Account',
       amount: entry.value,
     );
-  }).toList()
-    ..sort((a, b) => b.amount.compareTo(a.amount));
+  }).toList()..sort((a, b) => b.amount.compareTo(a.amount));
 
-  final savingsRate = monthIncome <= 0 ? 0.0 : (monthIncome - monthExpense) / monthIncome;
+  final savingsRate = monthIncome <= 0
+      ? 0.0
+      : (monthIncome - monthExpense) / monthIncome;
   final budgetUsage = totalBudget <= 0 ? 0.0 : totalBudgetSpent / totalBudget;
 
   final insights = _buildInsights(
@@ -231,8 +365,9 @@ FinanceSummary buildFinanceSummary({
   );
 
   return FinanceSummary(
-    netWorth: assets - cardDebt,
+    netWorth: assets - liabilities,
     assets: assets,
+    liabilities: liabilities,
     creditCardOutstanding: cardDebt,
     monthlyIncome: monthIncome,
     monthlyExpense: monthExpense,
@@ -243,10 +378,11 @@ FinanceSummary buildFinanceSummary({
     budgetUsage: budgetUsage,
     portfolioValue: portfolioValue,
     portfolioCost: portfolioCost,
-    portfolioGain: portfolioValue - portfolioCost,
+    portfolioGain: portfolioGain,
     topExpenseCategories: topCategories,
     monthlyTrend: trend,
     accountSpending: accountRows,
+    creditCards: creditCards,
     insights: insights,
   );
 }
@@ -333,6 +469,52 @@ class PortfolioHolding {
   double get marketValue => quantity * lastPrice;
 }
 
+/// Account-only summary that mirrors the backend `AccountService.summary`
+/// (`account.py:225-244`). Unlike the dashboard's net worth, this uses raw
+/// account balances and does NOT fold in investment market value — so the
+/// Accounts page matches what the web frontend's `/accounts/summary` returns.
+class AccountSummary {
+  const AccountSummary({
+    required this.totalAssets,
+    required this.liabilities,
+    required this.netWorth,
+    required this.cardDebt,
+    required this.cashBalance,
+  });
+
+  final double totalAssets;
+  final double liabilities;
+  final double netWorth;
+  final double cardDebt;
+  final double cashBalance;
+}
+
+AccountSummary buildAccountSummary(List<Map<String, dynamic>> accounts) {
+  double cashBalance = 0;
+  double totalAssets = 0;
+  double cardDebt = 0;
+  double overdrawn = 0;
+  for (final row in accounts) {
+    if (isCreditCardAccount(row)) {
+      cardDebt += asDouble(row['current_outstanding']);
+      continue;
+    }
+    final type = (row['type'] as String? ?? '').toLowerCase();
+    final balance = asDouble(row['balance']);
+    if (type == 'cash') cashBalance += balance;
+    if (balance > 0) totalAssets += balance;
+    if (balance < 0) overdrawn += balance.abs();
+  }
+  final liabilities = cardDebt + overdrawn;
+  return AccountSummary(
+    totalAssets: totalAssets,
+    liabilities: liabilities,
+    netWorth: totalAssets - liabilities,
+    cardDebt: cardDebt,
+    cashBalance: cashBalance,
+  );
+}
+
 bool isCreditCardAccount(Map<String, dynamic> row) {
   final type = (row['type'] as String? ?? '').toLowerCase();
   return type == 'card' || type == 'credit_card';
@@ -354,7 +536,8 @@ List<FinanceInsight> _buildInsights({
 }) {
   final insights = <FinanceInsight>[];
   if (previousExpense > 0 && monthExpense > previousExpense * 1.1) {
-    final change = ((monthExpense - previousExpense) / previousExpense * 100).round();
+    final change = ((monthExpense - previousExpense) / previousExpense * 100)
+        .round();
     insights.add(
       FinanceInsight(
         title: 'Spending increased',
@@ -367,8 +550,11 @@ List<FinanceInsight> _buildInsights({
     insights.add(
       FinanceInsight(
         title: 'Budget usage is high',
-        body: "You used ${(budgetUsage * 100).round()}% of this month's budget.",
-        severity: budgetUsage > 1 ? InsightSeverity.warning : InsightSeverity.info,
+        body:
+            "You used ${(budgetUsage * 100).round()}% of this month's budget.",
+        severity: budgetUsage > 1
+            ? InsightSeverity.warning
+            : InsightSeverity.info,
       ),
     );
   }
@@ -385,7 +571,8 @@ List<FinanceInsight> _buildInsights({
     insights.add(
       FinanceInsight(
         title: 'Credit card balance',
-        body: 'Outstanding card balance is ${cardDebt.toStringAsFixed(0)} before the next payment.',
+        body:
+            'Outstanding card balance is ${cardDebt.toStringAsFixed(0)} before the next payment.',
         severity: InsightSeverity.info,
       ),
     );

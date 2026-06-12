@@ -38,6 +38,7 @@ class AppSnapshot {
     required this.stocks,
     required this.portfolioTransactions,
     required this.portfolioSummary,
+    required this.dashboardSummary,
     required this.isSyncing,
     required this.pendingWrites,
     required this.lastSyncAt,
@@ -54,6 +55,7 @@ class AppSnapshot {
   final List<Map<String, dynamic>> stocks;
   final List<Map<String, dynamic>> portfolioTransactions;
   final Map<String, dynamic>? portfolioSummary;
+  final Map<String, dynamic>? dashboardSummary;
   final bool isSyncing;
   final int pendingWrites;
   final String? lastSyncAt;
@@ -73,6 +75,7 @@ class AppSnapshot {
     List<Map<String, dynamic>>? stocks,
     List<Map<String, dynamic>>? portfolioTransactions,
     Map<String, dynamic>? portfolioSummary,
+    Map<String, dynamic>? dashboardSummary,
     bool? isSyncing,
     int? pendingWrites,
     String? lastSyncAt,
@@ -90,6 +93,7 @@ class AppSnapshot {
       portfolioTransactions:
           portfolioTransactions ?? this.portfolioTransactions,
       portfolioSummary: portfolioSummary ?? this.portfolioSummary,
+      dashboardSummary: dashboardSummary ?? this.dashboardSummary,
       isSyncing: isSyncing ?? this.isSyncing,
       pendingWrites: pendingWrites ?? this.pendingWrites,
       lastSyncAt: lastSyncAt ?? this.lastSyncAt,
@@ -208,11 +212,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'reference_number': localId,
     };
 
-    final local = {
-      ...payload,
-      'id': localId,
-      'payment_method': null,
-    };
+    final local = {...payload, 'id': localId, 'payment_method': null};
     await _db.upsertTransaction(local, pending: true);
     await _db.applyTransactionBalance(local);
     await _db.queuePost('/transactions', payload);
@@ -372,17 +372,22 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? color,
     String? icon,
   }) async {
-    final created = await _api.createCategory({
+    final localId = const Uuid().v4();
+    final payload = {
+      'id': localId,
       'name': name,
       'type': type,
       'parent_id': parentId,
       'color': _blankToNull(color),
       'icon': _blankToNull(icon),
-    });
-    await syncNow(silent: true);
+    };
+    final local = {...payload, 'children': <Map<String, dynamic>>[]};
+    await _db.upsertCategory(local, pending: true);
+    await _db.queuePost('/categories', payload);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
-    return created;
+    unawaited(syncNow(silent: true));
+    return local;
   }
 
   Future<void> updateCategory({
@@ -580,14 +585,23 @@ class AppController extends AsyncNotifier<AppSnapshot>
     try {
       final result = await _api.refreshStockPrices();
       await syncNow(silent: true);
+      // The backend returns a friendly message when DSE is unreachable.
+      final serverMessage = (result['message'] as String?)?.trim();
+      if (serverMessage != null && serverMessage.isNotEmpty) {
+        return serverMessage;
+      }
       final updated = result['updated'] ?? 0;
       final missing = (result['missing_symbols'] as List? ?? [])
           .whereType<String>()
           .toList();
       final message = 'Updated $updated DSE prices';
-      return missing.isEmpty ? message : '$message. Missing: ${missing.join(', ')}';
-    } catch (error) {
-      throw Exception('DSE price refresh failed: $error');
+      return missing.isEmpty
+          ? message
+          : '$message. Missing: ${missing.join(', ')}';
+    } catch (_) {
+      throw Exception(
+        'Could not refresh prices. Check your connection and try again.',
+      );
     } finally {
       final current = state.asData?.value;
       state = AsyncData(await _readLocal(session: current?.session));
@@ -699,6 +713,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
       stocks: await _db.stocks(),
       portfolioTransactions: await _db.portfolioTransactions(),
       portfolioSummary: await _db.portfolioSummary(),
+      dashboardSummary: await _db.dashboardSummary(),
       isSyncing: false,
       pendingWrites: await _db.pendingCount(),
       lastSyncAt: await _db.lastSyncAt(),

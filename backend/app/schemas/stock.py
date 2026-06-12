@@ -38,6 +38,7 @@ class StockPriceRefreshResponse(BaseModel):
     fetched_at: str
     missing_symbols: list[str] = Field(default_factory=list)
     stocks: list[StockResponse] = Field(default_factory=list)
+    message: str | None = None
 
 
 class DseStockSearchResponse(BaseModel):
@@ -74,15 +75,36 @@ class PortfolioTransactionCreate(BaseModel):
     price: Decimal = Field(default=Decimal("0"), ge=0)
     fees: Decimal | None = Field(default=None, ge=0)
     txn_date: date = Field(default_factory=date.today)
+    payment_date: date | None = None
     record_date: date | None = None
     notes: str | None = Field(default=None, max_length=255)
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_payment_date(cls, data):
+        if (
+            isinstance(data, dict)
+            and data.get("payment_date") is not None
+            and data.get("txn_date") is None
+        ):
+            return {**data, "txn_date": data["payment_date"]}
+        return data
+
     @model_validator(mode="after")
     def validate_transaction_shape(self) -> "PortfolioTransactionCreate":
-        if self.txn_type in {"buy", "sell", "income"} and not (self.stock_id or self.stock):
+        if self.txn_type == "income":
+            self.payment_date = self.payment_date or self.txn_date
+            self.txn_date = self.payment_date
+        elif self.payment_date is None:
+            self.payment_date = self.txn_date
+        if self.txn_type in {"buy", "sell", "income"} and not (
+            self.stock_id or self.stock
+        ):
             raise ValueError("Stock is required for buy, sell, and income transactions")
         if self.txn_type in {"buy", "sell"} and (self.quantity <= 0 or self.price <= 0):
-            raise ValueError("Quantity and price are required for buy and sell transactions")
+            raise ValueError(
+                "Quantity and price are required for buy and sell transactions"
+            )
         if self.txn_type == "income" and self.price <= 0:
             raise ValueError("Income amount is required")
         if self.txn_type in {"deposit", "withdraw"} and self.price <= 0:
@@ -101,6 +123,7 @@ class PortfolioTransactionResponse(BaseModel):
     total_amount: Decimal
     cash_flow: Decimal
     txn_date: date
+    payment_date: date | None = None
     record_date: date | None = None
     notes: str | None = None
     stock: StockResponse | None = None
@@ -150,6 +173,7 @@ class DividendReportRow(BaseModel):
     year: int
     dividend_gain: Decimal
     record_date: date | None = None
+    payment_date: date | None = None
     cash_dividend_percent: Decimal | None = None
     eligible_quantity: Decimal | None = None
     source: str = "manual"

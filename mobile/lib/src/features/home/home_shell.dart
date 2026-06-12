@@ -78,10 +78,24 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           Navigator.of(context).pop();
           setState(() => _index = value);
         },
-        children: const [
+        children: [
           Padding(
-            padding: EdgeInsets.fromLTRB(28, 20, 16, 12),
-            child: Text('Personal Finance'),
+            padding: const EdgeInsets.fromLTRB(28, 24, 16, 16),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.account_balance_wallet_outlined,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Personal Finance',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
           ),
           NavigationDrawerDestination(
             icon: Icon(Icons.dashboard_outlined),
@@ -126,11 +140,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
         ],
       ),
       body: pages[_index],
-      floatingActionButton: _index == 1 || _index == 0
-          ? FloatingActionButton.extended(
+      floatingActionButton: _index == 1
+          ? FloatingActionButton(
+              tooltip: 'Add transaction',
               onPressed: () => showCreateTransactionSheet(context),
-              icon: const Icon(Icons.add),
-              label: const Text('Transaction'),
+              child: const Icon(Icons.add),
             )
           : null,
       bottomNavigationBar: NavigationBar(

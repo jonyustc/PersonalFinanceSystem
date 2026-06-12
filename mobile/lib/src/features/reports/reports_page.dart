@@ -1,11 +1,42 @@
+import 'dart:convert';
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/app_card.dart';
+import '../../widgets/metric_grid.dart';
+import '../../widgets/money_text.dart';
+import '../../widgets/section_header.dart';
+import '../../widgets/stat_card.dart';
 import '../dashboard/dashboard_page.dart';
 import '../transactions/transaction_tile.dart';
+
+/// Whether a transaction counts as an expense for category reports. Mirrors the
+/// backend report filter: `type == 'expense'` OR `transaction_type` is
+/// CARD_SPENDING (`report.py`).
+bool _isReportExpense(Map<String, dynamic> row) {
+  if (row['type'] == 'expense') return true;
+  return _reportTxnType(row) == 'CARD_SPENDING';
+}
+
+String? _reportTxnType(Map<String, dynamic> row) {
+  final direct = row['transaction_type'];
+  if (direct is String) return direct;
+  final raw = row['raw_json'];
+  if (raw is String && raw.isNotEmpty) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return decoded['transaction_type'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+}
 
 class ReportsPage extends ConsumerStatefulWidget {
   const ReportsPage({super.key});
@@ -17,7 +48,7 @@ class ReportsPage extends ConsumerStatefulWidget {
 class _ReportsPageState extends ConsumerState<ReportsPage> {
   late DateTime _start;
   late DateTime _end;
-  final Set<String> _mainCategoryFilterIds = {};
+  final Set<String> _categoryFilterIds = {};
   String? _parentId;
   String? _leafCategoryId;
   int _selectedIndex = 0;
@@ -40,21 +71,18 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final mainCategories = _mainExpenseCategories(snapshot.categories);
+    final expenseCategories = _expenseCategories(snapshot.categories);
     final currency = snapshot.session?.currency ?? 'BDT';
     final rows = _buildRows(
       categories: snapshot.categories,
       transactions: snapshot.transactions,
       parentId: _parentId,
-      mainCategoryFilterIds: _mainCategoryFilterIds,
+      categoryFilterIds: _categoryFilterIds,
     );
     final transactions = _leafCategoryId == null
         ? <Map<String, dynamic>>[]
         : _transactionsForCategory(snapshot.transactions, _leafCategoryId!);
     final total = rows.fold<double>(0, (sum, row) => sum + row.amount);
-    final selected = rows.isEmpty
-        ? null
-        : rows[_selectedIndex.clamp(0, rows.length - 1).toInt()];
     final title = _leafCategoryId == null
         ? (_parentId == null
               ? 'Expense categories'
@@ -69,23 +97,26 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
       body: RefreshIndicator(
         onRefresh: () => ref.read(appControllerProvider.notifier).syncNow(),
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.md,
+            AppSpacing.lg,
+            AppSpacing.xl,
+          ),
           children: [
-            _ReportModeSwitch(
-              value: _reportMode,
-              onChanged: _setReportMode,
-            ),
-            const SizedBox(height: 14),
+            _ReportModeSwitch(value: _reportMode, onChanged: _setReportMode),
+            const SizedBox(height: AppSpacing.md),
             if (_reportMode == 'expenses') ...[
               _ReportHeader(
                 title: title,
                 start: _start,
                 end: _end,
-                mainCategories: mainCategories,
-                selectedMainCategoryIds: _mainCategoryFilterIds,
+                categories: expenseCategories,
+                allCategories: snapshot.categories,
+                selectedCategoryIds: _categoryFilterIds,
                 canGoBack: canGoBack,
                 onBack: _back,
-                onMainCategoriesChanged: _setMainCategoryFilters,
+                onCategoriesChanged: _setCategoryFilters,
                 onPrevious: _previousRange,
                 onNext: _nextRange,
                 onPickRange: _pickRange,
@@ -113,7 +144,6 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
                     rows: rows,
                     total: total,
                     currency: currency,
-                    selectedId: selected?.categoryId,
                     onSelected: (row) => _openRow(row, snapshot.categories),
                   ),
                 ]
@@ -228,9 +258,9 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     });
   }
 
-  void _setMainCategoryFilters(Set<String> categoryIds) {
+  void _setCategoryFilters(Set<String> categoryIds) {
     setState(() {
-      _mainCategoryFilterIds
+      _categoryFilterIds
         ..clear()
         ..addAll(categoryIds);
       _parentId = null;
@@ -243,7 +273,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     required List<Map<String, dynamic>> categories,
     required List<Map<String, dynamic>> transactions,
     required String? parentId,
-    required Set<String> mainCategoryFilterIds,
+    required Set<String> categoryFilterIds,
   }) {
     final categoryById = {
       for (final row in categories) row['id'] as String: row,
@@ -252,7 +282,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     final names = <String, String>{};
 
     for (final transaction in transactions) {
-      if (transaction['type'] != 'expense') continue;
+      if (!_isReportExpense(transaction)) continue;
       if (!_isInRange(transaction)) continue;
       final rawCategoryId = transaction['category_id'] as String?;
       if (rawCategoryId == null) continue;
@@ -260,8 +290,12 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
       if (category == null) continue;
       final categoryParentId = category['parent_id'] as String?;
       final mainCategoryId = categoryParentId ?? rawCategoryId;
-      if (mainCategoryFilterIds.isNotEmpty &&
-          !mainCategoryFilterIds.contains(mainCategoryId)) {
+      if (categoryFilterIds.isNotEmpty &&
+          !_matchesCategoryFilter(
+            rawCategoryId,
+            categoryById,
+            categoryFilterIds,
+          )) {
         continue;
       }
 
@@ -298,7 +332,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     return transactions
         .where(
           (transaction) =>
-              transaction['type'] == 'expense' &&
+              _isReportExpense(transaction) &&
               transaction['category_id'] == categoryId &&
               _isInRange(transaction),
         )
@@ -323,20 +357,41 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     return null;
   }
 
-  List<Map<String, dynamic>> _mainExpenseCategories(
+  bool _matchesCategoryFilter(
+    String categoryId,
+    Map<String, Map<String, dynamic>> categoryById,
+    Set<String> filterIds,
+  ) {
+    if (filterIds.contains(categoryId)) return true;
+    var current = categoryById[categoryId];
+    while (current != null) {
+      final parentId = current['parent_id'] as String?;
+      if (parentId == null) return false;
+      if (filterIds.contains(parentId)) return true;
+      current = categoryById[parentId];
+    }
+    return false;
+  }
+
+  List<Map<String, dynamic>> _expenseCategories(
     List<Map<String, dynamic>> categories,
   ) {
-    return categories
-        .where(
-          (category) =>
-              category['type'] == 'expense' && category['parent_id'] == null,
-        )
-        .toList()
-      ..sort(
-        (a, b) => (a['name'] as String? ?? '').compareTo(
-          b['name'] as String? ?? '',
-        ),
+    final rows = categories
+        .where((category) => category['type'] == 'expense')
+        .toList();
+    final byId = {for (final row in rows) row['id'] as String: row};
+    rows.sort((a, b) {
+      final aParent = a['parent_id'] == null ? a : byId[a['parent_id']];
+      final bParent = b['parent_id'] == null ? b : byId[b['parent_id']];
+      final parentCompare = (aParent?['name'] as String? ?? '').compareTo(
+        bParent?['name'] as String? ?? '',
       );
+      if (parentCompare != 0) return parentCompare;
+      if (a['parent_id'] == null && b['parent_id'] != null) return -1;
+      if (a['parent_id'] != null && b['parent_id'] == null) return 1;
+      return (a['name'] as String? ?? '').compareTo(b['name'] as String? ?? '');
+    });
+    return rows;
   }
 
   Future<Map<String, dynamic>> _cardReportFutureFor(WidgetRef ref) {
@@ -366,10 +421,7 @@ class _ReportRow {
 }
 
 class _ReportModeSwitch extends StatelessWidget {
-  const _ReportModeSwitch({
-    required this.value,
-    required this.onChanged,
-  });
+  const _ReportModeSwitch({required this.value, required this.onChanged});
 
   final String value;
   final ValueChanged<String> onChanged;
@@ -412,57 +464,70 @@ class _CardReportHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.credit_card_outlined),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Card spent and payments',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                IconButton.filledTonal(
-                  tooltip: 'Previous range',
-                  onPressed: onPrevious,
-                  icon: const Icon(Icons.chevron_left),
-                ),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: onPickRange,
-                    icon: const Icon(Icons.date_range),
-                    label: Text(
-                      '${_date(start)} - ${_date(end)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-                IconButton.filledTonal(
-                  tooltip: 'Next range',
-                  onPressed: onNext,
-                  icon: const Icon(Icons.chevron_right),
-                ),
-              ],
-            ),
-          ],
-        ),
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionHeader(
+            'Card spend & payments',
+            subtitle: 'Authoritative figures from the server',
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _RangeNav(
+            start: start,
+            end: end,
+            onPrevious: onPrevious,
+            onNext: onNext,
+            onPickRange: onPickRange,
+          ),
+        ],
       ),
+    );
+  }
+}
+
+/// Shared previous / range-picker / next control used by both report headers.
+class _RangeNav extends StatelessWidget {
+  const _RangeNav({
+    required this.start,
+    required this.end,
+    required this.onPrevious,
+    required this.onNext,
+    required this.onPickRange,
+  });
+
+  final DateTime start;
+  final DateTime end;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+  final VoidCallback onPickRange;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        IconButton.filledTonal(
+          tooltip: 'Previous range',
+          onPressed: onPrevious,
+          icon: const Icon(Icons.chevron_left),
+        ),
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: onPickRange,
+            icon: const Icon(Icons.date_range, size: 18),
+            label: Text(
+              '${_date(start)} → ${_date(end)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+        IconButton.filledTonal(
+          tooltip: 'Next range',
+          onPressed: onNext,
+          icon: const Icon(Icons.chevron_right),
+        ),
+      ],
     );
   }
 }
@@ -472,11 +537,12 @@ class _ReportHeader extends StatelessWidget {
     required this.title,
     required this.start,
     required this.end,
-    required this.mainCategories,
-    required this.selectedMainCategoryIds,
+    required this.categories,
+    required this.allCategories,
+    required this.selectedCategoryIds,
     required this.canGoBack,
     required this.onBack,
-    required this.onMainCategoriesChanged,
+    required this.onCategoriesChanged,
     required this.onPrevious,
     required this.onNext,
     required this.onPickRange,
@@ -485,11 +551,12 @@ class _ReportHeader extends StatelessWidget {
   final String title;
   final DateTime start;
   final DateTime end;
-  final List<Map<String, dynamic>> mainCategories;
-  final Set<String> selectedMainCategoryIds;
+  final List<Map<String, dynamic>> categories;
+  final List<Map<String, dynamic>> allCategories;
+  final Set<String> selectedCategoryIds;
   final bool canGoBack;
   final VoidCallback onBack;
-  final ValueChanged<Set<String>> onMainCategoriesChanged;
+  final ValueChanged<Set<String>> onCategoriesChanged;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final VoidCallback onPickRange;
@@ -497,109 +564,87 @@ class _ReportHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selectedLabel = _categoryFilterLabel(
-      mainCategories,
-      selectedMainCategoryIds,
+      categories,
+      allCategories,
+      selectedCategoryIds,
     );
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                if (canGoBack)
-                  IconButton(
-                    tooltip: 'Back',
-                    onPressed: onBack,
-                    icon: const Icon(Icons.arrow_back),
-                  )
-                else
-                  const Icon(Icons.pie_chart_outline),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (canGoBack)
+                IconButton(
+                  tooltip: 'Back',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onBack,
+                  icon: const Icon(Icons.arrow_back),
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () => _showMainCategoryPicker(context),
-              child: InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'Main categories',
-                  prefixIcon: Icon(Icons.filter_list),
-                  suffixIcon: Icon(Icons.expand_more),
-                ),
+              Expanded(
                 child: Text(
-                  selectedLabel,
+                  title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
-              ),
-            ),
-            if (selectedMainCategoryIds.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                children: mainCategories
-                    .where(
-                      (category) => selectedMainCategoryIds.contains(
-                        category['id'] as String,
-                      ),
-                    )
-                    .map(
-                      (category) => InputChip(
-                        label: Text(category['name'] as String? ?? 'Category'),
-                        onDeleted: () {
-                          final next = Set<String>.from(
-                            selectedMainCategoryIds,
-                          )..remove(category['id'] as String);
-                          onMainCategoriesChanged(next);
-                        },
-                      ),
-                    )
-                    .toList(),
-              ),
-            ],
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                IconButton.filledTonal(
-                  tooltip: 'Previous range',
-                  onPressed: onPrevious,
-                  icon: const Icon(Icons.chevron_left),
-                ),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: onPickRange,
-                    icon: const Icon(Icons.date_range),
-                    label: Text(
-                      '${_date(start)} - ${_date(end)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.2,
                   ),
                 ),
-                IconButton.filledTonal(
-                  tooltip: 'Next range',
-                  onPressed: onNext,
-                  icon: const Icon(Icons.chevron_right),
-                ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            onTap: () => _showMainCategoryPicker(context),
+            child: InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Categories',
+                isDense: true,
+                prefixIcon: Icon(Icons.filter_list),
+                suffixIcon: Icon(Icons.expand_more),
+              ),
+              child: Text(
+                selectedLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodyLarge,
+              ),
+            ),
+          ),
+          if (selectedCategoryIds.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.xs,
+              children: categories
+                  .where(
+                    (category) =>
+                        selectedCategoryIds.contains(category['id'] as String),
+                  )
+                  .map(
+                    (category) => InputChip(
+                      label: Text(_categoryDisplayName(category, allCategories)),
+                      onDeleted: () {
+                        final next = Set<String>.from(selectedCategoryIds)
+                          ..remove(category['id'] as String);
+                        onCategoriesChanged(next);
+                      },
+                    ),
+                  )
+                  .toList(),
             ),
           ],
-        ),
+          const SizedBox(height: AppSpacing.md),
+          _RangeNav(
+            start: start,
+            end: end,
+            onPrevious: onPrevious,
+            onNext: onNext,
+            onPickRange: onPickRange,
+          ),
+        ],
       ),
     );
   }
@@ -611,20 +656,18 @@ class _ReportHeader extends StatelessWidget {
       useSafeArea: true,
       showDragHandle: true,
       builder: (context) => _MainCategoryPickerSheet(
-        categories: mainCategories,
-        selectedIds: selectedMainCategoryIds,
+        categories: categories,
+        allCategories: allCategories,
+        selectedIds: selectedCategoryIds,
       ),
     );
     if (picked == null) return;
-    onMainCategoriesChanged(picked);
+    onCategoriesChanged(picked);
   }
 }
 
 class _CardReportSection extends StatelessWidget {
-  const _CardReportSection({
-    required this.future,
-    required this.currency,
-  });
+  const _CardReportSection({required this.future, required this.currency});
 
   final Future<Map<String, dynamic>> future;
   final String currency;
@@ -635,21 +678,16 @@ class _CardReportSection extends StatelessWidget {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Card(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()),
-            ),
+          return const AppCard(
+            padding: EdgeInsets.all(AppSpacing.xl),
+            child: Center(child: CircularProgressIndicator()),
           );
         }
         if (snapshot.hasError) {
-          return Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Card report unavailable. Pull to sync or try again.',
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
+          return AppCard(
+            child: Text(
+              'Card report unavailable. Pull to sync or try again.',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           );
         }
@@ -668,155 +706,86 @@ class _CardReportSection extends StatelessWidget {
             .map((row) => row.cast<String, dynamic>())
             .toList();
 
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        return Column(
+          children: [
+            MetricGrid(
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.credit_card_outlined),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Cards',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _CardReportMetric(
-                        label: 'Spent',
-                        value: money(
-                          asDouble(report['total_spent']),
-                          currency: currency,
-                        ),
-                        color: const Color(0xFFB91C1C),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _CardReportMetric(
-                        label: 'Paid',
-                        value: money(
-                          asDouble(report['total_paid']),
-                          currency: currency,
-                        ),
-                        color: const Color(0xFF15803D),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                _CardReportMetric(
-                  label: 'Outstanding',
-                  value: money(
-                    asDouble(report['total_outstanding']),
-                    currency: currency,
-                  ),
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(height: 12),
-                if (cards.isEmpty)
-                  Text(
-                    'No credit cards found.',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  )
-                else
-                  ...cards.map(
-                    (card) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _CardReportCardRow(card: card, currency: currency),
-                    ),
-                  ),
-                const Divider(height: 22),
-                _CardHistoryList(
-                  title: 'Payment history',
-                  emptyText: 'No card payments in this range.',
-                  rows: paymentHistory,
-                  currency: currency,
-                  icon: Icons.payments_outlined,
-                  color: const Color(0xFF15803D),
-                ),
-                const SizedBox(height: 12),
-                _CardHistoryList(
-                  title: 'Spent history',
-                  emptyText: 'No card spending in this range.',
-                  rows: spentHistory,
+                StatCard(
+                  label: 'Spent',
+                  amount: asDouble(report['total_spent']),
                   currency: currency,
                   icon: Icons.shopping_bag_outlined,
-                  color: const Color(0xFFB91C1C),
+                  amountColor: AppColors.amount(context, positive: false),
+                ),
+                StatCard(
+                  label: 'Paid',
+                  amount: asDouble(report['total_paid']),
+                  currency: currency,
+                  icon: Icons.payments_outlined,
+                  amountColor: AppColors.amount(context, positive: true),
+                ),
+                StatCard(
+                  label: 'Outstanding',
+                  amount: asDouble(report['total_outstanding']),
+                  currency: currency,
+                  icon: Icons.credit_card_outlined,
                 ),
               ],
             ),
-          ),
+            const SizedBox(height: AppSpacing.md),
+            AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SectionHeader('Cards'),
+                  const SizedBox(height: AppSpacing.md),
+                  if (cards.isEmpty)
+                    Text(
+                      'No credit cards found.',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    )
+                  else
+                    ...cards.map(
+                      (card) => Padding(
+                        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                        child: _CardReportCardRow(
+                          card: card,
+                          currency: currency,
+                        ),
+                      ),
+                    ),
+                  const Divider(height: AppSpacing.xl),
+                  _CardHistoryList(
+                    title: 'Payment history',
+                    emptyText: 'No card payments in this range.',
+                    rows: paymentHistory,
+                    currency: currency,
+                    icon: Icons.payments_outlined,
+                    color: AppColors.amount(context, positive: true),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _CardHistoryList(
+                    title: 'Spent history',
+                    emptyText: 'No card spending in this range.',
+                    rows: spentHistory,
+                    currency: currency,
+                    icon: Icons.shopping_bag_outlined,
+                    color: AppColors.amount(context, positive: false),
+                  ),
+                ],
+              ),
+            ),
+          ],
         );
       },
     );
   }
 }
 
-class _CardReportMetric extends StatelessWidget {
-  const _CardReportMetric({
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  final String label;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.w900,
-                  ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _CardReportCardRow extends StatelessWidget {
-  const _CardReportCardRow({
-    required this.card,
-    required this.currency,
-  });
+  const _CardReportCardRow({required this.card, required this.currency});
 
   final Map<String, dynamic> card;
   final String currency;
@@ -851,8 +820,8 @@ class _CardReportCardRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
@@ -893,9 +862,9 @@ class _CardHistoryList extends StatelessWidget {
       children: [
         Text(
           title,
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w900,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 8),
         if (visibleRows.isEmpty)
@@ -936,15 +905,17 @@ class _CardHistoryList extends StatelessWidget {
                           [
                             row['txn_date'] as String? ?? '',
                             row['card_name'] as String? ?? '',
-                            if ((row['account_name'] as String? ?? '').isNotEmpty)
+                            if ((row['account_name'] as String? ?? '')
+                                .isNotEmpty)
                               row['account_name'] as String,
                           ].where((value) => value.isNotEmpty).join(' - '),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
                               ),
                         ),
                       ],
@@ -953,10 +924,7 @@ class _CardHistoryList extends StatelessWidget {
                   const SizedBox(width: 8),
                   Text(
                     money(asDouble(row['amount']), currency: currency),
-                    style: TextStyle(
-                      color: color,
-                      fontWeight: FontWeight.w900,
-                    ),
+                    style: TextStyle(color: color, fontWeight: FontWeight.w900),
                   ),
                 ],
               ),
@@ -970,10 +938,12 @@ class _CardHistoryList extends StatelessWidget {
 class _MainCategoryPickerSheet extends StatefulWidget {
   const _MainCategoryPickerSheet({
     required this.categories,
+    required this.allCategories,
     required this.selectedIds,
   });
 
   final List<Map<String, dynamic>> categories;
+  final List<Map<String, dynamic>> allCategories;
   final Set<String> selectedIds;
 
   @override
@@ -1000,17 +970,17 @@ class _MainCategoryPickerSheetState extends State<_MainCategoryPickerSheet> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Main categories',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w900,
-              ),
+              'Categories',
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 8),
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               value: _selectedIds.isEmpty,
               controlAffinity: ListTileControlAffinity.leading,
-              title: const Text('All main categories'),
+              title: const Text('All categories'),
               onChanged: (_) => setState(_selectedIds.clear),
             ),
             const Divider(height: 1),
@@ -1022,7 +992,9 @@ class _MainCategoryPickerSheetState extends State<_MainCategoryPickerSheet> {
                     contentPadding: EdgeInsets.zero,
                     value: _selectedIds.contains(id),
                     controlAffinity: ListTileControlAffinity.leading,
-                    title: Text(category['name'] as String? ?? 'Category'),
+                    title: Text(
+                      _categoryDisplayName(category, widget.allCategories),
+                    ),
                     onChanged: (selected) {
                       setState(() {
                         if (selected == true) {
@@ -1075,10 +1047,8 @@ class _PieSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
+    return AppCard(
+      child: Column(
           children: [
             AspectRatio(
               aspectRatio: 1.25,
@@ -1118,12 +1088,13 @@ class _PieSummary extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Text(
-              money(-total, currency: currency),
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+              money(total, currency: currency),
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
             Text(
               'Total expense',
@@ -1131,7 +1102,6 @@ class _PieSummary extends StatelessWidget {
             ),
           ],
         ),
-      ),
     );
   }
 }
@@ -1141,68 +1111,99 @@ class _CategoryBreakdown extends StatelessWidget {
     required this.rows,
     required this.total,
     required this.currency,
-    required this.selectedId,
     required this.onSelected,
   });
 
   final List<_ReportRow> rows;
   final double total;
   final String currency;
-  final String? selectedId;
   final ValueChanged<_ReportRow> onSelected;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: ListView.separated(
-        padding: EdgeInsets.zero,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: rows.length,
-        separatorBuilder: (_, _) => Divider(
-          height: 1,
-          color: Theme.of(context).colorScheme.outlineVariant,
-        ),
-        itemBuilder: (context, index) {
+    final theme = Theme.of(context);
+    return AppCard(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Column(
+        children: List.generate(rows.length, (index) {
           final row = rows[index];
-          final percent = total <= 0 ? 0 : row.amount / total;
-          final selected = row.categoryId == selectedId;
-          return ListTile(
-            selected: selected,
-            leading: CircleAvatar(
-              backgroundColor: _chartColors[index % _chartColors.length],
-              child: Text(
-                '${(percent * 100).round()}%',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                ),
+          final percent = total <= 0 ? 0.0 : row.amount / total;
+          final color = _chartColors[index % _chartColors.length];
+          return InkWell(
+            onTap: () => onSelected(row),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.sm,
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                row.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              money(row.amount, currency: currency),
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(AppRadius.pill),
+                          child: LinearProgressIndicator(
+                            value: percent.clamp(0, 1).toDouble(),
+                            minHeight: 5,
+                            backgroundColor: AppColors.border(context),
+                            valueColor: AlwaysStoppedAnimation(color),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Text(
+                    '${(percent * 100).round()}%',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right,
+                    size: 18,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ],
               ),
             ),
-            title: Text(
-              row.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            subtitle: LinearProgressIndicator(
-              value: percent.clamp(0, 1).toDouble(),
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  money(-row.amount, currency: currency),
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(width: 4),
-                const Icon(Icons.chevron_right),
-              ],
-            ),
-            onTap: () => onSelected(row),
           );
-        },
+        }),
       ),
     );
   }
@@ -1232,29 +1233,49 @@ class _TransactionList extends StatelessWidget {
         body: 'No expense transactions are available for this category.',
       );
     }
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.receipt_long_outlined),
-            title: Text(
-              categoryName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-            subtitle: Text('${transactions.length} transactions'),
-            trailing: Text(
-              money(-total, currency: currency),
-              style: const TextStyle(fontWeight: FontWeight.w900),
-            ),
+        AppCard(
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      categoryName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      '${transactions.length} transactions',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              MoneyText(
+                total,
+                currency: currency,
+                color: AppColors.amount(context, positive: false),
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.md),
         ...transactions.map(
           (transaction) => Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: AppSpacing.sm),
             child: TransactionTile(row: transaction, currency: currency),
           ),
         ),
@@ -1269,15 +1290,31 @@ String _date(DateTime value) {
 
 String _categoryFilterLabel(
   List<Map<String, dynamic>> categories,
+  List<Map<String, dynamic>> allCategories,
   Set<String> selectedIds,
 ) {
-  if (selectedIds.isEmpty) return 'All main categories';
+  if (selectedIds.isEmpty) return 'All categories';
   final names = categories
       .where((category) => selectedIds.contains(category['id'] as String))
-      .map((category) => category['name'] as String? ?? 'Category')
+      .map((category) => _categoryDisplayName(category, allCategories))
       .toList();
   if (names.length <= 2) return names.join(', ');
   return '${names.take(2).join(', ')} +${names.length - 2}';
+}
+
+String _categoryDisplayName(
+  Map<String, dynamic> category,
+  List<Map<String, dynamic>> categories,
+) {
+  final name = category['name'] as String? ?? 'Category';
+  final parentId = category['parent_id'] as String?;
+  if (parentId == null) return name;
+  for (final parent in categories) {
+    if (parent['id'] == parentId) {
+      return '${parent['name'] as String? ?? 'Category'} - $name';
+    }
+  }
+  return name;
 }
 
 const _chartColors = [

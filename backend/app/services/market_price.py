@@ -14,6 +14,10 @@ from pypdf import PdfReader
 
 DSE_LATEST_PRICE_URL = "https://www.dsebd.org/latest_share_price_scroll_l.php"
 DSE_AGM_RECORD_DATE_PDF_URL = "https://www.dsebd.org/Company_AGM_EGM.pdf"
+DSE_REQUEST_HEADERS = {
+    "User-Agent": "PersonalFinanceSystem/1.0",
+    "Accept": "text/html,application/xhtml+xml,application/pdf",
+}
 
 
 @dataclass(frozen=True)
@@ -45,19 +49,12 @@ class DseDividendEvent:
 
 class MarketPriceService:
     async def fetch_dse_latest_prices(self) -> dict[str, MarketPrice]:
-        async with httpx.AsyncClient(
-            timeout=20,
-            headers={
-                "User-Agent": "PersonalFinanceSystem/1.0",
-                "Accept": "text/html,application/xhtml+xml",
-            },
-        ) as client:
-            response = await client.get(DSE_LATEST_PRICE_URL)
-            response.raise_for_status()
-
+        response = await self._get_dse(DSE_LATEST_PRICE_URL)
         return self._parse_dse_latest_prices(response.text)
 
-    async def search_dse_stocks(self, query: str = "", limit: int = 20) -> list[DseStockQuote]:
+    async def search_dse_stocks(
+        self, query: str = "", limit: int = 20
+    ) -> list[DseStockQuote]:
         prices = await self.fetch_dse_latest_prices()
         normalized = query.strip().upper()
         matches = [
@@ -68,13 +65,7 @@ class MarketPriceService:
         if not matches:
             return []
 
-        async with httpx.AsyncClient(
-            timeout=20,
-            headers={
-                "User-Agent": "PersonalFinanceSystem/1.0",
-                "Accept": "text/html,application/xhtml+xml",
-            },
-        ) as client:
+        async with self._dse_client() as client:
             quotes = []
             for price in matches:
                 name = await self._fetch_dse_company_name(client, price.symbol)
@@ -91,15 +82,11 @@ class MarketPriceService:
 
     async def fetch_dse_dividend_events(self, symbol: str) -> list[DseDividendEvent]:
         symbol = symbol.strip().upper()
-        async with httpx.AsyncClient(
-            timeout=20,
-            headers={
-                "User-Agent": "PersonalFinanceSystem/1.0",
-                "Accept": "text/html,application/xhtml+xml,application/pdf",
-            },
-        ) as client:
-            company_response = await client.get(f"https://www.dsebd.org/displayCompany.php?name={quote(symbol)}")
-            company_response.raise_for_status()
+        async with self._dse_client() as client:
+            company_response = await self._get_dse(
+                f"https://www.dsebd.org/displayCompany.php?name={quote(symbol)}",
+                client=client,
+            )
             record_dates = await self._fetch_dse_record_dates(client)
 
         face_value = self._parse_face_value(company_response.text)
@@ -109,23 +96,29 @@ class MarketPriceService:
             record_date = record_dates.get(symbol)
             if record_date and record_date.year not in {year, year + 1}:
                 record_date = None
-            events.append(DseDividendEvent(
-                symbol=symbol,
-                year=year,
-                cash_percent=cash_percent,
-                face_value=face_value,
-                record_date=record_date,
-                source="DSE",
-            ))
+            events.append(
+                DseDividendEvent(
+                    symbol=symbol,
+                    year=year,
+                    cash_percent=cash_percent,
+                    face_value=face_value,
+                    record_date=record_date,
+                    source="DSE",
+                )
+            )
         return events
 
     def _parse_dse_latest_prices(self, page: str) -> dict[str, MarketPrice]:
         fetched_at = datetime.now(UTC)
         prices: dict[str, MarketPrice] = {}
-        for row in re.findall(r"<tr[^>]*>(.*?)</tr>", page, flags=re.IGNORECASE | re.DOTALL):
+        for row in re.findall(
+            r"<tr[^>]*>(.*?)</tr>", page, flags=re.IGNORECASE | re.DOTALL
+        ):
             cells = [
                 self._clean_cell(cell)
-                for cell in re.findall(r"<td[^>]*>(.*?)</td>", row, flags=re.IGNORECASE | re.DOTALL)
+                for cell in re.findall(
+                    r"<td[^>]*>(.*?)</td>", row, flags=re.IGNORECASE | re.DOTALL
+                )
             ]
             if len(cells) < 3:
                 continue
@@ -148,10 +141,14 @@ class MarketPriceService:
         without_tags = re.sub(r"<[^>]+>", "", value)
         return html.unescape(without_tags).strip()
 
-    async def _fetch_dse_company_name(self, client: httpx.AsyncClient, symbol: str) -> str | None:
+    async def _fetch_dse_company_name(
+        self, client: httpx.AsyncClient, symbol: str
+    ) -> str | None:
         try:
-            response = await client.get(f"https://www.dsebd.org/displayCompany.php?name={quote(symbol)}")
-            response.raise_for_status()
+            response = await self._get_dse(
+                f"https://www.dsebd.org/displayCompany.php?name={quote(symbol)}",
+                client=client,
+            )
         except httpx.HTTPError:
             return None
         return self._parse_dse_company_name(response.text)
@@ -196,10 +193,11 @@ class MarketPriceService:
                 continue
         return dividends
 
-    async def _fetch_dse_record_dates(self, client: httpx.AsyncClient) -> dict[str, date]:
+    async def _fetch_dse_record_dates(
+        self, client: httpx.AsyncClient
+    ) -> dict[str, date]:
         try:
-            response = await client.get(DSE_AGM_RECORD_DATE_PDF_URL)
-            response.raise_for_status()
+            response = await self._get_dse(DSE_AGM_RECORD_DATE_PDF_URL, client=client)
         except httpx.HTTPError:
             return {}
         return self._parse_record_date_pdf(response.content)
@@ -232,9 +230,56 @@ class MarketPriceService:
 
     def _parse_dse_date(self, value: str) -> date | None:
         normalized = value.replace("/", "-").replace(" ", "-")
-        for fmt in ("%d-%m-%Y", "%d-%m-%y", "%d-%b-%Y", "%d-%b-%y", "%d-%B-%Y", "%d-%B-%y"):
+        for fmt in (
+            "%d-%m-%Y",
+            "%d-%m-%y",
+            "%d-%b-%Y",
+            "%d-%b-%y",
+            "%d-%B-%Y",
+            "%d-%B-%y",
+        ):
             try:
                 return datetime.strptime(normalized, fmt).date()
             except ValueError:
                 continue
         return None
+
+    def _dse_client(self, *, verify: bool = True) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            timeout=20,
+            headers=DSE_REQUEST_HEADERS,
+            verify=verify,
+            follow_redirects=True,
+        )
+
+    async def _get_dse(
+        self,
+        url: str,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ) -> httpx.Response:
+        if client is not None:
+            try:
+                response = await client.get(url)
+                response.raise_for_status()
+                return response
+            except httpx.ConnectError as error:
+                if not self._is_certificate_error(error):
+                    raise
+
+        try:
+            async with self._dse_client() as verified_client:
+                response = await verified_client.get(url)
+                response.raise_for_status()
+                return response
+        except httpx.ConnectError as error:
+            if not self._is_certificate_error(error):
+                raise
+
+        async with self._dse_client(verify=False) as unverified_client:
+            response = await unverified_client.get(url)
+            response.raise_for_status()
+            return response
+
+    def _is_certificate_error(self, error: httpx.ConnectError) -> bool:
+        return "CERTIFICATE_VERIFY_FAILED" in str(error).upper()

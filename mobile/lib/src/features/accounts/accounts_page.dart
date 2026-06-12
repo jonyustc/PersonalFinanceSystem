@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/finance_summary.dart';
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/app_card.dart';
+import '../../widgets/metric_grid.dart';
+import '../../widgets/money_text.dart';
+import '../../widgets/section_header.dart';
+import '../../widgets/stat_card.dart';
 import '../dashboard/dashboard_page.dart';
 
 class AccountsPage extends ConsumerWidget {
@@ -13,80 +20,104 @@ class AccountsPage extends ConsumerWidget {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
     if (snapshot == null) return const Center(child: CircularProgressIndicator());
     final accounts = snapshot.accounts;
+    final currency = snapshot.session?.currency ?? 'BDT';
+    final summary = buildAccountSummary(accounts);
+    final groups = _groupAccounts(accounts);
 
     return RefreshIndicator(
       onRefresh: () => ref.read(appControllerProvider.notifier).syncNow(),
-      child: accounts.isEmpty
-          ? ListView(
-              padding: const EdgeInsets.all(16),
-              children: const [
-                EmptyPanel(
-                  icon: Icons.account_balance_outlined,
-                  title: 'No accounts cached',
-                  body: 'Sync from the API to bring your accounts into SQLite.',
+      child: ListView(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        children: [
+          _AccountSummaryHeader(summary: summary, currency: currency),
+          const SizedBox(height: AppSpacing.md),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => _showTransferSheet(context, ref),
+                  icon: const Icon(Icons.swap_horiz),
+                  label: const Text('Transfer'),
                 ),
-              ],
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: accounts.length + 1,
-              separatorBuilder: (_, _) => const SizedBox(height: 10),
-              itemBuilder: (context, index) {
-                if (index == 0) {
-                  return Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: () => _showTransferSheet(context, ref),
-                          icon: const Icon(Icons.swap_horiz),
-                          label: const Text('Transfer'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => _showCreateAccountSheet(context),
-                          icon: const Icon(Icons.add),
-                          label: const Text('Account'),
-                        ),
-                      ),
-                    ],
-                  );
-                }
-                final account = accounts[index - 1];
-                final balance = asDouble(account['balance']);
-                final currency = (account['currency'] ?? snapshot.session?.currency ?? 'BDT') as String;
-                return Card(
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: const Color(0xFFE0F2FE),
-                      foregroundColor: const Color(0xFF0369A1),
-                      child: Icon(_accountIcon(account['type'] as String?)),
-                    ),
-                    title: Text(
-                      account['name'] as String,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: Text((account['type'] as String).replaceAll('_', ' ').toUpperCase()),
-                    trailing: Text(
-                      money(balance, currency: currency),
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    onTap: () => _showEditAccountSheet(context, ref, account),
-                    onLongPress: () => _archiveAccount(context, ref, account),
-                  ),
-                );
-              },
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _showCreateAccountSheet(context),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Account'),
+                ),
+              ),
+            ],
+          ),
+          if (accounts.isEmpty) ...[
+            const SizedBox(height: AppSpacing.lg),
+            const EmptyPanel(
+              icon: Icons.account_balance_outlined,
+              title: 'No accounts cached',
+              body: 'Sync from the API to bring your accounts into SQLite.',
             ),
+          ],
+          for (final group in groups) ...[
+            const SizedBox(height: AppSpacing.xl),
+            SectionHeader(
+              group.label,
+              subtitle:
+                  '${group.accounts.length} account${group.accounts.length == 1 ? '' : 's'} · ${money(group.total, currency: currency)}',
+            ),
+            const SizedBox(height: AppSpacing.md),
+            for (final account in group.accounts)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                child: _AccountRow(
+                  account: account,
+                  currency: currency,
+                  onTap: () => _showEditAccountSheet(context, ref, account),
+                  onLongPress: () => _archiveAccount(context, ref, account),
+                ),
+              ),
+          ],
+        ],
+      ),
     );
   }
 
-  IconData _accountIcon(String? type) {
-    final value = (type ?? '').toLowerCase();
-    if (value.contains('card')) return Icons.credit_card;
-    if (value.contains('bank')) return Icons.account_balance;
-    if (value.contains('mobile')) return Icons.phone_android;
-    return Icons.wallet;
+  List<_AccountGroup> _groupAccounts(List<Map<String, dynamic>> accounts) {
+    const order = [
+      ('cash', 'Cash'),
+      ('bank', 'Bank'),
+      ('mobile_banking', 'Mobile banking'),
+      ('debit_card', 'Debit cards'),
+      ('credit_card', 'Credit cards'),
+      ('other', 'Other'),
+    ];
+    final buckets = <String, List<Map<String, dynamic>>>{};
+    for (final account in accounts) {
+      buckets.putIfAbsent(_groupKey(account), () => []).add(account);
+    }
+    final groups = <_AccountGroup>[];
+    for (final entry in order) {
+      final rows = buckets[entry.$1];
+      if (rows == null || rows.isEmpty) continue;
+      final total = rows.fold<double>(
+        0,
+        (sum, row) => sum + _accountValue(row),
+      );
+      groups.add(_AccountGroup(label: entry.$2, accounts: rows, total: total));
+    }
+    return groups;
+  }
+
+  String _groupKey(Map<String, dynamic> account) {
+    if (isCreditCardAccount(account)) return 'credit_card';
+    final type = (account['type'] as String? ?? '').toLowerCase();
+    if (type == 'cash') return 'cash';
+    if (type == 'bank') return 'bank';
+    if (type == 'mobile_banking' || type.contains('mobile')) {
+      return 'mobile_banking';
+    }
+    if (type == 'debit_card') return 'debit_card';
+    return 'other';
   }
 
   Future<void> _archiveAccount(
@@ -152,6 +183,266 @@ class AccountsPage extends ConsumerWidget {
       builder: (_) => const _TransferSheet(),
     );
   }
+}
+
+/// A credit card's contribution to a group total is its debt (shown as the
+/// outstanding amount); every other account contributes its balance.
+double _accountValue(Map<String, dynamic> account) {
+  if (isCreditCardAccount(account)) {
+    return asDouble(account['current_outstanding']);
+  }
+  return asDouble(account['balance']);
+}
+
+class _AccountGroup {
+  const _AccountGroup({
+    required this.label,
+    required this.accounts,
+    required this.total,
+  });
+
+  final String label;
+  final List<Map<String, dynamic>> accounts;
+  final double total;
+}
+
+class _AccountSummaryHeader extends StatelessWidget {
+  const _AccountSummaryHeader({required this.summary, required this.currency});
+
+  final AccountSummary summary;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    return Column(
+      children: [
+        AppCard(
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'NET WORTH',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: muted,
+                  letterSpacing: 0.6,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              MoneyText(
+                summary.netWorth,
+                currency: currency,
+                style: theme.textTheme.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.8,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        MetricGrid(
+          children: [
+            StatCard(
+              label: 'Assets',
+              amount: summary.totalAssets,
+              currency: currency,
+              icon: Icons.account_balance_wallet_outlined,
+              amountColor: AppColors.amount(context, positive: true),
+            ),
+            StatCard(
+              label: 'Liabilities',
+              amount: summary.liabilities,
+              currency: currency,
+              icon: Icons.credit_card_outlined,
+              amountColor: summary.liabilities > 0
+                  ? AppColors.amount(context, positive: false)
+                  : null,
+            ),
+            StatCard(
+              label: 'Cash',
+              amount: summary.cashBalance,
+              currency: currency,
+              icon: Icons.payments_outlined,
+            ),
+            StatCard(
+              label: 'Card debt',
+              amount: summary.cardDebt,
+              currency: currency,
+              icon: Icons.credit_card,
+              amountColor: summary.cardDebt > 0
+                  ? AppColors.amount(context, positive: false)
+                  : null,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _AccountRow extends StatelessWidget {
+  const _AccountRow({
+    required this.account,
+    required this.currency,
+    this.onTap,
+    this.onLongPress,
+  });
+
+  final Map<String, dynamic> account;
+  final String currency;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    final accountCurrency = account['currency'] as String? ?? currency;
+    final isCard = isCreditCardAccount(account);
+    final scheme = theme.colorScheme;
+    final avatar = CircleAvatar(
+      radius: 20,
+      backgroundColor: scheme.primary.withValues(alpha: 0.10),
+      foregroundColor: scheme.primary,
+      child: Icon(_accountIcon(account['type'] as String?), size: 20),
+    );
+    final typeLabel = (account['type'] as String? ?? '')
+        .replaceAll('_', ' ')
+        .toUpperCase();
+
+    if (!isCard) {
+      final balance = asDouble(account['balance']);
+      return AppCard(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Row(
+          children: [
+            avatar,
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    account['name'] as String? ?? 'Account',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    typeLabel,
+                    style: theme.textTheme.labelSmall?.copyWith(color: muted),
+                  ),
+                ],
+              ),
+            ),
+            MoneyText(
+              balance,
+              currency: accountCurrency,
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+              color: balance < 0
+                  ? AppColors.amount(context, positive: false)
+                  : null,
+            ),
+          ],
+        ),
+      );
+    }
+
+    final limit = asDouble(account['credit_limit']);
+    final outstanding = asDouble(account['current_outstanding']);
+    final available = (limit - outstanding) > 0 ? limit - outstanding : 0.0;
+    final utilization = limit > 0 ? outstanding / limit * 100 : 0.0;
+    final barColor = AppColors.utilization(context, utilization);
+    return AppCard(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              avatar,
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      account['name'] as String? ?? 'Credit card',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      'CREDIT CARD',
+                      style: theme.textTheme.labelSmall?.copyWith(color: muted),
+                    ),
+                  ],
+                ),
+              ),
+              MoneyText(
+                outstanding,
+                currency: accountCurrency,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+                color: outstanding > 0
+                    ? AppColors.amount(context, positive: false)
+                    : null,
+              ),
+            ],
+          ),
+          if (limit > 0) ...[
+            const SizedBox(height: AppSpacing.sm),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.pill),
+              child: LinearProgressIndicator(
+                value: (utilization / 100).clamp(0, 1).toDouble(),
+                minHeight: 6,
+                backgroundColor: AppColors.border(context),
+                valueColor: AlwaysStoppedAnimation(barColor),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${money(available, currency: accountCurrency)} available',
+                  style: theme.textTheme.bodySmall?.copyWith(color: muted),
+                ),
+                Text(
+                  '${utilization.round()}% used',
+                  style: theme.textTheme.bodySmall?.copyWith(color: barColor),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+IconData _accountIcon(String? type) {
+  final value = (type ?? '').toLowerCase();
+  if (value.contains('card')) return Icons.credit_card;
+  if (value.contains('bank')) return Icons.account_balance;
+  if (value.contains('mobile')) return Icons.phone_android;
+  return Icons.wallet;
 }
 
 class _CreateAccountSheet extends ConsumerStatefulWidget {

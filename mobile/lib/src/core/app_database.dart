@@ -11,7 +11,7 @@ class AppDatabase {
     final path = p.join(await getDatabasesPath(), 'personal_finance.db');
     _db = await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _create,
       onUpgrade: _upgrade,
     );
@@ -46,6 +46,7 @@ class AppDatabase {
         parent_id TEXT,
         color TEXT,
         icon TEXT,
+        is_pending INTEGER NOT NULL DEFAULT 0,
         raw_json TEXT NOT NULL
       )
     ''');
@@ -92,18 +93,43 @@ class AppDatabase {
       await _createBudgetTables(db);
     }
     if (oldVersion < 3) {
-      await db.execute("UPDATE accounts SET currency = 'BDT' WHERE currency = 'USD'");
+      await db.execute(
+        "UPDATE accounts SET currency = 'BDT' WHERE currency = 'USD'",
+      );
     }
     if (oldVersion < 4) {
-      await _addColumnSafely(db, 'accounts', 'current_outstanding', 'REAL NOT NULL DEFAULT 0');
+      await _addColumnSafely(
+        db,
+        'accounts',
+        'current_outstanding',
+        'REAL NOT NULL DEFAULT 0',
+      );
       await _addColumnSafely(db, 'accounts', 'credit_limit', 'REAL');
-      await _addColumnSafely(db, 'accounts', 'display_balance', 'REAL NOT NULL DEFAULT 0');
+      await _addColumnSafely(
+        db,
+        'accounts',
+        'display_balance',
+        'REAL NOT NULL DEFAULT 0',
+      );
     }
     if (oldVersion < 5) {
-      await _addColumnSafely(db, 'portfolio_transactions', 'record_date', 'TEXT');
+      await _addColumnSafely(
+        db,
+        'portfolio_transactions',
+        'record_date',
+        'TEXT',
+      );
     }
     if (oldVersion < 6) {
       await _addColumnSafely(db, 'accounts', 'account_subtype', 'TEXT');
+    }
+    if (oldVersion < 7) {
+      await _addColumnSafely(
+        db,
+        'categories',
+        'is_pending',
+        'INTEGER NOT NULL DEFAULT 0',
+      );
     }
   }
 
@@ -201,22 +227,29 @@ class AppDatabase {
 
   Future<String?> lastSyncAt() async {
     final db = await database;
-    final rows = await db.query('meta', where: 'key = ?', whereArgs: ['last_sync_at']);
+    final rows = await db.query(
+      'meta',
+      where: 'key = ?',
+      whereArgs: ['last_sync_at'],
+    );
     return rows.isEmpty ? null : rows.first['value'] as String;
   }
 
   Future<void> markSynced() async {
     final db = await database;
-    await db.insert(
-      'meta',
-      {'key': 'last_sync_at', 'value': DateTime.now().toIso8601String()},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('meta', {
+      'key': 'last_sync_at',
+      'value': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<Map<String, dynamic>?> portfolioSummary() async {
     final db = await database;
-    final rows = await db.query('meta', where: 'key = ?', whereArgs: ['portfolio_summary']);
+    final rows = await db.query(
+      'meta',
+      where: 'key = ?',
+      whereArgs: ['portfolio_summary'],
+    );
     if (rows.isEmpty) return null;
     final decoded = jsonDecode(rows.first['value'] as String);
     if (decoded is Map) return decoded.cast<String, dynamic>();
@@ -225,11 +258,31 @@ class AppDatabase {
 
   Future<void> savePortfolioSummary(Map<String, dynamic> summary) async {
     final db = await database;
-    await db.insert(
+    await db.insert('meta', {
+      'key': 'portfolio_summary',
+      'value': jsonEncode(summary),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<Map<String, dynamic>?> dashboardSummary() async {
+    final db = await database;
+    final rows = await db.query(
       'meta',
-      {'key': 'portfolio_summary', 'value': jsonEncode(summary)},
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      where: 'key = ?',
+      whereArgs: ['dashboard_summary'],
     );
+    if (rows.isEmpty) return null;
+    final decoded = jsonDecode(rows.first['value'] as String);
+    if (decoded is Map) return decoded.cast<String, dynamic>();
+    return null;
+  }
+
+  Future<void> saveDashboardSummary(Map<String, dynamic> summary) async {
+    final db = await database;
+    await db.insert('meta', {
+      'key': 'dashboard_summary',
+      'value': jsonEncode(summary),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> replaceAccounts(List<Map<String, dynamic>> rows) async {
@@ -237,8 +290,11 @@ class AppDatabase {
     await db.transaction((txn) async {
       await txn.delete('accounts');
       for (final row in rows) {
-        await txn.insert('accounts', _accountRow(row),
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert(
+          'accounts',
+          _accountRow(row),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
     });
   }
@@ -246,10 +302,27 @@ class AppDatabase {
   Future<void> replaceCategories(List<Map<String, dynamic>> rows) async {
     final db = await database;
     await db.transaction((txn) async {
+      final pendingRows = await txn.query(
+        'categories',
+        where: 'is_pending = 1',
+      );
+      final syncedIds = rows.map((row) => row['id']?.toString()).toSet();
       await txn.delete('categories');
       for (final row in rows) {
-        await txn.insert('categories', _categoryRow(row),
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert(
+          'categories',
+          _categoryRow(row),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      for (final row in pendingRows) {
+        final localId = row['id']?.toString();
+        if (localId != null && syncedIds.contains(localId)) continue;
+        await txn.insert(
+          'categories',
+          row,
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
       }
     });
   }
@@ -267,8 +340,11 @@ class AppDatabase {
           .toSet();
       await txn.delete('transactions');
       for (final row in rows) {
-        await txn.insert('transactions', _transactionRow(row),
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert(
+          'transactions',
+          _transactionRow(row),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
       for (final row in pendingRows) {
         final localId = row['id']?.toString();
@@ -303,8 +379,11 @@ class AppDatabase {
     await db.transaction((txn) async {
       await txn.delete('budgets');
       for (final row in rows) {
-        await txn.insert('budgets', _budgetRow(row),
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert(
+          'budgets',
+          _budgetRow(row),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
     });
   }
@@ -316,7 +395,11 @@ class AppDatabase {
 
   Future<Map<String, dynamic>?> transactionById(String id) async {
     final db = await database;
-    final rows = await db.query('transactions', where: 'id = ?', whereArgs: [id]);
+    final rows = await db.query(
+      'transactions',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
     return rows.isEmpty ? null : rows.first;
   }
 
@@ -325,19 +408,27 @@ class AppDatabase {
     await db.transaction((txn) async {
       await txn.delete('stocks');
       for (final row in rows) {
-        await txn.insert('stocks', _stockRow(row),
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert(
+          'stocks',
+          _stockRow(row),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
     });
   }
 
-  Future<void> replacePortfolioTransactions(List<Map<String, dynamic>> rows) async {
+  Future<void> replacePortfolioTransactions(
+    List<Map<String, dynamic>> rows,
+  ) async {
     final db = await database;
     await db.transaction((txn) async {
       await txn.delete('portfolio_transactions');
       for (final row in rows) {
-        await txn.insert('portfolio_transactions', _portfolioTransactionRow(row),
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert(
+          'portfolio_transactions',
+          _portfolioTransactionRow(row),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
     });
   }
@@ -350,6 +441,18 @@ class AppDatabase {
     await db.insert(
       'transactions',
       _transactionRow(row, pending: pending),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> upsertCategory(
+    Map<String, dynamic> row, {
+    bool pending = false,
+  }) async {
+    final db = await database;
+    await db.insert(
+      'categories',
+      _categoryRow(row, pending: pending),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -432,7 +535,8 @@ class AppDatabase {
   Map<String, Object?> _accountRow(Map<String, dynamic> row) {
     final type = (row['type'] ?? 'cash').toString().toLowerCase();
     final isCreditCard = type == 'card' || type == 'credit_card';
-    final displayBalance = row['display_balance'] ??
+    final displayBalance =
+        row['display_balance'] ??
         (isCreditCard ? row['current_outstanding'] : row['balance']);
     return {
       'id': row['id'].toString(),
@@ -442,7 +546,9 @@ class AppDatabase {
       'opening_balance': _num(row['opening_balance']),
       'currency': row['currency'] ?? 'BDT',
       'current_outstanding': _num(row['current_outstanding']),
-      'credit_limit': row['credit_limit'] == null ? null : _num(row['credit_limit']),
+      'credit_limit': row['credit_limit'] == null
+          ? null
+          : _num(row['credit_limit']),
       'display_balance': _num(displayBalance),
       'account_subtype': row['account_subtype'],
       'color': row['color'],
@@ -453,7 +559,10 @@ class AppDatabase {
     };
   }
 
-  Map<String, Object?> _categoryRow(Map<String, dynamic> row) {
+  Map<String, Object?> _categoryRow(
+    Map<String, dynamic> row, {
+    bool pending = false,
+  }) {
     return {
       'id': row['id'].toString(),
       'name': row['name'] ?? 'Category',
@@ -461,6 +570,7 @@ class AppDatabase {
       'parent_id': row['parent_id']?.toString(),
       'color': row['color'],
       'icon': row['icon'],
+      'is_pending': pending ? 1 : 0,
       'raw_json': jsonEncode(row),
     };
   }
@@ -477,7 +587,8 @@ class AppDatabase {
       'transfer_account_id': row['transfer_account_id']?.toString(),
       'type': row['type'] ?? 'expense',
       'amount': _num(row['amount']),
-      'txn_date': (row['txn_date'] ?? DateTime.now().toIso8601String()).toString(),
+      'txn_date': (row['txn_date'] ?? DateTime.now().toIso8601String())
+          .toString(),
       'description': row['description'],
       'merchant_name': row['merchant_name'],
       'payment_method': row['payment_method'],
@@ -527,7 +638,8 @@ class AppDatabase {
       'fees': _num(row['fees']),
       'total_amount': _num(row['total_amount']),
       'cash_flow': _num(row['cash_flow']),
-      'txn_date': (row['txn_date'] ?? DateTime.now().toIso8601String()).toString(),
+      'txn_date': (row['txn_date'] ?? DateTime.now().toIso8601String())
+          .toString(),
       'record_date': row['record_date']?.toString(),
       'notes': row['notes'],
       'stock_json': row['stock'] == null ? null : jsonEncode(row['stock']),
@@ -598,7 +710,9 @@ class AppDatabase {
     if (account == null) return;
     final isCreditCard = _isCreditCardRow(account);
     final balance = _num(account['balance']) + delta;
-    final outstanding = isCreditCard ? balance : _num(account['current_outstanding']);
+    final outstanding = isCreditCard
+        ? balance
+        : _num(account['current_outstanding']);
     await txn.update(
       'accounts',
       {
@@ -615,7 +729,11 @@ class AppDatabase {
     Transaction txn,
     String accountId,
   ) async {
-    final rows = await txn.query('accounts', where: 'id = ?', whereArgs: [accountId]);
+    final rows = await txn.query(
+      'accounts',
+      where: 'id = ?',
+      whereArgs: [accountId],
+    );
     return rows.isEmpty ? null : rows.first;
   }
 

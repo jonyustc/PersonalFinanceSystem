@@ -304,6 +304,14 @@ class ApiClient {
     return response.data ?? {};
   }
 
+  Future<Map<String, dynamic>> getSimpleDashboard(String month) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/dashboard/simple',
+      queryParameters: {'month': month},
+    );
+    return response.data ?? {};
+  }
+
   Future<Map<String, dynamic>> getCardReport({
     required String fromDate,
     required String toDate,

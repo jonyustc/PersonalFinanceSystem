@@ -30,6 +30,13 @@ class CategoryService:
     # =========================
     async def create(self, user_id: UUID, payload: CategoryCreate):
         data = payload.model_dump()
+        category_id = data.get("id")
+        if category_id is None:
+            data.pop("id", None)
+        else:
+            existing = await self.repo.get_user_owned(user_id, category_id)
+            if existing:
+                return self.to_dict(existing)
         data["user_id"] = user_id
         await self._validate_parent(user_id, data.get("parent_id"), data["type"])
 

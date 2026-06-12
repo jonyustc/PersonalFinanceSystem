@@ -3,6 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/app_card.dart';
+import '../../widgets/metric_grid.dart';
+import '../../widgets/stat_card.dart';
 import '../dashboard/dashboard_page.dart';
 import 'transaction_details_page.dart';
 import 'transaction_tile.dart';
@@ -41,12 +45,58 @@ class _TransactionsPageState extends ConsumerState<TransactionsPage> {
         return right.compareTo(left);
       });
     final sections = _groupByDate(transactions);
+    double income = 0;
+    double expense = 0;
+    for (final row in transactions) {
+      final amount = asDouble(row['amount']);
+      switch (row['type']) {
+        case 'income':
+          income += amount;
+        case 'expense':
+          expense += amount;
+      }
+    }
 
     return RefreshIndicator(
       onRefresh: () => ref.read(appControllerProvider.notifier).syncNow(),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.lg,
+          AppSpacing.lg,
+          96,
+        ),
         children: [
+          MetricGrid(
+            children: [
+              StatCard(
+                label: 'Income',
+                amount: income,
+                currency: currency,
+                icon: Icons.south_west,
+                amountColor: AppColors.amount(context, positive: true),
+              ),
+              StatCard(
+                label: 'Expense',
+                amount: expense,
+                currency: currency,
+                icon: Icons.north_east,
+                amountColor: AppColors.amount(context, positive: false),
+              ),
+              StatCard(
+                label: 'Net',
+                amount: income - expense,
+                currency: currency,
+                icon: Icons.swap_vert,
+                signed: true,
+                amountColor: AppColors.amount(
+                  context,
+                  positive: income - expense >= 0,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
           _SearchAndFilters(
             controller: _searchController,
             query: _query,
@@ -63,7 +113,7 @@ class _TransactionsPageState extends ConsumerState<TransactionsPage> {
                     })
                 : null,
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: AppSpacing.lg),
           if (transactions.isEmpty)
             const EmptyPanel(
               icon: Icons.receipt_long_outlined,
@@ -176,15 +226,15 @@ class _SearchAndFilters extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+    return AppCard(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
             SearchBar(
               controller: controller,
               hintText: 'Search transactions',
+              elevation: const WidgetStatePropertyAll(0),
               leading: const Icon(Icons.search),
               trailing: query.trim().isEmpty
                   ? null
@@ -200,7 +250,7 @@ class _SearchAndFilters extends StatelessWidget {
                     ],
               onChanged: onQueryChanged,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -232,7 +282,7 @@ class _SearchAndFilters extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
                 Expanded(
@@ -251,7 +301,6 @@ class _SearchAndFilters extends StatelessWidget {
             ),
           ],
         ),
-      ),
     );
   }
 }
@@ -300,24 +349,59 @@ class _TransactionSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    double dayExpense = 0;
+    double dayIncome = 0;
+    for (final row in rows) {
+      final amount = asDouble(row['amount']);
+      switch (row['type']) {
+        case 'income':
+          dayIncome += amount;
+        case 'expense':
+          dayExpense += amount;
+      }
+    }
+    final parts = <String>[
+      if (dayExpense > 0) '-${money(dayExpense, currency: currency)}',
+      if (dayIncome > 0) '+${money(dayIncome, currency: currency)}',
+    ];
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
-            child: Text(
-              title,
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w800,
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.xs,
+              AppSpacing.xs,
+              AppSpacing.xs,
+              AppSpacing.sm,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
+                ),
+                if (parts.isNotEmpty)
+                  Text(
+                    parts.join('  '),
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+              ],
             ),
           ),
           ...rows.map(
             (row) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
               child: TransactionTile(
                 row: row,
                 currency: currency,

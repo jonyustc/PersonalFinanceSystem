@@ -52,6 +52,14 @@ class SyncService {
       // Portfolio summary is an enhancement over local holdings; keep sync
       // usable when this endpoint is temporarily unavailable.
     }
+    try {
+      await _db.saveDashboardSummary(
+        await _api.getSimpleDashboard(_monthKey(DateTime.now())),
+      );
+    } catch (_) {
+      // Dashboard summary (authoritative card spending/payment) is an
+      // enhancement over local computation; offline falls back to local math.
+    }
     if (!results.any((result) => result.synced)) {
       String? firstError;
       for (final result in results) {

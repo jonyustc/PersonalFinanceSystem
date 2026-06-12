@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
+import '../../theme/app_spacing.dart';
 import '../dashboard/dashboard_page.dart';
 
 class CategoriesPage extends ConsumerStatefulWidget {
@@ -50,6 +52,11 @@ class _CategoriesPageState extends ConsumerState<CategoriesPage> {
         : categories
               .where((row) => row['parent_id'] == selectedParent['id'])
               .toList();
+    final currency = snapshot.session?.currency ?? 'BDT';
+    // Show this month's spending per category outside picker mode.
+    final spend = widget.pickerMode
+        ? const <String, double>{}
+        : _spendingByCategory(snapshot.transactions, _type, categories);
 
     return Scaffold(
       body: RefreshIndicator(
@@ -59,13 +66,17 @@ class _CategoriesPageState extends ConsumerState<CategoriesPage> {
             SliverAppBar(
               pinned: true,
               automaticallyImplyLeading: true,
-              title: const Column(
+              title: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Category'),
+                  const Text('Categories'),
                   Text(
-                    'Long press to modify',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
+                    'Tap to open · long-press to edit',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
@@ -105,7 +116,12 @@ class _CategoriesPageState extends ConsumerState<CategoriesPage> {
             ),
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.sm,
+                  AppSpacing.lg,
+                  AppSpacing.sm,
+                ),
                 child: SegmentedButton<String>(
                   segments: const [
                     ButtonSegment(
@@ -151,6 +167,8 @@ class _CategoriesPageState extends ConsumerState<CategoriesPage> {
                       child: _ParentCategoryList(
                         rows: parents,
                         selectedId: selectedParent?['id'] as String?,
+                        spend: spend,
+                        currency: currency,
                         onSelected: (id) =>
                             setState(() => _selectedParentId = id),
                         onLongPress: (row) => _showCategoryActions(row),
@@ -163,6 +181,8 @@ class _CategoriesPageState extends ConsumerState<CategoriesPage> {
                         parent: selectedParent,
                         rows: children,
                         selectedId: widget.selectedCategoryId,
+                        spend: spend,
+                        currency: currency,
                         onSelected: widget.pickerMode ? _pickCategory : null,
                         onLongPress: (row) => _showCategoryActions(row),
                         onAdd: selectedParent == null
@@ -182,6 +202,56 @@ class _CategoriesPageState extends ConsumerState<CategoriesPage> {
         child: const Icon(Icons.add),
       ),
     );
+  }
+
+  /// This month's posted spend per category for [type]. Parent totals roll up
+  /// their own direct spend plus all children, mirroring the backend's
+  /// child_spent + direct_spent rollup (`budget.py` / `report.py`).
+  Map<String, double> _spendingByCategory(
+    List<Map<String, dynamic>> transactions,
+    String type,
+    List<Map<String, dynamic>> typeCategories,
+  ) {
+    final now = DateTime.now();
+    final direct = <String, double>{};
+    for (final row in transactions) {
+      if ((row['type'] as String? ?? '') != type) continue;
+      if ((row['transaction_status'] as String? ?? 'posted') != 'posted') {
+        continue;
+      }
+      final date = DateTime.tryParse(row['txn_date'] as String? ?? '');
+      if (date == null) continue;
+      final local = date.toLocal();
+      if (local.year != now.year || local.month != now.month) continue;
+      final categoryId = row['category_id'] as String?;
+      if (categoryId == null) continue;
+      direct[categoryId] = (direct[categoryId] ?? 0) + asDouble(row['amount']);
+    }
+
+    final childrenByParent = <String, List<String>>{};
+    for (final category in typeCategories) {
+      final parentId = category['parent_id'] as String?;
+      if (parentId != null) {
+        childrenByParent
+            .putIfAbsent(parentId, () => [])
+            .add(category['id'] as String);
+      }
+    }
+
+    final totals = <String, double>{};
+    for (final category in typeCategories) {
+      final id = category['id'] as String;
+      if (category['parent_id'] != null) {
+        totals[id] = direct[id] ?? 0;
+        continue;
+      }
+      var total = direct[id] ?? 0;
+      for (final childId in childrenByParent[id] ?? const <String>[]) {
+        total += direct[childId] ?? 0;
+      }
+      totals[id] = total;
+    }
+    return totals;
   }
 
   void _resolveInitialParent(List<Map<String, dynamic>> categories) {
@@ -327,6 +397,8 @@ class _ParentCategoryList extends StatelessWidget {
   const _ParentCategoryList({
     required this.rows,
     required this.selectedId,
+    required this.spend,
+    required this.currency,
     required this.onSelected,
     required this.onLongPress,
     required this.onAdd,
@@ -334,6 +406,8 @@ class _ParentCategoryList extends StatelessWidget {
 
   final List<Map<String, dynamic>> rows;
   final String? selectedId;
+  final Map<String, double> spend;
+  final String currency;
   final ValueChanged<String> onSelected;
   final ValueChanged<Map<String, dynamic>> onLongPress;
   final VoidCallback onAdd;
@@ -343,29 +417,28 @@ class _ParentCategoryList extends StatelessWidget {
     return Material(
       color: Theme.of(context).colorScheme.surface,
       child: ListView.separated(
-        padding: EdgeInsets.zero,
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
         itemCount: rows.length + 1,
-        separatorBuilder: (_, _) => Divider(
-          height: 1,
-          color: Theme.of(context).colorScheme.outlineVariant,
-        ),
+        separatorBuilder: (_, _) => const SizedBox(height: 2),
         itemBuilder: (context, index) {
           if (index == rows.length) {
             return _CategoryRow(
-              title: 'Add ...',
+              title: 'Add category',
               icon: Icons.add,
               selected: false,
+              muted: true,
               onTap: onAdd,
             );
           }
           final row = rows[index];
           final id = row['id'] as String;
-          final selected = id == selectedId;
           return _CategoryRow(
             title: row['name'] as String? ?? 'Category',
             icon: _iconFor(row),
-            selected: selected,
-            selectedTextColor: Colors.green.shade700,
+            selected: id == selectedId,
+            amount: spend[id],
+            currency: currency,
+            trailingChevron: true,
             onTap: () => onSelected(id),
             onLongPress: () => onLongPress(row),
           );
@@ -380,6 +453,8 @@ class _ChildCategoryList extends StatelessWidget {
     required this.parent,
     required this.rows,
     required this.selectedId,
+    required this.spend,
+    required this.currency,
     required this.onSelected,
     required this.onLongPress,
     required this.onAdd,
@@ -388,65 +463,51 @@ class _ChildCategoryList extends StatelessWidget {
   final Map<String, dynamic>? parent;
   final List<Map<String, dynamic>> rows;
   final String? selectedId;
+  final Map<String, double> spend;
+  final String currency;
   final ValueChanged<Map<String, dynamic>>? onSelected;
   final ValueChanged<Map<String, dynamic>> onLongPress;
   final VoidCallback? onAdd;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Material(
-      color: scheme.surfaceContainerHighest,
+      color: dark ? const Color(0xFF0F1620) : const Color(0xFFF1F4F9),
       child: ListView.separated(
-        padding: EdgeInsets.zero,
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
         itemCount: rows.length + (onSelected == null ? 1 : 2),
-        separatorBuilder: (_, _) =>
-            Divider(height: 1, color: scheme.outlineVariant),
+        separatorBuilder: (_, _) => const SizedBox(height: 2),
         itemBuilder: (context, index) {
           if (onSelected != null && index == 0 && parent != null) {
-            final selected = parent!['id'] == selectedId;
-            return ListTile(
-              minLeadingWidth: 0,
-              selected: selected,
-              selectedColor: Colors.green.shade700,
-              title: Text(
-                parent!['name'] as String? ?? 'Category',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
-                ),
-              ),
-              subtitle: const Text('Use parent category'),
-              leading: Icon(_iconFor(parent!), size: 20),
+            return _CategoryRow(
+              title: parent!['name'] as String? ?? 'Category',
+              subtitle: 'Use parent category',
+              icon: _iconFor(parent!),
+              selected: parent!['id'] == selectedId,
+              currency: currency,
               onTap: () => onSelected!(parent!),
             );
           }
           final rowIndex = onSelected == null ? index : index - 1;
           if (rowIndex == rows.length) {
-            return ListTile(
-              title: const Text('Add ...'),
-              leading: const Icon(Icons.add),
-              onTap: onAdd,
-              enabled: onAdd != null,
+            return _CategoryRow(
+              title: 'Add subcategory',
+              icon: Icons.add,
+              selected: false,
+              muted: true,
+              onTap: onAdd ?? () {},
             );
           }
           final row = rows[rowIndex];
-          final selected = row['id'] == selectedId;
-          return ListTile(
-            minLeadingWidth: 0,
-            selected: selected,
-            selectedColor: Colors.green.shade700,
-            title: Text(
-              row['name'] as String? ?? 'Subcategory',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
-              ),
-            ),
-            leading: Icon(_iconFor(row), size: 20),
-            onTap: onSelected == null ? null : () => onSelected!(row),
+          final id = row['id'] as String;
+          return _CategoryRow(
+            title: row['name'] as String? ?? 'Subcategory',
+            icon: _iconFor(row),
+            selected: id == selectedId,
+            amount: spend[id],
+            currency: currency,
+            onTap: onSelected == null ? () {} : () => onSelected!(row),
             onLongPress: () => onLongPress(row),
           );
         },
@@ -461,33 +522,109 @@ class _CategoryRow extends StatelessWidget {
     required this.icon,
     required this.selected,
     required this.onTap,
+    this.subtitle,
+    this.amount,
+    this.currency = 'BDT',
     this.onLongPress,
-    this.selectedTextColor,
+    this.muted = false,
+    this.trailingChevron = false,
   });
 
   final String title;
+  final String? subtitle;
   final IconData icon;
   final bool selected;
+  final double? amount;
+  final String currency;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
-  final Color? selectedTextColor;
+  final bool muted;
+  final bool trailingChevron;
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      title: Text(
-        title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: selected ? selectedTextColor : null,
-          fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final primary = scheme.primary;
+    final hasAmount = amount != null && amount! > 0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+      child: Material(
+        color: selected ? primary.withValues(alpha: 0.10) : Colors.transparent,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        child: InkWell(
+          onTap: onTap,
+          onLongPress: onLongPress,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.sm,
+              vertical: AppSpacing.sm,
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 20,
+                  color: muted
+                      ? scheme.onSurfaceVariant
+                      : selected
+                      ? primary
+                      : scheme.onSurface,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: muted
+                              ? scheme.onSurfaceVariant
+                              : selected
+                              ? primary
+                              : null,
+                          fontWeight: selected
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                        ),
+                      ),
+                      if (subtitle != null)
+                        Text(
+                          subtitle!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      if (hasAmount)
+                        Text(
+                          money(amount!, currency: currency),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                if (trailingChevron)
+                  Icon(
+                    Icons.chevron_right,
+                    size: 18,
+                    color: scheme.onSurfaceVariant,
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
-      trailing: Icon(icon, size: 24),
-      selected: selected,
-      onTap: onTap,
-      onLongPress: onLongPress,
     );
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -199,7 +201,6 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
         ),
       ),
     );
-    await ref.read(appControllerProvider.notifier).syncNow(silent: true);
     final snapshot = ref.read(appControllerProvider).asData?.value;
     final categories = (snapshot?.categories ?? [])
         .where((row) => row['type'] == _type)
@@ -213,11 +214,13 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
           _noteOpen = true;
         }
       });
+      unawaited(ref.read(appControllerProvider.notifier).syncNow(silent: true));
       return;
     }
     if (_categoryId != null && _rowById(categories, _categoryId) == null) {
       setState(() => _categoryId = null);
     }
+    unawaited(ref.read(appControllerProvider.notifier).syncNow(silent: true));
   }
 
   Future<void> _pickAccount(

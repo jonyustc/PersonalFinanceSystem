@@ -8,11 +8,15 @@ void main() {
       now: now,
       accounts: [
         {'id': 'cash', 'name': 'Cash', 'type': 'cash', 'balance': 1000},
+        // Credit cards carry debt in current_outstanding; balance stays 0,
+        // matching the backend AccountService conventions.
         {
           'id': 'card',
           'name': 'Card',
           'type': 'credit_card',
-          'balance': 250,
+          'balance': 0,
+          'current_outstanding': 250,
+          'credit_limit': 1000,
         },
       ],
       categories: [
@@ -71,11 +75,71 @@ void main() {
 
     expect(summary.assets, 1200);
     expect(summary.creditCardOutstanding, 250);
+    expect(summary.liabilities, 250);
     expect(summary.netWorth, 950);
     expect(summary.monthlyIncome, 500);
     expect(summary.monthlyExpense, 100);
     expect(summary.cashFlow, 400);
     expect(summary.budgetUsage, 0.25);
+
+    // Per-card rollup mirrors the backend /dashboard/simple card view.
+    expect(summary.creditCards, hasLength(1));
+    final card = summary.creditCards.single;
+    expect(card.outstanding, 250);
+    expect(card.creditLimit, 1000);
+    expect(card.available, 750);
+    expect(card.utilization, 25);
+  });
+
+  test('overdrawn cash balances become liabilities, not negative assets', () {
+    final summary = buildFinanceSummary(
+      now: DateTime(2026, 6, 10),
+      accounts: [
+        {'id': 'cash', 'name': 'Cash', 'type': 'cash', 'balance': 1000},
+        {'id': 'od', 'name': 'Overdraft', 'type': 'bank', 'balance': -300},
+      ],
+      categories: const [],
+      transactions: const [],
+      budgets: const [],
+      stocks: const [],
+      portfolioTransactions: const [],
+    );
+
+    expect(summary.assets, 1000);
+    expect(summary.liabilities, 300);
+    expect(summary.netWorth, 700);
+  });
+
+  test('buildAccountSummary mirrors backend account summary', () {
+    final summary = buildAccountSummary([
+      {'id': 'cash', 'name': 'Cash', 'type': 'cash', 'balance': 1500},
+      {'id': 'bank', 'name': 'Bank', 'type': 'bank', 'balance': 4000},
+      {'id': 'od', 'name': 'Overdraft', 'type': 'bank', 'balance': -500},
+      {
+        'id': 'broker',
+        'name': 'LBSL',
+        'type': 'bank',
+        'account_subtype': 'stock_broker',
+        'balance': 2000,
+      },
+      {
+        'id': 'card',
+        'name': 'Visa',
+        'type': 'credit_card',
+        'balance': 0,
+        'current_outstanding': 1200,
+        'credit_limit': 5000,
+      },
+    ]);
+
+    // Assets count positive non-card balances (broker balance included, like
+    // the backend): 1500 + 4000 + 2000 = 7500.
+    expect(summary.totalAssets, 7500);
+    // Liabilities = card debt (1200) + overdrawn (500).
+    expect(summary.liabilities, 1700);
+    expect(summary.netWorth, 5800);
+    expect(summary.cardDebt, 1200);
+    expect(summary.cashBalance, 1500);
   });
 
   test('portfolio average price excludes broker fees', () {
@@ -119,18 +183,56 @@ void main() {
     expect(holdings.single.realized, closeTo(382.4, 0.001));
   });
 
-  test('stock broker account balance is excluded from assets when holdings exist', () {
+  test(
+    'stock broker account balance is excluded from assets when holdings exist',
+    () {
+      final summary = buildFinanceSummary(
+        now: DateTime(2026, 6, 6),
+        accounts: [
+          {'id': 'cash', 'name': 'Cash', 'type': 'cash', 'balance': 1000},
+          {
+            'id': 'lbsl',
+            'name': 'LBSL',
+            'type': 'bank',
+            'account_subtype': 'stock_broker',
+            'balance': 5000,
+          },
+        ],
+        categories: const [],
+        transactions: const [],
+        budgets: const [],
+        stocks: const [
+          {
+            'id': 'stock',
+            'symbol': 'STOCK',
+            'name': 'Stock',
+            'currency': 'BDT',
+            'last_price': 20,
+          },
+        ],
+        portfolioTransactions: const [
+          {
+            'id': 'buy',
+            'stock_id': 'stock',
+            'txn_type': 'buy',
+            'quantity': 10,
+            'price': 15,
+            'total_amount': 150,
+            'txn_date': '2026-06-01',
+          },
+        ],
+      );
+
+      expect(summary.portfolioValue, 200);
+      expect(summary.assets, 1200);
+    },
+  );
+
+  test('uses backend portfolio total when available', () {
     final summary = buildFinanceSummary(
-      now: DateTime(2026, 6, 6),
+      now: DateTime(2026, 6, 12),
       accounts: [
         {'id': 'cash', 'name': 'Cash', 'type': 'cash', 'balance': 1000},
-        {
-          'id': 'lbsl',
-          'name': 'LBSL',
-          'type': 'bank',
-          'account_subtype': 'stock_broker',
-          'balance': 5000,
-        },
       ],
       categories: const [],
       transactions: const [],
@@ -141,7 +243,7 @@ void main() {
           'symbol': 'STOCK',
           'name': 'Stock',
           'currency': 'BDT',
-          'last_price': 20,
+          'last_price': 2500,
         },
       ],
       portfolioTransactions: const [
@@ -149,15 +251,23 @@ void main() {
           'id': 'buy',
           'stock_id': 'stock',
           'txn_type': 'buy',
-          'quantity': 10,
-          'price': 15,
-          'total_amount': 150,
+          'quantity': 100,
+          'price': 1500,
+          'total_amount': 150000,
           'txn_date': '2026-06-01',
         },
       ],
+      portfolioSummary: const {
+        'total_portfolio_value': 182000,
+        'active_cost_basis': 150000,
+        'overall_profit_loss': 32000,
+        'holdings': [{}],
+      },
     );
 
-    expect(summary.portfolioValue, 200);
-    expect(summary.assets, 1200);
+    expect(summary.portfolioValue, 182000);
+    expect(summary.portfolioCost, 150000);
+    expect(summary.portfolioGain, 32000);
+    expect(summary.assets, 183000);
   });
 }

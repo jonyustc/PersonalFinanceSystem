@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
@@ -6,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.services.portfolio import PortfolioService
+from app.schemas.stock import PortfolioTransactionCreate
 
 
 class _FakeDb:
@@ -134,3 +136,56 @@ async def test_summary_falls_back_to_existing_holdings_when_rebuild_fails():
     assert summary["current_equity_value"] == Decimal("7500")
     assert summary["active_cost_basis"] == Decimal("5000")
     assert summary["holdings"][0]["quantity"] == Decimal("100")
+
+
+def test_portfolio_income_accepts_payment_date_alias():
+    stock_id = uuid4()
+
+    payload = PortfolioTransactionCreate(
+        stock_id=stock_id,
+        txn_type="income",
+        quantity=Decimal("1"),
+        price=Decimal("125"),
+        payment_date=date(2026, 6, 11),
+        record_date=date(2026, 5, 20),
+    )
+
+    assert payload.txn_date == date(2026, 6, 11)
+    assert payload.payment_date == date(2026, 6, 11)
+    assert payload.record_date == date(2026, 5, 20)
+
+
+@pytest.mark.asyncio
+async def test_summary_includes_manual_dividend_record_and_payment_dates():
+    user_id = uuid4()
+    stock_id = uuid4()
+    stock = SimpleNamespace(
+        id=stock_id,
+        symbol="LBSL",
+        name="LBSL",
+        exchange="DSE",
+        currency="BDT",
+        last_price=Decimal("0"),
+    )
+    service = PortfolioService(_FakeDb())
+    service.repo = _FakeRepo(
+        transactions=[],
+        holdings=[],
+        dividends=[
+            SimpleNamespace(
+                stock_id=stock_id,
+                stock=stock,
+                amount=Decimal("125"),
+                payment_date=date(2026, 6, 11),
+                record_date=date(2026, 5, 20),
+            )
+        ],
+        broker_accounts=[],
+    )
+
+    summary = await service.summary(user_id)
+
+    row = summary["dividend_report"][0]
+    assert row["dividend_gain"] == Decimal("125")
+    assert row["record_date"] == date(2026, 5, 20)
+    assert row["payment_date"] == date(2026, 6, 11)

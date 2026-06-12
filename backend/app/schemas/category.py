@@ -6,6 +6,7 @@ CategoryType = Literal["expense", "income"]
 
 
 class CategoryCreate(BaseModel):
+    id: Optional[UUID] = None
     name: str = Field(min_length=1, max_length=120)
     type: CategoryType
     parent_id: Optional[UUID] = None

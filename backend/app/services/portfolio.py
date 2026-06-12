@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.account import Account
 from app.models.stock import Dividend, Holding, PortfolioTransaction
 from app.repositories.stock import StockRepository
-from app.schemas.stock import DividendCreate, PortfolioTransactionCreate, StockCreate, StockUpdate
+from app.schemas.stock import (
+    DividendCreate,
+    PortfolioTransactionCreate,
+    StockCreate,
+    StockUpdate,
+)
 from app.services.market_price import MarketPriceService
 
 
@@ -63,7 +68,17 @@ class PortfolioService:
         stock = await self.repo.get_stock(stock_id)
         if not stock:
             raise HTTPException(404, "Stock not found")
-        price_map = await MarketPriceService().fetch_dse_latest_prices()
+        try:
+            price_map = await MarketPriceService().fetch_dse_latest_prices()
+        except Exception as exc:
+            return {
+                "updated": 0,
+                "source": "DSE",
+                "fetched_at": "",
+                "missing_symbols": [stock.symbol],
+                "stocks": [],
+                "message": f"Could not reach DSE market data right now ({type(exc).__name__}). Please try again later.",
+            }
         price = price_map.get(stock.symbol.upper())
         if not price:
             raise HTTPException(404, f"Latest DSE price not found for {stock.symbol}")
@@ -89,8 +104,19 @@ class PortfolioService:
                 "fetched_at": "",
                 "missing_symbols": [],
                 "stocks": [],
+                "message": "No stocks to update.",
             }
-        price_map = await MarketPriceService().fetch_dse_latest_prices()
+        try:
+            price_map = await MarketPriceService().fetch_dse_latest_prices()
+        except Exception as exc:
+            return {
+                "updated": 0,
+                "source": "DSE",
+                "fetched_at": "",
+                "missing_symbols": [stock.symbol for stock in stocks],
+                "stocks": [],
+                "message": f"Could not reach DSE market data right now ({type(exc).__name__}). Please try again later.",
+            }
         updated = []
         missing = []
         fetched_at = ""
@@ -135,7 +161,9 @@ class PortfolioService:
             raise HTTPException(404, "Stock not found")
 
         try:
-            events = await MarketPriceService().fetch_dse_dividend_events(normalized_symbol)
+            events = await MarketPriceService().fetch_dse_dividend_events(
+                normalized_symbol
+            )
         except Exception as exc:
             return self._empty_dividend_estimate(
                 normalized_symbol,
@@ -183,10 +211,14 @@ class PortfolioService:
             "tax_rate_percent": tax_rate_percent,
             "tax_amount": tax_amount,
             "net_amount": net_amount,
-            "message": self._dividend_estimate_message(stock is not None, event.record_date is not None),
+            "message": self._dividend_estimate_message(
+                stock is not None, event.record_date is not None
+            ),
         }
 
-    async def create_transaction(self, user_id: UUID, payload: PortfolioTransactionCreate):
+    async def create_transaction(
+        self, user_id: UUID, payload: PortfolioTransactionCreate
+    ):
         try:
             stock = None
             if payload.stock_id:
@@ -196,8 +228,12 @@ class PortfolioService:
             elif payload.stock:
                 stock = await self.repo.get_or_create_stock(payload.stock)
 
-            broker_account = await self._get_broker_account(user_id, payload.broker_account_id)
-            fees = payload.fees if payload.fees is not None else self._default_fee(payload)
+            broker_account = await self._get_broker_account(
+                user_id, payload.broker_account_id
+            )
+            fees = (
+                payload.fees if payload.fees is not None else self._default_fee(payload)
+            )
             trx = PortfolioTransaction(
                 user_id=user_id,
                 stock_id=stock.id if stock else None,
@@ -207,7 +243,9 @@ class PortfolioService:
                 price=payload.price,
                 fees=fees,
                 txn_date=payload.txn_date,
-                record_date=payload.record_date if payload.txn_type == "income" else None,
+                record_date=payload.record_date
+                if payload.txn_type == "income"
+                else None,
                 notes=payload.notes,
             )
             self.db.add(trx)
@@ -222,9 +260,15 @@ class PortfolioService:
             raise
 
     async def list_transactions(self, user_id: UUID, limit: int = 100):
-        return [await self._response_transaction(item) for item in await self.repo.transactions(user_id, limit) if item.txn_type != "deposit"]
+        return [
+            await self._response_transaction(item)
+            for item in await self.repo.transactions(user_id, limit)
+            if item.txn_type != "deposit"
+        ]
 
-    async def update_transaction(self, user_id: UUID, transaction_id: UUID, payload: PortfolioTransactionCreate):
+    async def update_transaction(
+        self, user_id: UUID, transaction_id: UUID, payload: PortfolioTransactionCreate
+    ):
         try:
             trx = await self.repo.get_transaction(user_id, transaction_id)
             if not trx:
@@ -240,15 +284,21 @@ class PortfolioService:
             elif payload.stock:
                 stock = await self.repo.get_or_create_stock(payload.stock)
 
-            new_broker = await self._get_broker_account(user_id, payload.broker_account_id)
+            new_broker = await self._get_broker_account(
+                user_id, payload.broker_account_id
+            )
             trx.stock_id = stock.id if stock else None
             trx.broker_account_id = new_broker.id if new_broker else None
             trx.txn_type = payload.txn_type
             trx.quantity = payload.quantity
             trx.price = payload.price
-            trx.fees = payload.fees if payload.fees is not None else self._default_fee(payload)
+            trx.fees = (
+                payload.fees if payload.fees is not None else self._default_fee(payload)
+            )
             trx.txn_date = payload.txn_date
-            trx.record_date = payload.record_date if payload.txn_type == "income" else None
+            trx.record_date = (
+                payload.record_date if payload.txn_type == "income" else None
+            )
             trx.notes = payload.notes
             await self._apply_broker_cash(trx, new_broker)
             await self._rebuild_derived(user_id)
@@ -264,7 +314,9 @@ class PortfolioService:
             trx = await self.repo.get_transaction(user_id, transaction_id)
             if not trx:
                 raise HTTPException(404, "Portfolio transaction not found")
-            broker_account = await self._get_broker_account(user_id, trx.broker_account_id)
+            broker_account = await self._get_broker_account(
+                user_id, trx.broker_account_id
+            )
             await self._apply_broker_cash(trx, broker_account, reverse=True)
             await self.db.delete(trx)
             await self.db.flush()
@@ -324,7 +376,22 @@ class PortfolioService:
             )
             key_date = dividend.record_date or dividend.payment_date
             key = (dividend.stock_id, key_date.year)
-            dividend_report[key] = dividend_report.get(key, ZERO) + dividend.amount
+            row = dividend_report.setdefault(
+                key,
+                {
+                    "amount": ZERO,
+                    "record_date": dividend.record_date,
+                    "payment_date": dividend.payment_date,
+                },
+            )
+            row["amount"] += dividend.amount
+            if row["record_date"] is None:
+                row["record_date"] = dividend.record_date
+            if (
+                row["payment_date"] is None
+                or dividend.payment_date > row["payment_date"]
+            ):
+                row["payment_date"] = dividend.payment_date
 
         manual_dividend_keys = set(dividend_report)
         auto_dividend_report = (
@@ -354,10 +421,9 @@ class PortfolioService:
             invested = holding.quantity * holding.avg_buy_price
             market_value = holding.quantity * market_price
             unrealized = market_value - invested
-            dividend_income = (
-                dividend_by_stock.get(holding.stock_id, ZERO)
-                + auto_dividend_by_stock.get(holding.stock_id, ZERO)
-            )
+            dividend_income = dividend_by_stock.get(
+                holding.stock_id, ZERO
+            ) + auto_dividend_by_stock.get(holding.stock_id, ZERO)
             total_pl = unrealized + holding.realized_profit_loss
             active_cost_basis += invested
             equity_value += market_value
@@ -377,13 +443,18 @@ class PortfolioService:
                 }
             )
 
-        principal = sum((self._total_amount(t) for t in transactions if t.txn_type == "deposit"), ZERO)
+        principal = sum(
+            (self._total_amount(t) for t in transactions if t.txn_type == "deposit"),
+            ZERO,
+        )
         derived_cash = sum((self._cash_flow(t) for t in transactions), ZERO)
         broker_cash = sum((account.balance for account in broker_accounts), ZERO)
         cash_balance = broker_cash if broker_accounts else derived_cash
         total_portfolio = equity_value + cash_balance
         unrealized_gain_loss = equity_value - active_cost_basis
-        dividend_income_total = sum((dividend.amount for dividend in dividends), ZERO) + sum(
+        dividend_income_total = sum(
+            (dividend.amount for dividend in dividends), ZERO
+        ) + sum(
             (row["dividend_gain"] for row in auto_dividend_report),
             ZERO,
         )
@@ -406,24 +477,42 @@ class PortfolioService:
             "return_percent": self._percent(overall, principal),
             "cagr_percent": cagr_percent,
             "broker_accounts": [
-                {"id": account.id, "name": account.name, "balance": account.balance, "currency": account.currency}
+                {
+                    "id": account.id,
+                    "name": account.name,
+                    "balance": account.balance,
+                    "currency": account.currency,
+                }
                 for account in broker_accounts
             ],
             "holdings": holding_rows,
             "dividend_report": [
                 {
                     "stock_id": stock_id,
-                    "stock_name": next((d.stock.name for d in dividends if d.stock_id == stock_id), ""),
+                    "stock_name": next(
+                        (d.stock.name for d in dividends if d.stock_id == stock_id), ""
+                    ),
                     "year": year,
-                    "dividend_gain": amount,
+                    "dividend_gain": row["amount"],
+                    "record_date": row["record_date"],
+                    "payment_date": row["payment_date"],
                     "source": "manual",
                 }
-                for (stock_id, year), amount in sorted(dividend_report.items(), key=lambda item: (item[0][1], str(item[0][0])))
-            ] + auto_dividend_report,
+                for (stock_id, year), row in sorted(
+                    dividend_report.items(),
+                    key=lambda item: (item[0][1], str(item[0][0])),
+                )
+            ]
+            + auto_dividend_report,
             "auto_dividend_report": auto_dividend_report,
         }
 
-    async def _apply_broker_cash(self, trx: PortfolioTransaction, broker_account: Account | None, reverse: bool = False):
+    async def _apply_broker_cash(
+        self,
+        trx: PortfolioTransaction,
+        broker_account: Account | None,
+        reverse: bool = False,
+    ):
         if broker_account:
             cash_flow = -self._cash_flow(trx) if reverse else self._cash_flow(trx)
             if broker_account.balance + cash_flow < ZERO:
@@ -439,7 +528,11 @@ class PortfolioService:
                 await self.db.execute(
                     select(PortfolioTransaction)
                     .where(PortfolioTransaction.user_id == user_id)
-                    .order_by(PortfolioTransaction.txn_date, PortfolioTransaction.created_at, PortfolioTransaction.id)
+                    .order_by(
+                        PortfolioTransaction.txn_date,
+                        PortfolioTransaction.created_at,
+                        PortfolioTransaction.id,
+                    )
                 )
             ).scalars()
         )
@@ -468,7 +561,11 @@ class PortfolioService:
             elif trx.txn_type == "sell":
                 if trx.quantity > stock_data["quantity"]:
                     raise HTTPException(400, "Sell quantity exceeds holding")
-                avg_cost = stock_data["cost_basis"] / stock_data["quantity"] if stock_data["quantity"] else ZERO
+                avg_cost = (
+                    stock_data["cost_basis"] / stock_data["quantity"]
+                    if stock_data["quantity"]
+                    else ZERO
+                )
                 removed_cost = avg_cost * trx.quantity
                 stock_data["quantity"] -= trx.quantity
                 stock_data["cost_basis"] -= removed_cost
@@ -503,7 +600,9 @@ class PortfolioService:
         return ZERO
 
     def _total_amount(self, trx: PortfolioTransaction) -> Decimal:
-        gross = trx.quantity * trx.price if trx.txn_type in {"buy", "sell"} else trx.price
+        gross = (
+            trx.quantity * trx.price if trx.txn_type in {"buy", "sell"} else trx.price
+        )
         if trx.txn_type == "sell":
             return gross - trx.fees
         if trx.txn_type == "buy":
@@ -536,6 +635,7 @@ class PortfolioService:
             "total_amount": self._total_amount(trx),
             "cash_flow": self._cash_flow(trx),
             "txn_date": trx.txn_date,
+            "payment_date": trx.txn_date if trx.txn_type == "income" else None,
             "record_date": trx.record_date,
             "notes": trx.notes,
             "stock": stock,
@@ -568,7 +668,9 @@ class PortfolioService:
             return ZERO
         return annualized * Decimal("100")
 
-    def _portfolio_start_date(self, transactions: list[PortfolioTransaction]) -> date | None:
+    def _portfolio_start_date(
+        self, transactions: list[PortfolioTransaction]
+    ) -> date | None:
         candidates = [
             transaction.txn_date
             for transaction in transactions
@@ -576,7 +678,9 @@ class PortfolioService:
         ]
         return min(candidates) if candidates else None
 
-    def _empty_dividend_estimate(self, symbol: str, tax_rate_percent: Decimal, message: str):
+    def _empty_dividend_estimate(
+        self, symbol: str, tax_rate_percent: Decimal, message: str
+    ):
         return {
             "symbol": symbol,
             "found": False,
@@ -594,7 +698,9 @@ class PortfolioService:
             "message": message,
         }
 
-    def _dividend_estimate_message(self, has_stock: bool, has_record_date: bool) -> str | None:
+    def _dividend_estimate_message(
+        self, has_stock: bool, has_record_date: bool
+    ) -> str | None:
         if not has_stock:
             return "DSE declaration found, but no saved local holding was found"
         if not has_record_date:
@@ -630,8 +736,12 @@ class PortfolioService:
                 quantity = self._quantity_on_date(stock_transactions, event.record_date)
                 if quantity <= ZERO:
                     continue
-                gross_amount = quantity * event.face_value * event.cash_percent / Decimal("100")
-                amount = gross_amount - (gross_amount * DEFAULT_DIVIDEND_TAX_RATE / Decimal("100"))
+                gross_amount = (
+                    quantity * event.face_value * event.cash_percent / Decimal("100")
+                )
+                amount = gross_amount - (
+                    gross_amount * DEFAULT_DIVIDEND_TAX_RATE / Decimal("100")
+                )
                 if amount <= ZERO:
                     continue
                 rows.append(
@@ -646,9 +756,13 @@ class PortfolioService:
                         "source": event.source,
                     }
                 )
-        return sorted(rows, key=lambda row: (row["year"], row["stock_name"]), reverse=True)
+        return sorted(
+            rows, key=lambda row: (row["year"], row["stock_name"]), reverse=True
+        )
 
-    def _quantity_on_date(self, transactions: list[PortfolioTransaction], record_date) -> Decimal:
+    def _quantity_on_date(
+        self, transactions: list[PortfolioTransaction], record_date
+    ) -> Decimal:
         quantity = ZERO
         for transaction in sorted(transactions, key=lambda item: item.txn_date):
             if transaction.txn_date > record_date:
