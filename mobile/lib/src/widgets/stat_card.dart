@@ -41,42 +41,49 @@ class StatCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final muted = theme.colorScheme.onSurfaceVariant;
-    final amountStyle = (hero ? theme.textTheme.headlineMedium : theme.textTheme.titleLarge)
-        ?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.5);
+    final chipColor = accent ?? theme.colorScheme.primary;
+    final amountStyle =
+        (hero ? theme.textTheme.headlineMedium : theme.textTheme.titleLarge)
+            ?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.5);
     return AppCard(
       onTap: onTap,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  label.toUpperCase(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: muted,
-                    letterSpacing: 0.4,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+          if (icon != null) ...[
+            Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                color: chipColor.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
-              if (icon != null)
-                Icon(
-                  icon,
-                  size: 18,
-                  color: accent ?? theme.colorScheme.primary,
-                ),
-            ],
+              child: Icon(icon, size: 20, color: chipColor),
+            ),
+            const SizedBox(height: AppSpacing.md),
+          ],
+          Text(
+            label.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: muted,
+              letterSpacing: 0.4,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-          const SizedBox(height: AppSpacing.sm),
-          MoneyText(
-            amount,
-            currency: currency,
-            color: amountColor,
-            signed: signed,
-            style: amountStyle,
+          const SizedBox(height: AppSpacing.xs),
+          // Full-width so the amount can scale to fit the tile instead of
+          // being cut off.
+          SizedBox(
+            width: double.infinity,
+            child: MoneyText(
+              amount,
+              currency: currency,
+              color: amountColor,
+              signed: signed,
+              style: amountStyle,
+              autoFit: true,
+            ),
           ),
           if (caption != null) ...[
             const SizedBox(height: AppSpacing.xs),

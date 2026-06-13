@@ -7,8 +7,10 @@ import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_card.dart';
+import '../../widgets/confirm_dialog.dart';
 import '../../widgets/metric_grid.dart';
 import '../../widgets/money_text.dart';
+import '../../widgets/skeleton.dart';
 import '../../widgets/stat_card.dart';
 import '../dashboard/dashboard_page.dart';
 
@@ -28,7 +30,7 @@ class _PortfolioPageState extends ConsumerState<PortfolioPage> {
   Widget build(BuildContext context) {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
     if (snapshot == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const ListSkeleton();
     }
 
     final currency = snapshot.session?.currency ?? 'BDT';
@@ -142,26 +144,17 @@ class _PortfolioPageState extends ConsumerState<PortfolioPage> {
 
   Future<void> _confirmDeleteTrade(Map<String, dynamic> transaction) async {
     final stock = _stockFromTransaction(transaction);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete stock transaction?'),
-        content: Text(
-          'Delete ${transaction['txn_type']} ${stock['name'] ?? ''}?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Delete stock transaction?',
+      message:
+          'Delete ${transaction['txn_type']} ${stock['name'] ?? ''}? '
+          'This cannot be undone.',
+      confirmLabel: 'Delete',
+      icon: Icons.delete_outline,
+      destructive: true,
     );
-    if (confirmed != true) return;
+    if (!confirmed) return;
     await ref
         .read(appControllerProvider.notifier)
         .deletePortfolioTransaction(transaction['id'] as String);

@@ -7,7 +7,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
+import '../../theme/category_visuals.dart';
 import '../../widgets/app_card.dart';
+import '../../widgets/skeleton.dart';
 import '../../widgets/metric_grid.dart';
 import '../../widgets/money_text.dart';
 import '../../widgets/section_header.dart';
@@ -53,6 +55,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
   String? _leafCategoryId;
   int _selectedIndex = 0;
   String _reportMode = 'expenses';
+  String _period = 'month';
   Future<Map<String, dynamic>>? _cardReportFuture;
   String? _cardReportKey;
 
@@ -68,10 +71,10 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
   Widget build(BuildContext context) {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
     if (snapshot == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const ListSkeleton();
     }
 
-    final expenseCategories = _expenseCategories(snapshot.categories);
+    final expenseCategories = _mainExpenseCategories(snapshot.categories);
     final currency = snapshot.session?.currency ?? 'BDT';
     final rows = _buildRows(
       categories: snapshot.categories,
@@ -92,6 +95,10 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
               'Transactions';
 
     final canGoBack = _parentId != null || _leafCategoryId != null;
+    final atTopLevel = _parentId == null && _leafCategoryId == null;
+    final income = _incomeInRange(snapshot.transactions);
+    final previousSpent = _previousPeriodExpense(snapshot.transactions);
+    final trend = _monthlyExpenseTrend(snapshot.transactions);
 
     return Scaffold(
       body: RefreshIndicator(
@@ -107,6 +114,10 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
             _ReportModeSwitch(value: _reportMode, onChanged: _setReportMode),
             const SizedBox(height: AppSpacing.md),
             if (_reportMode == 'expenses') ...[
+              if (atTopLevel) ...[
+                _PeriodSwitch(value: _period, onChanged: _setPeriod),
+                const SizedBox(height: AppSpacing.md),
+              ],
               _ReportHeader(
                 title: title,
                 start: _start,
@@ -122,6 +133,21 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
                 onPickRange: _pickRange,
               ),
               const SizedBox(height: 14),
+              if (atTopLevel) ...[
+                _SpendingSummary(
+                  spent: total,
+                  income: income,
+                  previousSpent: previousSpent,
+                  start: _start,
+                  end: _end,
+                  currency: currency,
+                ),
+                const SizedBox(height: 16),
+                if (trend.any((point) => point.amount > 0)) ...[
+                  _TrendChart(data: trend, currency: currency),
+                  const SizedBox(height: 16),
+                ],
+              ],
               if (_leafCategoryId == null)
                 if (rows.isEmpty)
                   const EmptyPanel(
@@ -151,6 +177,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
                 _TransactionList(
                   categoryName: title,
                   transactions: transactions,
+                  categories: snapshot.categories,
                   currency: currency,
                 ),
             ] else ...[
@@ -182,6 +209,86 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     });
   }
 
+  void _setPeriod(String period) {
+    final now = DateTime.now();
+    setState(() {
+      _period = period;
+      switch (period) {
+        case 'week':
+          final start = now.subtract(Duration(days: now.weekday - 1));
+          _start = DateTime(start.year, start.month, start.day);
+          _end = DateTime(_start.year, _start.month, _start.day + 6, 23, 59, 59);
+        case 'year':
+          _start = DateTime(now.year);
+          _end = DateTime(now.year, 12, 31, 23, 59, 59);
+        case 'month':
+        default:
+          _start = DateTime(now.year, now.month);
+          _end = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+      }
+      _parentId = null;
+      _leafCategoryId = null;
+      _selectedIndex = 0;
+    });
+  }
+
+  /// Total income posted within the current range.
+  double _incomeInRange(List<Map<String, dynamic>> transactions) {
+    var total = 0.0;
+    for (final row in transactions) {
+      if (row['type'] != 'income') continue;
+      if (!_isInRange(row)) continue;
+      total += asDouble(row['amount']);
+    }
+    return total;
+  }
+
+  /// Total expense in the period immediately before the current one (same
+  /// length), used for the period-over-period comparison.
+  double _previousPeriodExpense(List<Map<String, dynamic>> transactions) {
+    final spanDays = _end.difference(_start).inDays + 1;
+    final prevEnd = _start.subtract(const Duration(seconds: 1));
+    final prevStart = _start.subtract(Duration(days: spanDays));
+    var total = 0.0;
+    for (final row in transactions) {
+      if (!_isReportExpense(row)) continue;
+      final date = DateTime.tryParse(row['txn_date'] as String? ?? '');
+      if (date == null) continue;
+      if (date.isBefore(prevStart) || date.isAfter(prevEnd)) continue;
+      total += asDouble(row['amount']);
+    }
+    return total;
+  }
+
+  /// Expense totals for the last 6 calendar months (oldest → newest).
+  List<({String label, double amount})> _monthlyExpenseTrend(
+    List<Map<String, dynamic>> transactions,
+  ) {
+    final now = DateTime.now();
+    final months = List.generate(
+      6,
+      (i) => DateTime(now.year, now.month - (5 - i)),
+    );
+    final totals = {for (final m in months) '${m.year}-${m.month}': 0.0};
+    for (final row in transactions) {
+      if (!_isReportExpense(row)) continue;
+      final date = DateTime.tryParse(row['txn_date'] as String? ?? '');
+      if (date == null) continue;
+      final key = '${date.year}-${date.month}';
+      if (totals.containsKey(key)) {
+        totals[key] = totals[key]! + asDouble(row['amount']);
+      }
+    }
+    const labels = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return [
+      for (final m in months)
+        (label: labels[m.month - 1], amount: totals['${m.year}-${m.month}'] ?? 0),
+    ];
+  }
+
   void _back() {
     setState(() {
       if (_leafCategoryId != null) {
@@ -194,6 +301,16 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
   }
 
   void _openRow(_ReportRow row, List<Map<String, dynamic>> categories) {
+    // When already drilled into this category, the tapped row is the parent's
+    // own direct-spend bucket — show those transactions instead of re-drilling
+    // into the same subcategory level (which looked like "nothing happens").
+    if (row.categoryId == _parentId) {
+      setState(() {
+        _leafCategoryId = row.categoryId;
+        _selectedIndex = 0;
+      });
+      return;
+    }
     final hasChildren = categories.any(
       (category) => category['parent_id'] == row.categoryId,
     );
@@ -373,24 +490,23 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     return false;
   }
 
-  List<Map<String, dynamic>> _expenseCategories(
+  /// Top-level expense categories only. Selecting one filters that category
+  /// plus all of its subcategories (see [_matchesCategoryFilter]), so the
+  /// picker stays simple instead of mixing parents and children together.
+  List<Map<String, dynamic>> _mainExpenseCategories(
     List<Map<String, dynamic>> categories,
   ) {
     final rows = categories
-        .where((category) => category['type'] == 'expense')
-        .toList();
-    final byId = {for (final row in rows) row['id'] as String: row};
-    rows.sort((a, b) {
-      final aParent = a['parent_id'] == null ? a : byId[a['parent_id']];
-      final bParent = b['parent_id'] == null ? b : byId[b['parent_id']];
-      final parentCompare = (aParent?['name'] as String? ?? '').compareTo(
-        bParent?['name'] as String? ?? '',
+        .where(
+          (category) =>
+              category['type'] == 'expense' && category['parent_id'] == null,
+        )
+        .toList()
+      ..sort(
+        (a, b) => (a['name'] as String? ?? '').compareTo(
+          b['name'] as String? ?? '',
+        ),
       );
-      if (parentCompare != 0) return parentCompare;
-      if (a['parent_id'] == null && b['parent_id'] != null) return -1;
-      if (a['parent_id'] != null && b['parent_id'] == null) return 1;
-      return (a['name'] as String? ?? '').compareTo(b['name'] as String? ?? '');
-    });
     return rows;
   }
 
@@ -418,6 +534,287 @@ class _ReportRow {
   final String categoryId;
   final String name;
   final double amount;
+}
+
+class _PeriodSwitch extends StatelessWidget {
+  const _PeriodSwitch({required this.value, required this.onChanged});
+
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<String>(
+      showSelectedIcon: false,
+      segments: const [
+        ButtonSegment(value: 'week', label: Text('Week')),
+        ButtonSegment(value: 'month', label: Text('Month')),
+        ButtonSegment(value: 'year', label: Text('Year')),
+      ],
+      selected: {value},
+      onSelectionChanged: (selection) => onChanged(selection.first),
+    );
+  }
+}
+
+/// Headline spend card: big total, period-over-period change, and a row of
+/// income / net / daily-average metrics. The expense-tracking centerpiece.
+class _SpendingSummary extends StatelessWidget {
+  const _SpendingSummary({
+    required this.spent,
+    required this.income,
+    required this.previousSpent,
+    required this.start,
+    required this.end,
+    required this.currency,
+  });
+
+  final double spent;
+  final double income;
+  final double previousSpent;
+  final DateTime start;
+  final DateTime end;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final net = income - spent;
+    final now = DateTime.now();
+    final cappedEnd = end.isAfter(now) ? now : end;
+    final elapsedDays = (cappedEnd.difference(start).inDays + 1).clamp(1, 100000);
+    final dailyAvg = spent / elapsedDays;
+    final hasPrevious = previousSpent > 0;
+    final changePercent = hasPrevious
+        ? (spent - previousSpent) / previousSpent * 100
+        : 0.0;
+    final spendingUp = changePercent >= 0;
+    final changeColor = AppColors.amount(context, positive: !spendingUp);
+
+    return AppCard(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'SPENT',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+              letterSpacing: 0.6,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          SizedBox(
+            width: double.infinity,
+            child: MoneyText(
+              spent,
+              currency: currency,
+              autoFit: true,
+              color: AppColors.amount(context, positive: false),
+              style: theme.textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.8,
+              ),
+            ),
+          ),
+          if (hasPrevious) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Row(
+              children: [
+                Icon(
+                  spendingUp ? Icons.arrow_upward : Icons.arrow_downward,
+                  size: 16,
+                  color: changeColor,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '${changePercent.abs().toStringAsFixed(0)}% vs previous period',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: changeColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const Divider(height: AppSpacing.xl),
+          Row(
+            children: [
+              _SummaryMetric(
+                label: 'Income',
+                amount: income,
+                currency: currency,
+                color: AppColors.amount(context, positive: true),
+              ),
+              _SummaryMetric(
+                label: 'Net',
+                amount: net,
+                currency: currency,
+                signed: true,
+                color: AppColors.amount(context, positive: net >= 0),
+              ),
+              _SummaryMetric(
+                label: 'Daily avg',
+                amount: dailyAvg,
+                currency: currency,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryMetric extends StatelessWidget {
+  const _SummaryMetric({
+    required this.label,
+    required this.amount,
+    required this.currency,
+    this.color,
+    this.signed = false,
+  });
+
+  final String label;
+  final double amount;
+  final String currency;
+  final Color? color;
+  final bool signed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          MoneyText(
+            amount,
+            currency: currency,
+            signed: signed,
+            color: color,
+            autoFit: true,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 6-month expense bar chart so the user can see whether spending is trending
+/// up or down at a glance.
+class _TrendChart extends StatelessWidget {
+  const _TrendChart({required this.data, required this.currency});
+
+  final List<({String label, double amount})> data;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    var maxValue = 0.0;
+    for (final point in data) {
+      if (point.amount > maxValue) maxValue = point.amount;
+    }
+    final maxY = maxValue <= 0 ? 1.0 : maxValue * 1.25;
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionHeader('Spending trend', subtitle: 'Last 6 months'),
+          const SizedBox(height: AppSpacing.lg),
+          SizedBox(
+            height: 150,
+            child: BarChart(
+              BarChartData(
+                maxY: maxY,
+                alignment: BarChartAlignment.spaceAround,
+                gridData: const FlGridData(show: false),
+                borderData: FlBorderData(show: false),
+                barTouchData: BarTouchData(
+                  enabled: true,
+                  touchTooltipData: BarTouchTooltipData(
+                    getTooltipItem: (group, _, rod, _) => BarTooltipItem(
+                      money(rod.toY, currency: currency),
+                      TextStyle(
+                        color: scheme.onInverseSurface,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ),
+                titlesData: FlTitlesData(
+                  leftTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 24,
+                      getTitlesWidget: (value, meta) {
+                        final index = value.toInt();
+                        if (index < 0 || index >= data.length) {
+                          return const SizedBox.shrink();
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            data[index].label,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                barGroups: [
+                  for (var i = 0; i < data.length; i++)
+                    BarChartGroupData(
+                      x: i,
+                      barRods: [
+                        BarChartRodData(
+                          toY: data[i].amount,
+                          width: 18,
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(6),
+                          ),
+                          color: i == data.length - 1
+                              ? scheme.primary
+                              : scheme.primary.withValues(alpha: 0.35),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _ReportModeSwitch extends StatelessWidget {
@@ -1139,11 +1536,16 @@ class _CategoryBreakdown extends StatelessWidget {
               child: Row(
                 children: [
                   Container(
-                    width: 10,
-                    height: 10,
+                    width: 38,
+                    height: 38,
                     decoration: BoxDecoration(
-                      color: color,
+                      color: color.withValues(alpha: 0.16),
                       shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      categoryVisual(name: row.name).icon,
+                      size: 19,
+                      color: color,
                     ),
                   ),
                   const SizedBox(width: AppSpacing.md),
@@ -1213,15 +1615,20 @@ class _TransactionList extends StatelessWidget {
   const _TransactionList({
     required this.categoryName,
     required this.transactions,
+    required this.categories,
     required this.currency,
   });
 
   final String categoryName;
   final List<Map<String, dynamic>> transactions;
+  final List<Map<String, dynamic>> categories;
   final String currency;
 
   @override
   Widget build(BuildContext context) {
+    final categoryById = {
+      for (final c in categories) c['id'] as String: c,
+    };
     final total = transactions.fold<double>(
       0,
       (sum, transaction) => sum + asDouble(transaction['amount']),
@@ -1276,7 +1683,11 @@ class _TransactionList extends StatelessWidget {
         ...transactions.map(
           (transaction) => Padding(
             padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-            child: TransactionTile(row: transaction, currency: currency),
+            child: TransactionTile(
+              row: transaction,
+              currency: currency,
+              category: categoryById[transaction['category_id']],
+            ),
           ),
         ),
       ],

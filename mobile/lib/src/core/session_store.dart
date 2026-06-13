@@ -41,7 +41,7 @@ class SessionStore {
 
   Future<String> loadThemeMode() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_themeMode) ?? 'system';
+    return prefs.getString(_themeMode) ?? 'light';
   }
 
   Future<void> saveFromAuth(Map<String, dynamic> auth) async {

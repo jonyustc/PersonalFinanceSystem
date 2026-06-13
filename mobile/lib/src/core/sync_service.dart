@@ -104,10 +104,21 @@ class SyncService {
           _normalizedReplayPayload(method, path, payload),
         );
         await _db.deleteQueuedMutation(id);
+      } on DioException catch (error) {
+        final status = error.response?.statusCode;
+        // A 4xx (except 408 timeout / 429 rate-limit) means the server will
+        // never accept this write — drop it so it does not block the queue
+        // forever ("always shows pending writes"). Network/5xx errors stay
+        // queued for the next sync.
+        if (status != null &&
+            status >= 400 &&
+            status < 500 &&
+            status != 408 &&
+            status != 429) {
+          await _db.deleteQueuedMutation(id);
+        }
       } catch (_) {
-        // Keep the failed write queued, but do not block read sync. A single
-        // rejected stale mutation should not prevent accounts, transactions,
-        // and reports from refreshing.
+        // Non-Dio error: keep the write queued and retry on the next sync.
       }
     }
   }

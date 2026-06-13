@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../core/api_client.dart';
 import '../core/app_database.dart';
+import '../core/backup_service.dart';
 import '../core/google_auth.dart';
 import '../core/session_store.dart';
 import '../core/sync_service.dart';
@@ -14,6 +15,9 @@ import '../core/sync_service.dart';
 final sessionStoreProvider = Provider((ref) => SessionStore());
 final databaseProvider = Provider((ref) => AppDatabase());
 final googleAuthServiceProvider = Provider((ref) => GoogleAuthService());
+final backupServiceProvider = Provider(
+  (ref) => BackupService(ref.watch(databaseProvider)),
+);
 final apiClientProvider = Provider(
   (ref) => ApiClient(
     ref.watch(sessionStoreProvider),
@@ -127,6 +131,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
     final snapshot = await _readLocal(session: session);
     if (session != null) {
       _startPeriodicSync();
+      unawaited(materializeDueRecurring());
       unawaited(syncNow(silent: true));
     }
     return snapshot;
@@ -134,33 +139,47 @@ class AppController extends AsyncNotifier<AppSnapshot>
 
   Future<void> login(String email, String password) async {
     final auth = await _api.login(email, password);
-    await _session.saveFromAuth(auth);
-    final session = await _session.load();
-    state = AsyncData(
-      (await _readLocal(
-        session: session,
-      )).copyWith(isSyncing: true, authNotice: null),
-    );
-    _startPeriodicSync();
-    await syncNow();
+    await _onAuthenticated(auth);
   }
 
   Future<void> loginWithGoogle() async {
     final idToken = await ref.read(googleAuthServiceProvider).obtainIdToken();
     final auth = await _api.loginWithGoogle(idToken);
+    await _onAuthenticated(auth);
+  }
+
+  /// Shared post-login handling. Note we publish the signed-in state with
+  /// isSyncing=false (via _readLocal) BEFORE calling syncNow: syncNow guards on
+  /// `isSyncing`, so pre-setting it true here would make the sync a no-op and
+  /// leave the spinner stuck forever.
+  Future<void> _onAuthenticated(Map<String, dynamic> auth) async {
     await _session.saveFromAuth(auth);
     final session = await _session.load();
     state = AsyncData(
-      (await _readLocal(
-        session: session,
-      )).copyWith(isSyncing: true, authNotice: null),
+      (await _readLocal(session: session)).copyWith(authNotice: null),
     );
     _startPeriodicSync();
     await syncNow();
   }
 
+  /// Exports all local data to a shareable JSON backup file.
+  Future<void> exportBackup() => ref.read(backupServiceProvider).exportBackup();
+
+  /// Restores a picked backup file into the local database, then refreshes
+  /// state. Returns false if the user cancelled the file picker.
+  Future<bool> restoreBackup() async {
+    final imported = await ref.read(backupServiceProvider).importBackup();
+    if (!imported) return false;
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+    return true;
+  }
+
   Future<void> logout() async {
     await _session.clear();
+    // Drop all cached data + the pending-write queue so the next account does
+    // not inherit this user's rows or a stuck queue.
+    await _db.clearAll();
     _timer?.cancel();
     state = AsyncData(await _readLocal(session: null));
   }
@@ -693,6 +712,14 @@ class AppController extends AsyncNotifier<AppSnapshot>
     state = AsyncData(
       await _readLocal(session: await _session.load() ?? current?.session),
     );
+    // Persist to the backend so the choice survives re-login/sync (otherwise
+    // saveFromAuth overwrites it with the stored user currency on next login).
+    try {
+      await _api.updateProfile({'currency': currency});
+    } catch (_) {
+      // Offline or transient failure: the local value still applies until the
+      // next successful sync.
+    }
   }
 
   Future<void> setThemeMode(String themeMode) async {
@@ -712,9 +739,150 @@ class AppController extends AsyncNotifier<AppSnapshot>
     state = AsyncData(await _readLocal(session: current?.session));
   }
 
+  // ============================ RECURRING =============================
+
+  Future<List<Map<String, dynamic>>> recurringRules() => _db.recurringRules();
+
+  Future<void> saveRecurringRule({
+    String? id,
+    required String type,
+    required String accountId,
+    String? transferAccountId,
+    String? categoryId,
+    required double amount,
+    String? merchantName,
+    String? description,
+    required String frequency,
+    int intervalCount = 1,
+    required DateTime startDate,
+    DateTime? endDate,
+  }) async {
+    final ruleId = id ?? const Uuid().v4();
+    await _db.upsertRecurringRule({
+      'id': ruleId,
+      'type': type,
+      'account_id': accountId,
+      'transfer_account_id': _blankToNull(transferAccountId),
+      'category_id': _blankToNull(categoryId),
+      'amount': amount,
+      'merchant_name': _blankToNull(merchantName),
+      'description': _blankToNull(description),
+      'frequency': frequency,
+      'interval_count': intervalCount < 1 ? 1 : intervalCount,
+      'next_run': _dateOnlyIso(startDate),
+      'end_date': endDate == null ? null : _dateOnlyIso(endDate),
+      'last_run': null,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+    await materializeDueRecurring();
+  }
+
+  Future<void> deleteRecurringRule(String id) =>
+      _db.deleteRecurringRule(id);
+
+  /// Creates any recurring transactions that have come due (up to today),
+  /// advancing each rule's schedule. Safe to call repeatedly — each occurrence
+  /// is created once because next_run is persisted after every creation.
+  Future<void> materializeDueRecurring() async {
+    final rules = await _db.recurringRules();
+    final now = DateTime.now();
+    final todayDate = DateTime(now.year, now.month, now.day);
+    var created = false;
+
+    for (final rule in rules) {
+      var nextRun = DateTime.tryParse(rule['next_run'] as String? ?? '');
+      if (nextRun == null) continue;
+      final endStr = rule['end_date'] as String?;
+      final end = endStr == null ? null : DateTime.tryParse(endStr);
+      final frequency = rule['frequency'] as String? ?? 'monthly';
+      final interval = (rule['interval_count'] as int?) ?? 1;
+      String? lastRun = rule['last_run'] as String?;
+      var guard = 0;
+
+      while (!nextRun!.isAfter(todayDate) &&
+          (end == null || !nextRun.isAfter(end)) &&
+          guard < 120) {
+        await _createFromRecurring(rule, nextRun);
+        created = true;
+        lastRun = _dateOnlyIso(nextRun);
+        nextRun = _advanceDate(nextRun, frequency, interval);
+        guard++;
+      }
+
+      await _db.upsertRecurringRule({
+        ...rule,
+        'next_run': _dateOnlyIso(nextRun),
+        'last_run': lastRun,
+      });
+    }
+
+    if (created) {
+      final current = state.asData?.value;
+      state = AsyncData(await _readLocal(session: current?.session));
+      unawaited(syncNow(silent: true));
+    }
+  }
+
+  Future<void> _createFromRecurring(
+    Map<String, dynamic> rule,
+    DateTime date,
+  ) async {
+    final type = rule['type'] as String? ?? 'expense';
+    final amount = _asDouble(rule['amount']);
+    if (amount <= 0) return;
+    if (type == 'transfer') {
+      final to = rule['transfer_account_id'] as String?;
+      if (to == null) return;
+      await createTransfer(
+        fromAccountId: rule['account_id'] as String,
+        toAccountId: to,
+        amount: amount,
+        date: date,
+        notes: rule['description'] as String?,
+      );
+    } else {
+      await createTransaction(
+        accountId: rule['account_id'] as String,
+        type: type,
+        amount: amount,
+        date: date,
+        categoryId: rule['category_id'] as String?,
+        merchantName: rule['merchant_name'] as String?,
+        description: rule['description'] as String?,
+      );
+    }
+  }
+
+  DateTime _advanceDate(DateTime date, String frequency, int interval) {
+    final n = interval < 1 ? 1 : interval;
+    switch (frequency) {
+      case 'daily':
+        return date.add(Duration(days: n));
+      case 'weekly':
+        return date.add(Duration(days: 7 * n));
+      case 'yearly':
+        return DateTime(date.year + n, date.month, _clampDay(date.year + n, date.month, date.day));
+      case 'monthly':
+      default:
+        final total = date.month - 1 + n;
+        final year = date.year + total ~/ 12;
+        final month = total % 12 + 1;
+        return DateTime(year, month, _clampDay(year, month, date.day));
+    }
+  }
+
+  int _clampDay(int year, int month, int day) {
+    final lastDay = DateTime(year, month + 1, 0).day;
+    return day > lastDay ? lastDay : day;
+  }
+
+  String _dateOnlyIso(DateTime date) =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      unawaited(materializeDueRecurring());
       unawaited(syncNow(silent: true));
     }
   }

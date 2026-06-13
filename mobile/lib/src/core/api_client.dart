@@ -88,6 +88,16 @@ class ApiClient {
     return response.data ?? {};
   }
 
+  Future<Map<String, dynamic>> updateProfile(
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/users/profile',
+      data: payload,
+    );
+    return response.data ?? {};
+  }
+
   Future<bool> _refreshSession() {
     final existing = _refreshFuture;
     if (existing != null) return existing;

@@ -165,9 +165,11 @@ FinanceSummary buildFinanceSummary({
   // positive non-card, non-broker balances; overdrawn balances become
   // liabilities; credit-card debt lives in `current_outstanding`, not
   // `balance` (cards keep balance == 0).
-  final cashAccounts = accounts.where(
-    (row) => !isCreditCardAccount(row) && !isStockBrokerAccount(row),
-  );
+  // Count brokerage (broker) cash as a regular cash asset. The stock holdings
+  // are added separately as equity below, so broker cash is counted exactly
+  // once — previously it could be counted both here AND inside the portfolio
+  // total, inflating assets.
+  final cashAccounts = accounts.where((row) => !isCreditCardAccount(row));
   final cashAssets = cashAccounts.fold<double>(0, (sum, row) {
     final balance = asDouble(row['balance']);
     return sum + (balance > 0 ? balance : 0);
@@ -267,8 +269,12 @@ FinanceSummary buildFinanceSummary({
     0,
     (sum, row) => sum + row.cost,
   );
+  // The "stock portfolio" figure is the market value of holdings only
+  // (current_equity_value), NOT total_portfolio_value — the latter bundles
+  // uninvested broker cash and would roughly double the displayed value. That
+  // cash is already counted as a cash asset above.
   final backendPortfolioValue = asDouble(
-    portfolioSummary?['total_portfolio_value'],
+    portfolioSummary?['current_equity_value'],
   );
   final backendPortfolioCost = asDouble(
     portfolioSummary?['active_cost_basis'] ??

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/formatters.dart';
 import '../../theme/app_spacing.dart';
+import '../../theme/category_visuals.dart';
 import '../../widgets/app_card.dart';
 
 class TransactionTile extends StatelessWidget {
@@ -9,12 +10,17 @@ class TransactionTile extends StatelessWidget {
     super.key,
     required this.row,
     required this.currency,
+    this.category,
     this.onTap,
     this.onDelete,
   });
 
   final Map<String, dynamic> row;
   final String currency;
+
+  /// The transaction's category (looked up by the parent), used to render a
+  /// colorful, recognizable icon. Null for transfers or uncategorized rows.
+  final Map<String, dynamic>? category;
   final VoidCallback? onTap;
   final VoidCallback? onDelete;
 
@@ -36,6 +42,28 @@ class TransactionTile extends StatelessWidget {
         ? ''
         : '-';
 
+    // Colorful per-category avatar; fall back to a type glyph when there is no
+    // category (transfers, uncategorized income/expense).
+    final visual = isTransfer || category == null
+        ? null
+        : categoryVisual(
+            name: category!['name'] as String?,
+            color: category!['color'] as String?,
+          );
+    final avatarColor = visual?.color ?? color;
+    final avatarIcon =
+        visual?.icon ??
+        (isTransfer
+            ? Icons.swap_horiz
+            : isIncome
+            ? Icons.south_west
+            : Icons.north_east);
+    final categoryName = category?['name'] as String?;
+    final subtitle = [
+      if (categoryName != null && categoryName.isNotEmpty) categoryName,
+      compactDate(row['txn_date'] as String? ?? ''),
+    ].join(' · ');
+
     final tile = AppCard(
       onTap: onTap,
       onLongPress: onDelete,
@@ -46,21 +74,13 @@ class TransactionTile extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 38,
-            height: 38,
+            width: 42,
+            height: 42,
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.10),
+              color: avatarColor.withValues(alpha: 0.14),
               shape: BoxShape.circle,
             ),
-            child: Icon(
-              isTransfer
-                  ? Icons.swap_horiz
-                  : isIncome
-                  ? Icons.south_west
-                  : Icons.north_east,
-              color: color,
-              size: 19,
-            ),
+            child: Icon(avatarIcon, color: avatarColor, size: 21),
           ),
           const SizedBox(width: AppSpacing.md),
           Expanded(
@@ -82,7 +102,7 @@ class TransactionTile extends StatelessWidget {
                   children: [
                     Flexible(
                       child: Text(
-                        compactDate(row['txn_date'] as String? ?? ''),
+                        subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(

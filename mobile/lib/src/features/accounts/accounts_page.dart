@@ -6,7 +6,9 @@ import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_card.dart';
+import '../../widgets/confirm_dialog.dart';
 import '../../widgets/metric_grid.dart';
+import '../../widgets/skeleton.dart';
 import '../../widgets/money_text.dart';
 import '../../widgets/section_header.dart';
 import '../../widgets/stat_card.dart';
@@ -18,7 +20,7 @@ class AccountsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
-    if (snapshot == null) return const Center(child: CircularProgressIndicator());
+    if (snapshot == null) return const ListSkeleton();
     final accounts = snapshot.accounts;
     final currency = snapshot.session?.currency ?? 'BDT';
     final summary = buildAccountSummary(accounts);
@@ -126,24 +128,15 @@ class AccountsPage extends ConsumerWidget {
     Map<String, dynamic> account,
   ) async {
     final name = account['name'] as String? ?? 'Account';
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Archive account?'),
-        content: Text('$name will be removed from active account lists.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Archive'),
-          ),
-        ],
-      ),
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Archive account?',
+      message: '"$name" will be removed from your active account lists.',
+      confirmLabel: 'Archive',
+      icon: Icons.archive_outlined,
+      destructive: true,
     );
-    if (confirmed != true) return;
+    if (!confirmed) return;
     try {
       await ref
           .read(appControllerProvider.notifier)
@@ -232,12 +225,16 @@ class _AccountSummaryHeader extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
-              MoneyText(
-                summary.netWorth,
-                currency: currency,
-                style: theme.textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.8,
+              SizedBox(
+                width: double.infinity,
+                child: MoneyText(
+                  summary.netWorth,
+                  currency: currency,
+                  autoFit: true,
+                  style: theme.textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.8,
+                  ),
                 ),
               ),
             ],
@@ -303,12 +300,19 @@ class _AccountRow extends StatelessWidget {
     final muted = theme.colorScheme.onSurfaceVariant;
     final accountCurrency = account['currency'] as String? ?? currency;
     final isCard = isCreditCardAccount(account);
-    final scheme = theme.colorScheme;
-    final avatar = CircleAvatar(
-      radius: 20,
-      backgroundColor: scheme.primary.withValues(alpha: 0.10),
-      foregroundColor: scheme.primary,
-      child: Icon(_accountIcon(account['type'] as String?), size: 20),
+    final typeColor = _accountColor(account['type'] as String?);
+    final avatar = Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: typeColor.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Icon(
+        _accountIcon(account['type'] as String?),
+        size: 22,
+        color: typeColor,
+      ),
     );
     final typeLabel = (account['type'] as String? ?? '')
         .replaceAll('_', ' ')
@@ -343,15 +347,19 @@ class _AccountRow extends StatelessWidget {
                 ],
               ),
             ),
-            MoneyText(
-              balance,
-              currency: accountCurrency,
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w800,
+            const SizedBox(width: AppSpacing.sm),
+            Flexible(
+              child: MoneyText(
+                balance,
+                currency: accountCurrency,
+                autoFit: true,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+                color: balance < 0
+                    ? AppColors.amount(context, positive: false)
+                    : null,
               ),
-              color: balance < 0
-                  ? AppColors.amount(context, positive: false)
-                  : null,
             ),
           ],
         ),
@@ -393,15 +401,19 @@ class _AccountRow extends StatelessWidget {
                   ],
                 ),
               ),
-              MoneyText(
-                outstanding,
-                currency: accountCurrency,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
+              const SizedBox(width: AppSpacing.sm),
+              Flexible(
+                child: MoneyText(
+                  outstanding,
+                  currency: accountCurrency,
+                  autoFit: true,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                  color: outstanding > 0
+                      ? AppColors.amount(context, positive: false)
+                      : null,
                 ),
-                color: outstanding > 0
-                    ? AppColors.amount(context, positive: false)
-                    : null,
               ),
             ],
           ),
@@ -439,10 +451,26 @@ class _AccountRow extends StatelessWidget {
 
 IconData _accountIcon(String? type) {
   final value = (type ?? '').toLowerCase();
+  if (value.contains('mobile')) return Icons.phone_android;
+  if (value.contains('credit')) return Icons.credit_card;
+  if (value.contains('debit')) return Icons.credit_card_outlined;
   if (value.contains('card')) return Icons.credit_card;
   if (value.contains('bank')) return Icons.account_balance;
-  if (value.contains('mobile')) return Icons.phone_android;
+  if (value.contains('cash')) return Icons.payments_outlined;
   return Icons.wallet;
+}
+
+/// Distinct accent color per account type so the accounts list reads at a
+/// glance, Wallet-style.
+Color _accountColor(String? type) {
+  final value = (type ?? '').toLowerCase();
+  if (value.contains('mobile')) return const Color(0xFFEC4899); // pink
+  if (value.contains('credit')) return const Color(0xFFEF4444); // red
+  if (value.contains('debit')) return const Color(0xFF6366F1); // indigo
+  if (value.contains('card')) return const Color(0xFFEF4444);
+  if (value.contains('bank')) return const Color(0xFF3B82F6); // blue
+  if (value.contains('cash')) return const Color(0xFF10B981); // emerald
+  return const Color(0xFF8B5CF6); // violet
 }
 
 class _CreateAccountSheet extends ConsumerStatefulWidget {

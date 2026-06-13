@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
+import '../../theme/app_spacing.dart';
 import '../categories/categories_page.dart';
 
 Future<void> showCreateTransactionSheet(
@@ -73,8 +75,6 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
 
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color(0xFF2F2F2F),
-        foregroundColor: Colors.white,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
@@ -207,11 +207,17 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
         .toList();
     if (!mounted) return;
     if (picked != null) {
+      final pickedId = picked['id'] as String?;
       setState(() {
-        _categoryId = picked['id'] as String?;
-        if (_note.text.trim().isEmpty) {
-          _note.text = _categoryLabel(picked, categories);
-          _noteOpen = true;
+        _categoryId = pickedId;
+        // Auto-fill the note from the most recent transaction in this category
+        // so repeat entries (e.g. "Lunch", "Uber to office") need less typing.
+        if (_note.text.trim().isEmpty && pickedId != null) {
+          final recentNote = _recentNoteForCategory(pickedId);
+          if (recentNote != null) {
+            _note.text = recentNote;
+            _noteOpen = true;
+          }
         }
       });
       unawaited(ref.read(appControllerProvider.notifier).syncNow(silent: true));
@@ -373,6 +379,7 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
           description: _note.text,
         );
       }
+      HapticFeedback.lightImpact();
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
@@ -470,6 +477,26 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
     return false;
   }
 
+  /// Most recent non-empty note used for [categoryId], or null if none exists.
+  String? _recentNoteForCategory(String categoryId) {
+    final transactions =
+        ref.read(appControllerProvider).asData?.value.transactions ?? [];
+    final matching =
+        transactions
+            .where((row) => row['category_id'] == categoryId)
+            .toList()
+          ..sort(
+            (a, b) => (b['txn_date'] as String? ?? '').compareTo(
+              a['txn_date'] as String? ?? '',
+            ),
+          );
+    for (final row in matching) {
+      final note = (row['description'] as String?)?.trim();
+      if (note != null && note.isNotEmpty) return note;
+    }
+    return null;
+  }
+
   Map<String, dynamic>? _rowById(List<Map<String, dynamic>> rows, String? id) {
     if (id == null) return null;
     for (final row in rows) {
@@ -487,6 +514,7 @@ class _TypeTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return DefaultTabController(
       length: 3,
       initialIndex: switch (value) {
@@ -496,9 +524,15 @@ class _TypeTabs extends StatelessWidget {
       },
       child: TabBar(
         onTap: (index) => onChanged(['expense', 'income', 'transfer'][index]),
-        indicatorColor: const Color(0xFF5EEAD4),
-        labelColor: Colors.white,
-        unselectedLabelColor: Colors.white,
+        indicatorColor: scheme.primary,
+        indicatorWeight: 3,
+        labelColor: scheme.primary,
+        unselectedLabelColor: scheme.onSurfaceVariant,
+        labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+        unselectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          fontSize: 13,
+        ),
         tabs: const [
           Tab(text: 'EXPENSE'),
           Tab(text: 'INCOME'),
@@ -525,11 +559,9 @@ class _AmountHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final amountColor = type == 'income'
-        ? Colors.green.shade700
-        : type == 'transfer'
+    final amountColor = type == 'transfer'
         ? scheme.primary
-        : Colors.red.shade400;
+        : AppColors.amount(context, positive: type == 'income');
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
       child: InkWell(
@@ -673,45 +705,46 @@ class _DateStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return ColoredBox(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      color: scheme.surfaceContainerHighest,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
         child: Row(
           children: [
             IconButton(
               onPressed: onPrevious,
-              icon: const Icon(
-                Icons.chevron_left,
-                size: 42,
-                color: Colors.cyan,
-              ),
+              color: scheme.primary,
+              icon: const Icon(Icons.chevron_left, size: 32),
             ),
             Expanded(
               child: Column(
                 children: [
                   Text(
-                    '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}',
-                    style: const TextStyle(fontSize: 18),
+                    dayLabel(date),
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   Text(
-                    TimeOfDay.fromDateTime(date).format(context),
-                    style: const TextStyle(fontSize: 18),
+                    '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} · ${TimeOfDay.fromDateTime(date).format(context)}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
             ),
             IconButton(
               onPressed: onCalendar,
-              icon: const Icon(Icons.calendar_month, color: Colors.redAccent),
+              color: scheme.primary,
+              icon: const Icon(Icons.calendar_month_outlined),
             ),
             IconButton(
               onPressed: onNext,
-              icon: const Icon(
-                Icons.chevron_right,
-                size: 42,
-                color: Colors.cyan,
-              ),
+              color: scheme.primary,
+              icon: const Icon(Icons.chevron_right, size: 32),
             ),
           ],
         ),
@@ -768,14 +801,19 @@ class _EntryRow extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 18,
-                  color: highlight ? Colors.green.shade700 : null,
+                  fontSize: 17,
+                  color: highlight
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
                   fontWeight: highlight ? FontWeight.w700 : FontWeight.w400,
                 ),
               ),
             ),
             const SizedBox(width: 14),
-            Icon(icon, color: highlight ? Colors.green.shade700 : null),
+            Icon(
+              icon,
+              color: highlight ? Theme.of(context).colorScheme.primary : null,
+            ),
           ],
         ),
       ),
@@ -800,8 +838,11 @@ class _Keypad extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 300,
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      color: scheme.surfaceContainerHighest,
+      padding: const EdgeInsets.fromLTRB(6, 6, 6, 10),
+      height: 320,
       child: Column(
         children: [
           Expanded(
@@ -809,32 +850,37 @@ class _Keypad extends StatelessWidget {
               children: [
                 _PadButton(
                   label: 'AC',
-                  color: Colors.red.shade500,
+                  background: scheme.errorContainer,
+                  foreground: scheme.onErrorContainer,
                   onTap: onClear,
                 ),
                 _PadButton(
                   label: 'DEL',
-                  color: Colors.grey.shade700,
+                  icon: Icons.backspace_outlined,
+                  background: scheme.surface,
+                  foreground: scheme.onSurfaceVariant,
                   onTap: onDelete,
                 ),
                 _PadButton(
-                  label: busy ? '...' : 'OK',
-                  color: Colors.green.shade500,
+                  label: busy ? '…' : 'OK',
+                  background: scheme.primary,
+                  foreground: scheme.onPrimary,
                   onTap: busy ? null : onOk,
                 ),
               ],
             ),
           ),
-          Expanded(child: _numberRow(['7', '8', '9', '/'])),
-          Expanded(child: _numberRow(['4', '5', '6', 'x'])),
-          Expanded(child: _numberRow(['1', '2', '3', '-'])),
-          Expanded(child: _numberRow(['0', '.', '+'])),
+          Expanded(child: _numberRow(context, ['7', '8', '9', '/'])),
+          Expanded(child: _numberRow(context, ['4', '5', '6', 'x'])),
+          Expanded(child: _numberRow(context, ['1', '2', '3', '-'])),
+          Expanded(child: _numberRow(context, ['0', '.', '+'])),
         ],
       ),
     );
   }
 
-  Widget _numberRow(List<String> labels) {
+  Widget _numberRow(BuildContext context, List<String> labels) {
+    final scheme = Theme.of(context).colorScheme;
     return Row(
       children: labels.map((label) {
         final operator = '+-x/'.contains(label);
@@ -842,7 +888,8 @@ class _Keypad extends StatelessWidget {
         return _PadButton(
           label: label,
           flex: flex,
-          color: operator ? const Color(0xFFF6B51E) : const Color(0xFF42A5F5),
+          background: operator ? scheme.primaryContainer : scheme.surface,
+          foreground: operator ? scheme.onPrimaryContainer : scheme.onSurface,
           onTap: () => onKey(label),
         );
       }).toList(),
@@ -853,34 +900,43 @@ class _Keypad extends StatelessWidget {
 class _PadButton extends StatelessWidget {
   const _PadButton({
     required this.label,
-    required this.color,
+    required this.background,
+    required this.foreground,
     required this.onTap,
+    this.icon,
     this.flex = 1,
   });
 
   final String label;
-  final Color color;
+  final Color background;
+  final Color foreground;
   final VoidCallback? onTap;
+  final IconData? icon;
   final int flex;
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
       flex: flex,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
-            color: color,
-            border: Border.all(color: Colors.white, width: 1),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 32,
-              fontWeight: FontWeight.w700,
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Material(
+          color: background,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Center(
+              child: icon != null
+                  ? Icon(icon, color: foreground, size: 24)
+                  : Text(
+                      label,
+                      style: TextStyle(
+                        color: foreground,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
             ),
           ),
         ),

@@ -5,8 +5,8 @@ import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_card.dart';
-import '../../widgets/metric_grid.dart';
-import '../../widgets/stat_card.dart';
+import '../../widgets/confirm_dialog.dart';
+import '../../widgets/skeleton.dart';
 import '../dashboard/dashboard_page.dart';
 import 'transaction_details_page.dart';
 import 'transaction_tile.dart';
@@ -19,35 +19,37 @@ class TransactionsPage extends ConsumerStatefulWidget {
 }
 
 class _TransactionsPageState extends ConsumerState<TransactionsPage> {
-  final _searchController = TextEditingController();
+  DateTime _day = DateTime.now();
   String _type = 'all';
-  String _query = '';
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
-    if (snapshot == null) return const Center(child: CircularProgressIndicator());
+    if (snapshot == null) {
+      return const ListSkeleton();
+    }
 
     final currency = snapshot.session?.currency ?? 'BDT';
-    final transactions = snapshot.transactions.where(_matchesFilters).toList()
-      ..sort((a, b) {
-        final left = DateTime.tryParse(a['txn_date'] as String? ?? '');
-        final right = DateTime.tryParse(b['txn_date'] as String? ?? '');
-        if (left == null && right == null) return 0;
-        if (left == null) return 1;
-        if (right == null) return -1;
-        return right.compareTo(left);
-      });
-    final sections = _groupByDate(transactions);
+    final categoryById = {
+      for (final c in snapshot.categories) c['id'] as String: c,
+    };
+    final dayRows =
+        snapshot.transactions
+            .where((row) => _isSameDay(row, _day))
+            .where(_matchesType)
+            .toList()
+          ..sort((a, b) {
+            final left = DateTime.tryParse(a['txn_date'] as String? ?? '');
+            final right = DateTime.tryParse(b['txn_date'] as String? ?? '');
+            if (left == null && right == null) return 0;
+            if (left == null) return 1;
+            if (right == null) return -1;
+            return right.compareTo(left);
+          });
+
     double income = 0;
     double expense = 0;
-    for (final row in transactions) {
+    for (final row in dayRows) {
       final amount = asDouble(row['amount']);
       switch (row['type']) {
         case 'income':
@@ -67,67 +69,42 @@ class _TransactionsPageState extends ConsumerState<TransactionsPage> {
           96,
         ),
         children: [
-          MetricGrid(
-            children: [
-              StatCard(
-                label: 'Income',
-                amount: income,
-                currency: currency,
-                icon: Icons.south_west,
-                amountColor: AppColors.amount(context, positive: true),
-              ),
-              StatCard(
-                label: 'Expense',
-                amount: expense,
-                currency: currency,
-                icon: Icons.north_east,
-                amountColor: AppColors.amount(context, positive: false),
-              ),
-              StatCard(
-                label: 'Net',
-                amount: income - expense,
-                currency: currency,
-                icon: Icons.swap_vert,
-                signed: true,
-                amountColor: AppColors.amount(
-                  context,
-                  positive: income - expense >= 0,
-                ),
-              ),
-            ],
+          _DayNavigator(
+            day: _day,
+            income: income,
+            expense: expense,
+            count: dayRows.length,
+            currency: currency,
+            onPrevious: () => _changeDay(-1),
+            onNext: _isToday(_day) ? null : () => _changeDay(1),
+            onPickDate: _pickDate,
+            onToday: _isToday(_day) ? null : _goToToday,
           ),
           const SizedBox(height: AppSpacing.md),
-          _SearchAndFilters(
-            controller: _searchController,
-            query: _query,
+          _TypeFilterRow(
             type: _type,
-            resultCount: transactions.length,
-            totalCount: snapshot.transactions.length,
-            onQueryChanged: (value) => setState(() => _query = value),
-            onTypeChanged: (value) => setState(() => _type = value),
-            onClear: _hasFilters
-                ? () => setState(() {
-                      _query = '';
-                      _type = 'all';
-                      _searchController.clear();
-                    })
-                : null,
+            onChanged: (value) => setState(() => _type = value),
           ),
           const SizedBox(height: AppSpacing.lg),
-          if (transactions.isEmpty)
-            const EmptyPanel(
+          if (dayRows.isEmpty)
+            EmptyPanel(
               icon: Icons.receipt_long_outlined,
-              title: 'No matching transactions',
-              body: 'Pull to sync, add a transaction, or clear filters.',
+              title: 'Nothing on ${dayLabel(_day).toLowerCase()}',
+              body:
+                  'No ${_type == 'all' ? '' : '$_type '}transactions for this '
+                  'day. Use the arrows to browse other days or add one with +.',
             )
           else
-            ...sections.map(
-              (section) => _TransactionSection(
-                title: section.title,
-                rows: section.rows,
-                currency: currency,
-                onOpen: _openDetails,
-                onDelete: _confirmDelete,
+            ...dayRows.map(
+              (row) => Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                child: TransactionTile(
+                  row: row,
+                  currency: currency,
+                  category: categoryById[row['category_id']],
+                  onTap: () => _openDetails(row),
+                  onDelete: () => _confirmDelete(row),
+                ),
               ),
             ),
         ],
@@ -135,43 +112,43 @@ class _TransactionsPageState extends ConsumerState<TransactionsPage> {
     );
   }
 
-  bool get _hasFilters => _query.trim().isNotEmpty || _type != 'all';
+  bool _isToday(DateTime day) => _isSameDayDate(day, DateTime.now());
 
-  bool _matchesFilters(Map<String, dynamic> row) {
-    final type = row['type'] as String? ?? 'expense';
-    final typeMatch = _type == 'all' || type == _type;
-    final haystack = [
-      row['merchant_name'],
-      row['description'],
-      row['type'],
-      row['transaction_status'],
-    ].whereType<String>().join(' ').toLowerCase();
-    final query = _query.trim().toLowerCase();
-    return typeMatch && (query.isEmpty || haystack.contains(query));
+  bool _isSameDay(Map<String, dynamic> row, DateTime day) {
+    final date = DateTime.tryParse(row['txn_date'] as String? ?? '');
+    if (date == null) return false;
+    return _isSameDayDate(date.toLocal(), day);
   }
 
-  List<_TransactionDateSection> _groupByDate(
-    List<Map<String, dynamic>> transactions,
-  ) {
-    final sections = <_TransactionDateSection>[];
-    String? currentTitle;
-    for (final row in transactions) {
-      final title = compactDate(row['txn_date'] as String? ?? '');
-      if (title != currentTitle) {
-        currentTitle = title;
-        sections.add(_TransactionDateSection(title: title, rows: []));
-      }
-      sections.last.rows.add(row);
-    }
-    return sections;
+  bool _isSameDayDate(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  bool _matchesType(Map<String, dynamic> row) {
+    if (_type == 'all') return true;
+    return (row['type'] as String? ?? 'expense') == _type;
+  }
+
+  void _changeDay(int deltaDays) {
+    setState(() => _day = _day.add(Duration(days: deltaDays)));
+  }
+
+  void _goToToday() => setState(() => _day = DateTime.now());
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _day,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked != null) setState(() => _day = picked);
   }
 
   void _openDetails(Map<String, dynamic> row) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => TransactionDetailsPage(
-          transactionId: row['id'] as String,
-        ),
+        builder: (_) =>
+            TransactionDetailsPage(transactionId: row['id'] as String),
       ),
     );
   }
@@ -179,128 +156,226 @@ class _TransactionsPageState extends ConsumerState<TransactionsPage> {
   Future<void> _confirmDelete(Map<String, dynamic> row) async {
     final title =
         (row['merchant_name'] ?? row['description'] ?? 'transaction') as String;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete transaction?'),
-        content: Text('Delete $title and refresh balances?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Delete transaction?',
+      message: 'Delete "$title" and refresh balances? This cannot be undone.',
+      confirmLabel: 'Delete',
+      icon: Icons.delete_outline,
+      destructive: true,
     );
-    if (confirmed != true) return;
+    if (!confirmed) return;
     await ref
         .read(appControllerProvider.notifier)
         .deleteTransaction(row['id'] as String);
   }
 }
 
-class _SearchAndFilters extends StatelessWidget {
-  const _SearchAndFilters({
-    required this.controller,
-    required this.query,
-    required this.type,
-    required this.resultCount,
-    required this.totalCount,
-    required this.onQueryChanged,
-    required this.onTypeChanged,
-    required this.onClear,
+/// Day picker header with a per-day income / expense / net summary.
+class _DayNavigator extends StatelessWidget {
+  const _DayNavigator({
+    required this.day,
+    required this.income,
+    required this.expense,
+    required this.count,
+    required this.currency,
+    required this.onPrevious,
+    required this.onNext,
+    required this.onPickDate,
+    required this.onToday,
   });
 
-  final TextEditingController controller;
-  final String query;
-  final String type;
-  final int resultCount;
-  final int totalCount;
-  final ValueChanged<String> onQueryChanged;
-  final ValueChanged<String> onTypeChanged;
-  final VoidCallback? onClear;
+  final DateTime day;
+  final double income;
+  final double expense;
+  final int count;
+  final String currency;
+  final VoidCallback onPrevious;
+  final VoidCallback? onNext;
+  final VoidCallback onPickDate;
+  final VoidCallback? onToday;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final net = income - expense;
+    final fullDate =
+        '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+
     return AppCard(
-      padding: const EdgeInsets.all(AppSpacing.md),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-            SearchBar(
-              controller: controller,
-              hintText: 'Search transactions',
-              elevation: const WidgetStatePropertyAll(0),
-              leading: const Icon(Icons.search),
-              trailing: query.trim().isEmpty
-                  ? null
-                  : [
-                      IconButton(
-                        tooltip: 'Clear search',
-                        onPressed: () {
-                          controller.clear();
-                          onQueryChanged('');
-                        },
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
-              onChanged: onQueryChanged,
-            ),
-            const SizedBox(height: AppSpacing.md),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  _TypeChip(
-                    label: 'All',
-                    icon: Icons.list_alt,
-                    selected: type == 'all',
-                    onSelected: () => onTypeChanged('all'),
-                  ),
-                  _TypeChip(
-                    label: 'Expense',
-                    icon: Icons.arrow_upward,
-                    selected: type == 'expense',
-                    onSelected: () => onTypeChanged('expense'),
-                  ),
-                  _TypeChip(
-                    label: 'Income',
-                    icon: Icons.arrow_downward,
-                    selected: type == 'income',
-                    onSelected: () => onTypeChanged('income'),
-                  ),
-                  _TypeChip(
-                    label: 'Transfer',
-                    icon: Icons.swap_horiz,
-                    selected: type == 'transfer',
-                    onSelected: () => onTypeChanged('transfer'),
-                  ),
-                ],
+          Row(
+            children: [
+              IconButton.filledTonal(
+                tooltip: 'Previous day',
+                onPressed: onPrevious,
+                icon: const Icon(Icons.chevron_left),
               ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '$resultCount of $totalCount transactions',
-                    style: Theme.of(context).textTheme.bodySmall,
+              Expanded(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  onTap: onPickDate,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Column(
+                      children: [
+                        Text(
+                          dayLabel(day),
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(
+                          fullDate,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                if (onClear != null)
-                  TextButton.icon(
-                    onPressed: onClear,
-                    icon: const Icon(Icons.filter_alt_off, size: 18),
-                    label: const Text('Clear'),
-                  ),
-              ],
+              ),
+              IconButton.filledTonal(
+                tooltip: 'Next day',
+                onPressed: onNext,
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+          if (onToday != null)
+            Align(
+              alignment: Alignment.center,
+              child: TextButton.icon(
+                onPressed: onToday,
+                icon: const Icon(Icons.today, size: 16),
+                label: const Text('Jump to today'),
+              ),
             ),
-          ],
-        ),
+          const Divider(height: AppSpacing.xl),
+          Row(
+            children: [
+              _DayMetric(
+                label: 'Income',
+                amount: income,
+                currency: currency,
+                color: AppColors.amount(context, positive: true),
+              ),
+              _DayMetric(
+                label: 'Expense',
+                amount: expense,
+                currency: currency,
+                color: AppColors.amount(context, positive: false),
+              ),
+              _DayMetric(
+                label: 'Net',
+                amount: net,
+                currency: currency,
+                signed: true,
+                color: AppColors.amount(context, positive: net >= 0),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            count == 0
+                ? 'No transactions'
+                : '$count transaction${count == 1 ? '' : 's'}',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DayMetric extends StatelessWidget {
+  const _DayMetric({
+    required this.label,
+    required this.amount,
+    required this.currency,
+    required this.color,
+    this.signed = false,
+  });
+
+  final String label;
+  final double amount;
+  final String currency;
+  final Color color;
+  final bool signed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final prefix = signed && amount > 0 ? '+' : '';
+    return Expanded(
+      child: Column(
+        children: [
+          Text(
+            '$prefix${money(amount, currency: currency)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: color,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TypeFilterRow extends StatelessWidget {
+  const _TypeFilterRow({required this.type, required this.onChanged});
+
+  final String type;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _TypeChip(
+            label: 'All',
+            icon: Icons.list_alt,
+            selected: type == 'all',
+            onSelected: () => onChanged('all'),
+          ),
+          _TypeChip(
+            label: 'Expense',
+            icon: Icons.north_east,
+            selected: type == 'expense',
+            onSelected: () => onChanged('expense'),
+          ),
+          _TypeChip(
+            label: 'Income',
+            icon: Icons.south_west,
+            selected: type == 'income',
+            onSelected: () => onChanged('income'),
+          ),
+          _TypeChip(
+            label: 'Transfer',
+            icon: Icons.swap_horiz,
+            selected: type == 'transfer',
+            onSelected: () => onChanged('transfer'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -330,95 +405,4 @@ class _TypeChip extends StatelessWidget {
       ),
     );
   }
-}
-
-class _TransactionSection extends StatelessWidget {
-  const _TransactionSection({
-    required this.title,
-    required this.rows,
-    required this.currency,
-    required this.onOpen,
-    required this.onDelete,
-  });
-
-  final String title;
-  final List<Map<String, dynamic>> rows;
-  final String currency;
-  final ValueChanged<Map<String, dynamic>> onOpen;
-  final ValueChanged<Map<String, dynamic>> onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    double dayExpense = 0;
-    double dayIncome = 0;
-    for (final row in rows) {
-      final amount = asDouble(row['amount']);
-      switch (row['type']) {
-        case 'income':
-          dayIncome += amount;
-        case 'expense':
-          dayExpense += amount;
-      }
-    }
-    final parts = <String>[
-      if (dayExpense > 0) '-${money(dayExpense, currency: currency)}',
-      if (dayIncome > 0) '+${money(dayIncome, currency: currency)}',
-    ];
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.lg),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.xs,
-              AppSpacing.xs,
-              AppSpacing.xs,
-              AppSpacing.sm,
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                if (parts.isNotEmpty)
-                  Text(
-                    parts.join('  '),
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          ...rows.map(
-            (row) => Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-              child: TransactionTile(
-                row: row,
-                currency: currency,
-                onTap: () => onOpen(row),
-                onDelete: () => onDelete(row),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TransactionDateSection {
-  _TransactionDateSection({required this.title, required this.rows});
-
-  final String title;
-  final List<Map<String, dynamic>> rows;
 }

@@ -56,13 +56,16 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
         side: BorderSide(color: surfaceBorder),
       ),
     ),
     dividerTheme: DividerThemeData(color: surfaceBorder, thickness: 1, space: 1),
     chipTheme: base.chipTheme.copyWith(
       side: BorderSide(color: surfaceBorder),
+      selectedColor: scheme.primary.withValues(alpha: 0.14),
+      checkmarkColor: scheme.primary,
+      labelStyle: base.textTheme.labelLarge,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.pill),
       ),
@@ -98,8 +101,25 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: cardColor,
       elevation: 0,
-      height: 64,
+      height: 66,
       labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+      indicatorColor: scheme.primary.withValues(alpha: 0.16),
+      iconTheme: WidgetStateProperty.resolveWith(
+        (states) => IconThemeData(
+          color: states.contains(WidgetState.selected)
+              ? scheme.primary
+              : onSurface.withValues(alpha: 0.6),
+        ),
+      ),
+      labelTextStyle: WidgetStateProperty.resolveWith(
+        (states) => base.textTheme.labelMedium?.copyWith(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: states.contains(WidgetState.selected)
+              ? scheme.primary
+              : onSurface.withValues(alpha: 0.6),
+        ),
+      ),
     ),
   );
 }

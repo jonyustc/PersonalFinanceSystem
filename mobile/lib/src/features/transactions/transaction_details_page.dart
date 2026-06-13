@@ -5,6 +5,7 @@ import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_card.dart';
+import '../../widgets/confirm_dialog.dart';
 import 'create_transaction_sheet.dart';
 
 class TransactionDetailsPage extends ConsumerWidget {
@@ -132,24 +133,15 @@ class TransactionDetailsPage extends ConsumerWidget {
   ) async {
     final title =
         (row['merchant_name'] ?? row['description'] ?? 'transaction') as String;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete transaction?'),
-        content: Text('Delete $title and refresh balances?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Delete transaction?',
+      message: 'Delete "$title" and refresh balances? This cannot be undone.',
+      confirmLabel: 'Delete',
+      icon: Icons.delete_outline,
+      destructive: true,
     );
-    if (confirmed != true || !context.mounted) return;
+    if (!confirmed || !context.mounted) return;
     await ref
         .read(appControllerProvider.notifier)
         .deleteTransaction(row['id'] as String);

@@ -5,7 +5,9 @@ import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_card.dart';
+import '../../widgets/confirm_dialog.dart';
 import '../../widgets/section_header.dart';
+import '../recurring/recurring_page.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -144,17 +146,104 @@ class SettingsPage extends ConsumerWidget {
                       ref.read(appControllerProvider.notifier).syncNow(),
                 ),
               ),
+              const Divider(height: 1),
+              _SettingRow(
+                icon: Icons.backup_outlined,
+                label: 'Back up data',
+                subtitle: 'Export everything to a JSON file you can save',
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _backup(context, ref),
+              ),
+              const Divider(height: 1),
+              _SettingRow(
+                icon: Icons.restore_outlined,
+                label: 'Restore data',
+                subtitle: 'Import data from a backup file',
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _restore(context, ref),
+              ),
             ],
           ),
         ),
         const SizedBox(height: AppSpacing.xl),
+        const SectionHeader('Automation'),
+        const SizedBox(height: AppSpacing.md),
+        AppCard(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.lg,
+            vertical: AppSpacing.xs,
+          ),
+          child: _SettingRow(
+            icon: Icons.event_repeat_outlined,
+            label: 'Recurring transactions',
+            subtitle: 'Auto-create rent, salary, subscriptions and more',
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const RecurringPage()),
+            ),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.xl),
         OutlinedButton.icon(
-          onPressed: () => ref.read(appControllerProvider.notifier).logout(),
+          onPressed: () async {
+            final confirmed = await showConfirmDialog(
+              context,
+              title: 'Sign out?',
+              message:
+                  'Your local data will be cleared from this device. It stays '
+                  'safe on the server and re-syncs when you sign back in.',
+              confirmLabel: 'Sign out',
+              icon: Icons.logout,
+              destructive: true,
+            );
+            if (confirmed) {
+              await ref.read(appControllerProvider.notifier).logout();
+            }
+          },
           icon: const Icon(Icons.logout),
           label: const Text('Sign out'),
         ),
       ],
     );
+  }
+
+  Future<void> _backup(BuildContext context, WidgetRef ref) async {
+    try {
+      await ref.read(appControllerProvider.notifier).exportBackup();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Backup failed: $error')));
+    }
+  }
+
+  Future<void> _restore(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Restore from backup?',
+      message:
+          'This replaces the data on this device with the backup file. A sync '
+          'may later reconcile it with the server.',
+      confirmLabel: 'Choose file',
+      icon: Icons.restore_outlined,
+      destructive: true,
+    );
+    if (!confirmed || !context.mounted) return;
+    try {
+      final restored = await ref
+          .read(appControllerProvider.notifier)
+          .restoreBackup();
+      if (!context.mounted || !restored) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Backup restored')),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Restore failed: $error')));
+    }
   }
 }
 
@@ -164,17 +253,19 @@ class _SettingRow extends StatelessWidget {
     required this.label,
     this.subtitle,
     this.trailing,
+    this.onTap,
   });
 
   final IconData icon;
   final String label;
   final String? subtitle;
   final Widget? trailing;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
+    final row = Padding(
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
       child: Row(
         children: [
@@ -206,6 +297,12 @@ class _SettingRow extends StatelessWidget {
           ?trailing,
         ],
       ),
+    );
+    if (onTap == null) return row;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.sm),
+      child: row,
     );
   }
 }

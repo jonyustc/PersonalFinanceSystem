@@ -20,7 +20,17 @@ class PersonalFinanceApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       darkTheme: buildAppTheme(brightness: Brightness.dark),
-      themeMode: _themeMode(snapshot?.themeMode ?? 'system'),
+      themeMode: _themeMode(snapshot?.themeMode ?? 'light'),
+      builder: (context, child) {
+        // Slightly smaller, denser typography overall, and cap the system font
+        // scale so long labels (e.g. bottom-nav "Transactions") never overflow.
+        final media = MediaQuery.of(context);
+        final scaled = (media.textScaler.scale(1) * 0.94).clamp(0.85, 1.05);
+        return MediaQuery(
+          data: media.copyWith(textScaler: TextScaler.linear(scaled)),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: state.when(
         data: (snapshot) =>
             snapshot.isAuthenticated ? const HomeShell() : const LoginPage(),
@@ -44,8 +54,41 @@ class StartupLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 76,
+              height: 76,
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Icon(
+                Icons.account_balance_wallet_rounded,
+                color: scheme.primary,
+                size: 42,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Personal Finance',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 28),
+            const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

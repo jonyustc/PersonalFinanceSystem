@@ -9,6 +9,7 @@ import '../../widgets/app_card.dart';
 import '../../widgets/metric_grid.dart';
 import '../../widgets/money_text.dart';
 import '../../widgets/section_header.dart';
+import '../../widgets/skeleton.dart';
 import '../../widgets/stat_card.dart';
 import '../transactions/transaction_details_page.dart';
 import '../transactions/transaction_tile.dart';
@@ -22,7 +23,7 @@ class DashboardPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
     if (snapshot == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const DashboardSkeleton();
     }
 
     final currency = snapshot.session?.currency ?? 'BDT';
@@ -91,6 +92,10 @@ class DashboardPage extends ConsumerWidget {
               ),
             ],
           ),
+          if (summary.totalBudget > 0) ...[
+            const SizedBox(height: AppSpacing.md),
+            _BudgetProgressCard(summary: summary, currency: currency),
+          ],
           if (cards.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.xl),
             const SectionHeader(
@@ -118,6 +123,7 @@ class DashboardPage extends ConsumerWidget {
           const SizedBox(height: AppSpacing.md),
           _TodayTransactions(
             snapshot.transactions,
+            categories: snapshot.categories,
             currency: currency,
             onOpenTransactions: onOpenTransactions,
           ),
@@ -172,12 +178,21 @@ class _NetWorthHero extends StatelessWidget {
             ),
           ),
           const SizedBox(height: AppSpacing.sm),
-          MoneyText(
-            summary.netWorth,
-            currency: currency,
-            style: theme.textTheme.headlineMedium?.copyWith(
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.8,
+          SizedBox(
+            width: double.infinity,
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: summary.netWorth),
+              duration: const Duration(milliseconds: 700),
+              curve: Curves.easeOutCubic,
+              builder: (context, value, _) => MoneyText(
+                value,
+                currency: currency,
+                autoFit: true,
+                style: theme.textTheme.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.8,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
@@ -219,6 +234,88 @@ class _NetWorthHero extends StatelessWidget {
                     total: summary.liabilities,
                     currency: currency,
                   ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BudgetProgressCard extends StatelessWidget {
+  const _BudgetProgressCard({required this.summary, required this.currency});
+
+  final FinanceSummary summary;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final usagePercent = summary.budgetUsage * 100;
+    final color = AppColors.utilization(context, usagePercent);
+    final over = summary.budgetUsage > 1;
+    final remaining = summary.totalBudget - summary.totalBudgetSpent;
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.pie_chart_outline, size: 18, color: color),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  'Monthly budget',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                '${usagePercent.round()}%',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadius.pill),
+            child: LinearProgressIndicator(
+              value: summary.budgetUsage.clamp(0, 1).toDouble(),
+              minHeight: 8,
+              backgroundColor: AppColors.border(context),
+              valueColor: AlwaysStoppedAnimation(color),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Flexible(
+                child: Text(
+                  '${money(summary.totalBudgetSpent, currency: currency)} of ${money(summary.totalBudget, currency: currency)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                over
+                    ? 'Over by ${money(remaining.abs(), currency: currency)}'
+                    : '${money(remaining, currency: currency)} left',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: over ? color : scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ],
@@ -272,11 +369,15 @@ class _HeroSplit extends StatelessWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.xs),
-            MoneyText(
-              amount,
-              currency: currency,
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
+            SizedBox(
+              width: double.infinity,
+              child: MoneyText(
+                amount,
+                currency: currency,
+                autoFit: true,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
           ],
@@ -423,7 +524,6 @@ List<_BalanceDetailRow> _assetRows(
       .where(
         (account) =>
             !isCreditCardAccount(account) &&
-            !isStockBrokerAccount(account) &&
             asDouble(account['balance']) > 0,
       )
       .map(
@@ -454,7 +554,7 @@ List<_BalanceDetailRow> _liabilityRows(
       if (outstanding != 0) {
         rows.add(_BalanceDetailRow(name, outstanding, currency: accountCurrency));
       }
-    } else if (!isStockBrokerAccount(account)) {
+    } else {
       final balance = asDouble(account['balance']);
       if (balance < 0) {
         rows.add(
@@ -520,6 +620,7 @@ void _showBalanceDetails(
                       trailing: MoneyText(
                         row.amount,
                         currency: row.currency ?? currency,
+                        autoFit: true,
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                     );
@@ -551,11 +652,13 @@ void _showBalanceDetails(
 class _TodayTransactions extends StatelessWidget {
   const _TodayTransactions(
     this.transactions, {
+    required this.categories,
     required this.currency,
     this.onOpenTransactions,
   });
 
   final List<Map<String, dynamic>> transactions;
+  final List<Map<String, dynamic>> categories;
   final String currency;
   final VoidCallback? onOpenTransactions;
 
@@ -566,6 +669,9 @@ class _TodayTransactions extends StatelessWidget {
     if (recent.isEmpty) {
       return _TodayEmptyPanel(onOpenTransactions: onOpenTransactions);
     }
+    final categoryById = {
+      for (final c in categories) c['id'] as String: c,
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -575,6 +681,7 @@ class _TodayTransactions extends StatelessWidget {
             child: TransactionTile(
               row: row,
               currency: currency,
+              category: categoryById[row['category_id']],
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) =>
@@ -668,22 +775,31 @@ class EmptyPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return AppCard(
-      padding: const EdgeInsets.all(AppSpacing.xl),
+      padding: const EdgeInsets.all(AppSpacing.xxl),
       child: Column(
         children: [
-          Icon(icon, size: 34, color: scheme.primary),
-          const SizedBox(height: AppSpacing.sm),
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 36, color: scheme.primary),
+          ),
+          const SizedBox(height: AppSpacing.md),
           Text(
             title,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w700,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
             body,
             textAlign: TextAlign.center,
-            style: TextStyle(color: scheme.onSurfaceVariant),
+            style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
           ),
         ],
       ),

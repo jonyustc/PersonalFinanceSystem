@@ -10,6 +10,7 @@ import '../portfolio/portfolio_page.dart';
 import '../reports/reports_page.dart';
 import '../settings/settings_page.dart';
 import '../transactions/create_transaction_sheet.dart';
+import '../transactions/search_transactions_page.dart';
 import '../transactions/transactions_page.dart';
 
 class HomeShell extends ConsumerStatefulWidget {
@@ -47,6 +48,15 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Search transactions',
+            icon: const Icon(Icons.search),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const SearchTransactionsPage(),
+              ),
+            ),
+          ),
           if (snapshot?.pendingWrites case final pending? when pending > 0)
             Padding(
               padding: const EdgeInsets.only(right: 4),

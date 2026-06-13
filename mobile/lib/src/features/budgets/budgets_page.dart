@@ -7,6 +7,7 @@ import '../../theme/app_spacing.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/metric_grid.dart';
 import '../../widgets/section_header.dart';
+import '../../widgets/skeleton.dart';
 import '../../widgets/stat_card.dart';
 import '../dashboard/dashboard_page.dart';
 
@@ -47,7 +48,7 @@ class _BudgetsPageState extends ConsumerState<BudgetsPage> {
   Widget build(BuildContext context) {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
     if (snapshot == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const ListSkeleton();
     }
 
     final currency = snapshot.session?.currency ?? 'BDT';

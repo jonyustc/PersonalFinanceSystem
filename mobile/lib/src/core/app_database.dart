@@ -11,7 +11,7 @@ class AppDatabase {
     final path = p.join(await getDatabasesPath(), 'personal_finance.db');
     _db = await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: _create,
       onUpgrade: _upgrade,
     );
@@ -85,6 +85,7 @@ class AppDatabase {
     ''');
     await _createPortfolioTables(db);
     await _createBudgetTables(db);
+    await _createRecurringTable(db);
   }
 
   Future<void> _upgrade(Database db, int oldVersion, int newVersion) async {
@@ -131,6 +132,30 @@ class AppDatabase {
         'INTEGER NOT NULL DEFAULT 0',
       );
     }
+    if (oldVersion < 8) {
+      await _createRecurringTable(db);
+    }
+  }
+
+  Future<void> _createRecurringTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS recurring_rules (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        transfer_account_id TEXT,
+        category_id TEXT,
+        amount REAL NOT NULL DEFAULT 0,
+        merchant_name TEXT,
+        description TEXT,
+        frequency TEXT NOT NULL,
+        interval_count INTEGER NOT NULL DEFAULT 1,
+        next_run TEXT NOT NULL,
+        end_date TEXT,
+        last_run TEXT,
+        created_at TEXT NOT NULL
+      )
+    ''');
   }
 
   Future<void> _createBudgetTables(Database db) async {
@@ -217,6 +242,97 @@ class AppDatabase {
       orderBy: 'txn_date DESC',
       limit: 250,
     );
+  }
+
+  /// Wipes all locally cached data and the pending-write queue. Used on logout
+  /// so a different account never inherits the previous user's rows or a stuck
+  /// sync queue.
+  Future<void> clearAll() async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final table in const [
+        'accounts',
+        'categories',
+        'transactions',
+        'budgets',
+        'stocks',
+        'portfolio_transactions',
+        'sync_queue',
+        'meta',
+      ]) {
+        await txn.delete(table);
+      }
+    });
+  }
+
+  /// Data tables included in a backup (the pending-write queue is intentionally
+  /// excluded — a backup captures data, not in-flight sync operations).
+  static const _backupTables = [
+    'accounts',
+    'categories',
+    'transactions',
+    'budgets',
+    'stocks',
+    'portfolio_transactions',
+    'recurring_rules',
+    'meta',
+  ];
+
+  /// Serializes all local data into a plain map suitable for JSON export.
+  Future<Map<String, dynamic>> exportData() async {
+    final db = await database;
+    final tables = <String, dynamic>{};
+    for (final table in _backupTables) {
+      tables[table] = await db.query(table);
+    }
+    return {
+      'format': 'personal_finance_backup',
+      'schema_version': 7,
+      'exported_at': DateTime.now().toIso8601String(),
+      'tables': tables,
+    };
+  }
+
+  /// Replaces all local data with the contents of a previously exported backup.
+  /// Throws [FormatException] if the document is not a recognized backup.
+  Future<void> importData(Map<String, dynamic> data) async {
+    if (data['format'] != 'personal_finance_backup') {
+      throw const FormatException('Not a Personal Finance backup file');
+    }
+    final tables = (data['tables'] as Map?)?.cast<String, dynamic>() ?? {};
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final table in _backupTables) {
+        await txn.delete(table);
+        final rows = (tables[table] as List? ?? []).whereType<Map>();
+        for (final row in rows) {
+          await txn.insert(
+            table,
+            row.cast<String, Object?>(),
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+      }
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> recurringRules() async {
+    final db = await database;
+    return db.query('recurring_rules', orderBy: 'next_run ASC');
+  }
+
+  Future<void> upsertRecurringRule(Map<String, dynamic> row) async {
+    final db = await database;
+    await db.insert(
+      'recurring_rules',
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> deleteRecurringRule(String id) async {
+    final db = await database;
+    await db.delete('recurring_rules', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<int> pendingCount() async {
