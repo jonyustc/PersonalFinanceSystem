@@ -16,6 +16,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
+  bool _googleBusy = false;
   bool _obscure = true;
 
   @override
@@ -148,6 +149,34 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                           : const Icon(Icons.login),
                       label: const Text('Sign in'),
                     ),
+                    if (ref.read(googleAuthServiceProvider).isConfigured) ...[
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          const Expanded(child: Divider()),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: Text(
+                              'or',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                          const Expanded(child: Divider()),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: _googleBusy ? null : _googleSubmit,
+                        icon: _googleBusy
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.account_circle_outlined),
+                        label: const Text('Continue with Google'),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -172,6 +201,22 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       ).showSnackBar(SnackBar(content: Text('Login failed: $error')));
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _googleSubmit() async {
+    setState(() => _googleBusy = true);
+    try {
+      await ref.read(appControllerProvider.notifier).loginWithGoogle();
+    } catch (error) {
+      if (!mounted) return;
+      // The user dismissing the Google sheet is not an error worth surfacing.
+      if (error.toString().toLowerCase().contains('cancel')) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Google sign-in failed: $error')));
+    } finally {
+      if (mounted) setState(() => _googleBusy = false);
     }
   }
 }

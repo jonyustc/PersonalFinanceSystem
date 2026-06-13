@@ -79,6 +79,15 @@ class ApiClient {
     return response.data ?? {};
   }
 
+  Future<Map<String, dynamic>> loginWithGoogle(String idToken) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/auth/google',
+      data: {'id_token': idToken},
+      options: Options(extra: {'auth': false}),
+    );
+    return response.data ?? {};
+  }
+
   Future<bool> _refreshSession() {
     final existing = _refreshFuture;
     if (existing != null) return existing;

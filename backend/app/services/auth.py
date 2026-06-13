@@ -1,6 +1,10 @@
+import secrets
+
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
+from app.core.google_oauth import GoogleTokenError, verify_google_id_token
 from app.core.security import create_access_token, create_refresh_token, decode_token, get_password_hash, verify_password
 from app.repositories.user import UserRepository
 from app.schemas.auth import AuthResponse, TokenResponse
@@ -36,6 +40,45 @@ class AuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
         if not user.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is disabled")
+        return AuthResponse(
+            access_token=create_access_token(user.id),
+            refresh_token=create_refresh_token(user.id),
+            user=user,
+        )
+
+    async def login_with_google(self, id_token: str) -> AuthResponse:
+        if not settings.google_client_ids:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Google login is not configured",
+            )
+
+        try:
+            claims = await verify_google_id_token(id_token, settings.google_client_ids)
+        except GoogleTokenError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google credential") from exc
+
+        email = claims["email"].lower()
+
+        # Reuse an existing account (including legacy Supabase users) by email so
+        # all their data carries over — we never create a duplicate for an email
+        # that is already registered.
+        user = await self.users.get_by_email(email)
+        if user is None:
+            user = await self.users.create(
+                {
+                    "full_name": claims.get("name") or email.split("@")[0],
+                    "email": email,
+                    # The account is keyed to Google; store an unusable random
+                    # password so the NOT NULL column is satisfied and nobody can
+                    # log in with a password until they set one.
+                    "hashed_password": get_password_hash(secrets.token_urlsafe(48)),
+                }
+            )
+            await self.db.commit()
+        elif not user.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is disabled")
+
         return AuthResponse(
             access_token=create_access_token(user.id),
             refresh_token=create_refresh_token(user.id),

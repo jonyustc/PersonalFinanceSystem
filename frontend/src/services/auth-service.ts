@@ -14,6 +14,16 @@ export async function login(payload: LoginPayload) {
   return auth;
 }
 
+export async function loginWithGoogle(idToken: string) {
+  const auth = await apiRequest<AuthResponse>("/auth/google", {
+    method: "POST",
+    auth: false,
+    body: JSON.stringify({ id_token: idToken })
+  });
+  saveAuthSession(auth);
+  return auth;
+}
+
 export async function register(payload: RegisterPayload) {
   const auth = await apiRequest<AuthResponse>("/auth/register", {
     method: "POST",

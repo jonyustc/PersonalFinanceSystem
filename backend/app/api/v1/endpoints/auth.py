@@ -5,7 +5,7 @@ from app.api.v1.deps import get_current_user
 from app.core.rate_limit import limiter
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.auth import AuthResponse, LoginRequest, RefreshTokenRequest, RegisterRequest, TokenResponse
+from app.schemas.auth import AuthResponse, GoogleLoginRequest, LoginRequest, RefreshTokenRequest, RegisterRequest, TokenResponse
 from app.schemas.user import ChangePasswordRequest, UserResponse
 from app.services.auth import AuthService
 from app.services.user import UserService
@@ -23,6 +23,12 @@ async def register(request: Request, payload: RegisterRequest, db: AsyncSession 
 @limiter.limit("20/minute")
 async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     return await AuthService(db).login(payload.email, payload.password)
+
+
+@router.post("/google", response_model=AuthResponse)
+@limiter.limit("20/minute")
+async def google_login(request: Request, payload: GoogleLoginRequest, db: AsyncSession = Depends(get_db)):
+    return await AuthService(db).login_with_google(payload.id_token)
 
 
 @router.post("/refresh", response_model=TokenResponse)

@@ -28,6 +28,15 @@ class RefreshTokenRequest(BaseModel):
 
 
 # ===============================
+# 🔹 GOOGLE LOGIN
+# ===============================
+class GoogleLoginRequest(BaseModel):
+    # The ID token (JWT credential) returned by Google Identity Services on the
+    # web, or by the google_sign_in plugin on mobile.
+    id_token: str = Field(min_length=1)
+
+
+# ===============================
 # 🔹 AUTH RESPONSE
 # ===============================
 class AuthResponse(TokenResponse):

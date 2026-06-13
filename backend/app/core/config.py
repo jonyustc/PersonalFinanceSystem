@@ -17,7 +17,13 @@ class Settings(BaseSettings):
         default="change-me-in-production", min_length=16)
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 14
+    # Long refresh window so "keep me signed in" survives weeks of inactivity;
+    # clients silently refresh the access token whenever it expires.
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 60
+
+    # Google "Sign in with Google" OAuth client IDs accepted as the ID-token
+    # audience. Comma-separated to allow web + Android (+ iOS) clients at once.
+    GOOGLE_CLIENT_IDS: str = Field(default="")
 
     # Store as string for env parsing, convert to list in property
     BACKEND_CORS_ORIGINS: str = Field(
@@ -73,6 +79,11 @@ class Settings(BaseSettings):
                 "BACKEND_CORS_ORIGINS must contain at least one URL")
         # Remove trailing slashes for consistency
         return [origin.rstrip("/") for origin in origins]
+
+    @property
+    def google_client_ids(self) -> list[str]:
+        """Parse the accepted Google OAuth client IDs from the env string."""
+        return [cid.strip() for cid in self.GOOGLE_CLIENT_IDS.split(",") if cid.strip()]
 
 
 @lru_cache

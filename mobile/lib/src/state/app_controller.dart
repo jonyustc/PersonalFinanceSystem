@@ -7,11 +7,13 @@ import 'package:uuid/uuid.dart';
 
 import '../core/api_client.dart';
 import '../core/app_database.dart';
+import '../core/google_auth.dart';
 import '../core/session_store.dart';
 import '../core/sync_service.dart';
 
 final sessionStoreProvider = Provider((ref) => SessionStore());
 final databaseProvider = Provider((ref) => AppDatabase());
+final googleAuthServiceProvider = Provider((ref) => GoogleAuthService());
 final apiClientProvider = Provider(
   (ref) => ApiClient(
     ref.watch(sessionStoreProvider),
@@ -132,6 +134,20 @@ class AppController extends AsyncNotifier<AppSnapshot>
 
   Future<void> login(String email, String password) async {
     final auth = await _api.login(email, password);
+    await _session.saveFromAuth(auth);
+    final session = await _session.load();
+    state = AsyncData(
+      (await _readLocal(
+        session: session,
+      )).copyWith(isSyncing: true, authNotice: null),
+    );
+    _startPeriodicSync();
+    await syncNow();
+  }
+
+  Future<void> loginWithGoogle() async {
+    final idToken = await ref.read(googleAuthServiceProvider).obtainIdToken();
+    final auth = await _api.loginWithGoogle(idToken);
     await _session.saveFromAuth(auth);
     final session = await _session.load();
     state = AsyncData(

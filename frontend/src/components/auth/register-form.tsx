@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 import { register as registerUser } from "@/services/auth-service";
 
 const schema = z.object({
@@ -48,6 +49,7 @@ export function RegisterForm() {
         <UserPlus className="h-4 w-4" aria-hidden />
         {isSubmitting ? "Creating account..." : "Create account"}
       </Button>
+      <GoogleSignInButton />
     </form>
   );
 }
