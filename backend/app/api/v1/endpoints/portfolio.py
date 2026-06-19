@@ -8,13 +8,19 @@ from app.api.v1.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.stock import (
+    AnnualPerformanceResponse,
     DseDividendEstimateResponse,
     DseStockSearchResponse,
     DividendCreate,
     DividendResponse,
+    PortfolioAnalyticsResponse,
+    PortfolioCreate,
+    PortfolioResponse,
     PortfolioSummaryResponse,
     PortfolioTransactionCreate,
     PortfolioTransactionResponse,
+    PortfolioUpdate,
+    PerformanceSeriesResponse,
     StockCreate,
     StockPriceRefreshResponse,
     StockResponse,
@@ -25,6 +31,27 @@ from app.services.portfolio import PortfolioService
 
 
 router = APIRouter()
+
+
+# ----- Portfolios ----------------------------------------------------------
+@router.get("/portfolios", response_model=list[PortfolioResponse])
+async def list_portfolios(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return await PortfolioService(db).list_portfolios(current_user.id)
+
+
+@router.post("/portfolios", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)
+async def create_portfolio(payload: PortfolioCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return await PortfolioService(db).create_portfolio(current_user.id, payload)
+
+
+@router.patch("/portfolios/{portfolio_id}", response_model=PortfolioResponse)
+async def update_portfolio(portfolio_id: UUID, payload: PortfolioUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return await PortfolioService(db).update_portfolio(current_user.id, portfolio_id, payload)
+
+
+@router.delete("/portfolios/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_portfolio(portfolio_id: UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    await PortfolioService(db).delete_portfolio(current_user.id, portfolio_id)
 
 
 @router.get("/stocks", response_model=list[StockResponse])
@@ -90,22 +117,52 @@ async def update_stock(stock_id: UUID, payload: StockUpdate, db: AsyncSession = 
 @router.get("/summary", response_model=PortfolioSummaryResponse)
 async def summary(
     include_auto_dividends: bool = Query(default=False),
+    portfolio_id: UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     return await PortfolioService(db).summary(
         current_user.id,
         include_auto_dividends=include_auto_dividends,
+        portfolio_id=portfolio_id,
     )
+
+
+@router.get("/analytics", response_model=PortfolioAnalyticsResponse)
+async def analytics(
+    portfolio_id: UUID | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await PortfolioService(db).analytics(current_user.id, portfolio_id=portfolio_id)
+
+
+@router.get("/performance/annual", response_model=AnnualPerformanceResponse)
+async def annual_performance(
+    portfolio_id: UUID | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await PortfolioService(db).annual_performance(current_user.id, portfolio_id=portfolio_id)
+
+
+@router.get("/performance/series", response_model=PerformanceSeriesResponse)
+async def performance_series(
+    portfolio_id: UUID | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await PortfolioService(db).performance_series(current_user.id, portfolio_id=portfolio_id)
 
 
 @router.get("/transactions", response_model=list[PortfolioTransactionResponse])
 async def transactions(
     limit: int = Query(default=100, ge=1, le=1000),
+    portfolio_id: UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return await PortfolioService(db).list_transactions(current_user.id, limit)
+    return await PortfolioService(db).list_transactions(current_user.id, limit, portfolio_id)
 
 
 @router.post("/transactions", response_model=PortfolioTransactionResponse, status_code=status.HTTP_201_CREATED)

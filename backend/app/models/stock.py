@@ -30,6 +30,7 @@ class PortfolioTransaction(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "portfolio_transactions"
 
     user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    portfolio_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=True, index=True)
     stock_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("stocks.id", ondelete="RESTRICT"), nullable=True, index=True)
     broker_account_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     txn_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
@@ -46,9 +47,10 @@ class PortfolioTransaction(UUIDMixin, TimestampMixin, Base):
 
 class Holding(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "holdings"
-    __table_args__ = (UniqueConstraint("user_id", "stock_id", name="uq_user_stock_holding"),)
+    __table_args__ = (UniqueConstraint("user_id", "portfolio_id", "stock_id", name="uq_user_portfolio_stock_holding"),)
 
     user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    portfolio_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=True, index=True)
     stock_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("stocks.id", ondelete="CASCADE"), nullable=False, index=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=0, nullable=False)
     avg_buy_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
@@ -61,6 +63,7 @@ class Dividend(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "dividends"
 
     user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    portfolio_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=True, index=True)
     stock_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("stocks.id", ondelete="CASCADE"), nullable=False, index=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     payment_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)

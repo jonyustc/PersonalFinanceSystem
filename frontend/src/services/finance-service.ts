@@ -13,9 +13,15 @@ import type {
   CategoryUpdatePayload,
   DashboardResponse,
   MonthlyExpenseReport,
+  AnnualPerformanceResponse,
+  PerformanceSeriesResponse,
+  Portfolio,
+  PortfolioAnalyticsResponse,
+  PortfolioCreatePayload,
   PortfolioSummaryV2,
   PortfolioTransaction,
   PortfolioTransactionPayload,
+  PortfolioUpdatePayload,
   ReportRow,
   SimpleDashboardResponse,
   Transaction,
@@ -292,11 +298,56 @@ export const fetchCardAnalytics = (month: string) =>
    STOCK PORTFOLIO
 ========================= */
 
-export const fetchPortfolioSummary = () =>
-  apiRequest<PortfolioSummaryV2>("/portfolio/summary");
+const withPortfolio = (params: Record<string, string>, portfolioId?: string | null) => {
+  if (portfolioId) params.portfolio_id = portfolioId;
+  return new URLSearchParams(params).toString();
+};
 
-export const fetchPortfolioTransactions = (limit = 100) =>
-  apiRequest<PortfolioTransaction[]>(`/portfolio/transactions?limit=${limit}`);
+export const fetchPortfolios = () =>
+  apiRequest<Portfolio[]>("/portfolio/portfolios");
+
+export const createPortfolio = (payload: PortfolioCreatePayload) =>
+  apiRequest<Portfolio>("/portfolio/portfolios", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const updatePortfolio = (id: string, payload: PortfolioUpdatePayload) =>
+  apiRequest<Portfolio>(`/portfolio/portfolios/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
+export const deletePortfolio = (id: string) =>
+  apiRequest<void>(`/portfolio/portfolios/${id}`, { method: "DELETE" });
+
+export const fetchPortfolioSummary = (portfolioId?: string | null, includeAutoDividends = false) =>
+  apiRequest<PortfolioSummaryV2>(
+    `/portfolio/summary?${withPortfolio(
+      { include_auto_dividends: String(includeAutoDividends) },
+      portfolioId,
+    )}`,
+  );
+
+export const fetchPortfolioAnalytics = (portfolioId?: string | null) =>
+  apiRequest<PortfolioAnalyticsResponse>(
+    `/portfolio/analytics?${withPortfolio({}, portfolioId)}`,
+  );
+
+export const fetchAnnualPerformance = (portfolioId?: string | null) =>
+  apiRequest<AnnualPerformanceResponse>(
+    `/portfolio/performance/annual?${withPortfolio({}, portfolioId)}`,
+  );
+
+export const fetchPerformanceSeries = (portfolioId?: string | null) =>
+  apiRequest<PerformanceSeriesResponse>(
+    `/portfolio/performance/series?${withPortfolio({}, portfolioId)}`,
+  );
+
+export const fetchPortfolioTransactions = (limit = 100, portfolioId?: string | null) =>
+  apiRequest<PortfolioTransaction[]>(
+    `/portfolio/transactions?${withPortfolio({ limit: String(limit) }, portfolioId)}`,
+  );
 
 export const createPortfolioTransaction = (payload: PortfolioTransactionPayload) =>
   apiRequest<PortfolioTransaction>("/portfolio/transactions", {

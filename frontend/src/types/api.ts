@@ -391,6 +391,7 @@ export type Stock = {
 
 export type PortfolioTransaction = {
   id: string;
+  portfolio_id?: string | null;
   stock_id?: string | null;
   broker_account_id?: string | null;
   txn_type: PortfolioTxnType;
@@ -405,6 +406,7 @@ export type PortfolioTransaction = {
 };
 
 export type PortfolioTransactionPayload = {
+  portfolio_id?: string | null;
   stock_id?: string | null;
   stock?: {
     symbol: string;
@@ -422,6 +424,29 @@ export type PortfolioTransactionPayload = {
   notes?: string | null;
 };
 
+export type PortfolioKind = "long_term_sip" | "mid_term_trading" | "general";
+
+export type Portfolio = {
+  id: string;
+  name: string;
+  kind: PortfolioKind;
+  description?: string | null;
+  is_default: boolean;
+  broker_account_id?: string | null;
+};
+
+export type PortfolioCreatePayload = {
+  name: string;
+  kind: PortfolioKind;
+  description?: string | null;
+};
+
+export type PortfolioUpdatePayload = {
+  name?: string;
+  kind?: PortfolioKind;
+  description?: string | null;
+};
+
 export type PortfolioHolding = {
   stock: Stock;
   quantity: string;
@@ -433,6 +458,80 @@ export type PortfolioHolding = {
   realized_profit_loss: string;
   dividend_income: string;
   total_profit_loss: string;
+  // Cost-basis architecture + advanced investor analytics
+  broker_cost_basis: string;
+  market_price: string;
+  effective_cost_basis: string;
+  net_capital_invested: string;
+  capital_recovery_percent: string;
+  wealth_multiple: string;
+  total_return: string;
+  portfolio_id?: string | null;
+};
+
+export type AnnualPerformanceRow = {
+  year: number;
+  beginning_value: string;
+  new_investment: string;
+  realized_gain: string;
+  dividend_income: string;
+  unrealized_gain: string;
+  ending_value: string;
+  total_return: string;
+  annual_return_percent: string;
+};
+
+export type AnnualPerformanceResponse = {
+  portfolio_id?: string | null;
+  rows: AnnualPerformanceRow[];
+};
+
+export type PerformanceSeriesPoint = {
+  period: string;
+  portfolio_value: string;
+  cumulative_return: string;
+};
+
+export type ReturnCompositionRow = { label: string; value: string };
+export type AnnualReturnPoint = { year: number; annual_return_percent: string };
+
+export type PerformanceSeriesResponse = {
+  portfolio_id?: string | null;
+  growth: PerformanceSeriesPoint[];
+  return_composition: ReturnCompositionRow[];
+  annual_return: AnnualReturnPoint[];
+};
+
+export type StockXirrRow = {
+  stock_id: string;
+  symbol: string;
+  name: string;
+  xirr_percent: string | null;
+};
+
+export type TradeStat = {
+  symbol: string;
+  name: string;
+  profit: string;
+  return_percent: string | null;
+};
+
+export type PortfolioAnalyticsResponse = {
+  portfolio_id?: string | null;
+  portfolio_xirr_percent: string | null;
+  cagr_percent: string;
+  stock_xirr: StockXirrRow[];
+  win_rate_percent: string;
+  profit_factor: string | null;
+  average_gain_percent: string;
+  average_loss_percent: string;
+  best_trade: TradeStat | null;
+  worst_trade: TradeStat | null;
+  average_holding_period_days: string;
+  portfolio_turnover_ratio: string;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
 };
 
 export type PortfolioDividendReportRow = {
@@ -459,6 +558,19 @@ export type PortfolioSummaryV2 = {
   total_realized_profit: string;
   overall_profit_loss: string;
   return_percent: string;
+  cagr_percent?: string;
+  // Portfolio Dashboard (default view) + advanced investor analytics
+  portfolio_id?: string | null;
+  portfolio_name?: string | null;
+  total_investment?: string;
+  total_dividend_income?: string;
+  total_unrealized_gain?: string;
+  total_return?: string;
+  roi_percent?: string;
+  net_capital_invested?: string;
+  capital_recovery_percent?: string;
+  wealth_multiple?: string;
+  total_withdrawals?: string;
   broker_accounts: { id: string; name: string; balance: string; currency: string }[];
   holdings: PortfolioHolding[];
   dividend_report: PortfolioDividendReportRow[];

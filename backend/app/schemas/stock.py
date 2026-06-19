@@ -67,6 +67,7 @@ class DseDividendEstimateResponse(BaseModel):
 
 
 class PortfolioTransactionCreate(BaseModel):
+    portfolio_id: UUID | None = None
     stock_id: UUID | None = None
     stock: StockCreate | None = None
     broker_account_id: UUID | None = None
@@ -114,6 +115,7 @@ class PortfolioTransactionCreate(BaseModel):
 
 class PortfolioTransactionResponse(BaseModel):
     id: UUID
+    portfolio_id: UUID | None = None
     stock_id: UUID | None
     broker_account_id: UUID | None
     txn_type: str
@@ -139,6 +141,7 @@ class DividendCreate(BaseModel):
     record_date: date | None = None
     notes: str | None = Field(default=None, max_length=255)
     broker_account_id: UUID | None = None
+    portfolio_id: UUID | None = None
 
 
 class DividendResponse(BaseModel):
@@ -165,6 +168,15 @@ class HoldingResponse(BaseModel):
     realized_profit_loss: Decimal
     dividend_income: Decimal
     total_profit_loss: Decimal
+    # --- Cost-basis architecture + advanced investor analytics (additive) ---
+    broker_cost_basis: Decimal = Decimal("0")
+    market_price: Decimal = Decimal("0")
+    effective_cost_basis: Decimal = Decimal("0")
+    net_capital_invested: Decimal = Decimal("0")
+    capital_recovery_percent: Decimal = Decimal("0")
+    wealth_multiple: Decimal = Decimal("0")
+    total_return: Decimal = Decimal("0")
+    portfolio_id: UUID | None = None
 
 
 class DividendReportRow(BaseModel):
@@ -204,3 +216,114 @@ class PortfolioSummaryResponse(BaseModel):
     holdings: list[HoldingResponse]
     dividend_report: list[DividendReportRow]
     auto_dividend_report: list[DividendReportRow] = Field(default_factory=list)
+    # --- Portfolio Dashboard (default view) per spec; additive fields ---
+    portfolio_id: UUID | None = None
+    portfolio_name: str | None = None
+    total_investment: Decimal = Decimal("0")  # Σ(buy qty × buy price + charges)
+    total_dividend_income: Decimal = Decimal("0")
+    total_unrealized_gain: Decimal = Decimal("0")
+    total_return: Decimal = Decimal("0")  # realized + dividend + unrealized
+    roi_percent: Decimal = Decimal("0")
+    # --- Advanced Investor Analytics (revealed behind a toggle) ---
+    net_capital_invested: Decimal = Decimal("0")
+    capital_recovery_percent: Decimal = Decimal("0")
+    wealth_multiple: Decimal = Decimal("0")
+    total_withdrawals: Decimal = Decimal("0")
+
+
+class PortfolioCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    kind: Literal["long_term_sip", "mid_term_trading", "general"] = "general"
+    description: str | None = Field(default=None, max_length=255)
+
+
+class PortfolioUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    kind: Literal["long_term_sip", "mid_term_trading", "general"] | None = None
+    description: str | None = Field(default=None, max_length=255)
+
+
+class PortfolioResponse(BaseModel):
+    id: UUID
+    name: str
+    kind: str
+    description: str | None = None
+    is_default: bool
+    broker_account_id: UUID | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class AnnualPerformanceRow(BaseModel):
+    year: int
+    beginning_value: Decimal
+    new_investment: Decimal
+    realized_gain: Decimal
+    dividend_income: Decimal
+    unrealized_gain: Decimal
+    ending_value: Decimal
+    total_return: Decimal
+    annual_return_percent: Decimal
+
+
+class AnnualPerformanceResponse(BaseModel):
+    portfolio_id: UUID | None = None
+    rows: list[AnnualPerformanceRow] = Field(default_factory=list)
+
+
+class PerformanceSeriesPoint(BaseModel):
+    period: str  # YYYY-MM
+    portfolio_value: Decimal
+    cumulative_return: Decimal
+
+
+class ReturnCompositionRow(BaseModel):
+    label: str  # Realized Gain | Unrealized Gain | Dividend Income
+    value: Decimal
+
+
+class AnnualReturnPoint(BaseModel):
+    year: int
+    annual_return_percent: Decimal
+
+
+class PerformanceSeriesResponse(BaseModel):
+    portfolio_id: UUID | None = None
+    growth: list[PerformanceSeriesPoint] = Field(default_factory=list)
+    return_composition: list[ReturnCompositionRow] = Field(default_factory=list)
+    annual_return: list[AnnualReturnPoint] = Field(default_factory=list)
+
+
+class StockXirrRow(BaseModel):
+    stock_id: UUID
+    symbol: str
+    name: str
+    xirr_percent: Decimal | None = None
+
+
+class TradeStat(BaseModel):
+    symbol: str
+    name: str
+    profit: Decimal
+    return_percent: Decimal | None = None
+
+
+class PortfolioAnalyticsResponse(BaseModel):
+    portfolio_id: UUID | None = None
+    # Money-weighted & time-weighted returns
+    portfolio_xirr_percent: Decimal | None = None
+    cagr_percent: Decimal = Decimal("0")
+    stock_xirr: list[StockXirrRow] = Field(default_factory=list)
+    # Trade statistics (realized, completed sells)
+    win_rate_percent: Decimal = Decimal("0")
+    profit_factor: Decimal | None = None
+    average_gain_percent: Decimal = Decimal("0")
+    average_loss_percent: Decimal = Decimal("0")
+    best_trade: TradeStat | None = None
+    worst_trade: TradeStat | None = None
+    average_holding_period_days: Decimal = Decimal("0")
+    portfolio_turnover_ratio: Decimal = Decimal("0")
+    total_trades: int = 0
+    winning_trades: int = 0
+    losing_trades: int = 0
