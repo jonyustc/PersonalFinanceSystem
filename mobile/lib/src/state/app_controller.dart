@@ -44,6 +44,8 @@ class AppSnapshot {
     required this.stocks,
     required this.portfolioTransactions,
     required this.portfolioSummary,
+    required this.portfolios,
+    required this.portfolioAdvanced,
     required this.dashboardSummary,
     required this.isSyncing,
     required this.pendingWrites,
@@ -61,6 +63,8 @@ class AppSnapshot {
   final List<Map<String, dynamic>> stocks;
   final List<Map<String, dynamic>> portfolioTransactions;
   final Map<String, dynamic>? portfolioSummary;
+  final List<Map<String, dynamic>> portfolios;
+  final bool portfolioAdvanced;
   final Map<String, dynamic>? dashboardSummary;
   final bool isSyncing;
   final int pendingWrites;
@@ -81,6 +85,8 @@ class AppSnapshot {
     List<Map<String, dynamic>>? stocks,
     List<Map<String, dynamic>>? portfolioTransactions,
     Map<String, dynamic>? portfolioSummary,
+    List<Map<String, dynamic>>? portfolios,
+    bool? portfolioAdvanced,
     Map<String, dynamic>? dashboardSummary,
     bool? isSyncing,
     int? pendingWrites,
@@ -99,6 +105,8 @@ class AppSnapshot {
       portfolioTransactions:
           portfolioTransactions ?? this.portfolioTransactions,
       portfolioSummary: portfolioSummary ?? this.portfolioSummary,
+      portfolios: portfolios ?? this.portfolios,
+      portfolioAdvanced: portfolioAdvanced ?? this.portfolioAdvanced,
       dashboardSummary: dashboardSummary ?? this.dashboardSummary,
       isSyncing: isSyncing ?? this.isSyncing,
       pendingWrites: pendingWrites ?? this.pendingWrites,
@@ -593,6 +601,51 @@ class AppController extends AsyncNotifier<AppSnapshot>
     state = AsyncData(await _readLocal(session: current?.session));
   }
 
+  /// Persists the "Advanced Investor Analytics" preference.
+  Future<void> setPortfolioAdvanced(bool value) async {
+    await _db.saveMetaJson('portfolio_advanced', {'value': value});
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  // Per-portfolio analytics: fetch live, cache, and fall back to cache offline.
+  Future<Map<String, dynamic>> loadPortfolioSummaryFor(String? portfolioId) =>
+      _fetchPortfolioMap(
+        () => _api.getPortfolioSummary(portfolioId: portfolioId),
+        'portfolio_summary_${portfolioId ?? 'all'}',
+      );
+
+  Future<Map<String, dynamic>> loadPortfolioAnalytics(String? portfolioId) =>
+      _fetchPortfolioMap(
+        () => _api.getPortfolioAnalytics(portfolioId: portfolioId),
+        'portfolio_analytics_${portfolioId ?? 'all'}',
+      );
+
+  Future<Map<String, dynamic>> loadPortfolioAnnual(String? portfolioId) =>
+      _fetchPortfolioMap(
+        () => _api.getPortfolioAnnualPerformance(portfolioId: portfolioId),
+        'portfolio_annual_${portfolioId ?? 'all'}',
+      );
+
+  Future<Map<String, dynamic>> loadPortfolioSeries(String? portfolioId) =>
+      _fetchPortfolioMap(
+        () => _api.getPortfolioPerformanceSeries(portfolioId: portfolioId),
+        'portfolio_series_${portfolioId ?? 'all'}',
+      );
+
+  Future<Map<String, dynamic>> _fetchPortfolioMap(
+    Future<Map<String, dynamic>> Function() fetch,
+    String cacheKey,
+  ) async {
+    try {
+      final data = await fetch();
+      await _db.saveMetaJson(cacheKey, data);
+      return data;
+    } catch (_) {
+      return (await _db.metaJson(cacheKey)) ?? const <String, dynamic>{};
+    }
+  }
+
   Future<void> updateStockPrice({
     required String id,
     required double lastPrice,
@@ -897,6 +950,9 @@ class AppController extends AsyncNotifier<AppSnapshot>
       stocks: await _db.stocks(),
       portfolioTransactions: await _db.portfolioTransactions(),
       portfolioSummary: await _db.portfolioSummary(),
+      portfolios: await _db.portfolios(),
+      portfolioAdvanced:
+          (await _db.metaJson('portfolio_advanced'))?['value'] == true,
       dashboardSummary: await _db.dashboardSummary(),
       isSyncing: false,
       pendingWrites: await _db.pendingCount(),

@@ -161,15 +161,59 @@ FinanceSummary buildFinanceSummary({
   final categoryById = {for (final row in categories) row['id'] as String: row};
   final accountById = {for (final row in accounts) row['id'] as String: row};
 
+  // Compute the stock portfolio first: when a portfolio exists, broker-account
+  // balances are EXCLUDED from cash assets (their value is represented by the
+  // portfolio figure). Otherwise the same money is counted twice — once as
+  // broker cash and again inside the portfolio — roughly doubling total assets.
+  final holdings = buildPortfolioHoldings(stocks, portfolioTransactions);
+  final localPortfolioValue = holdings.fold<double>(
+    0,
+    (sum, row) => sum + row.marketValue,
+  );
+  final localPortfolioCost = holdings.fold<double>(
+    0,
+    (sum, row) => sum + row.cost,
+  );
+  // Use total_portfolio_value (equity + the portfolio's own cash). Broker
+  // account balances are excluded from cash assets below, so this is counted
+  // exactly once.
+  final backendPortfolioValue = asDouble(
+    portfolioSummary?['total_portfolio_value'] ??
+        portfolioSummary?['current_equity_value'],
+  );
+  final backendPortfolioCost = asDouble(
+    portfolioSummary?['active_cost_basis'] ??
+        portfolioSummary?['invested_capital'],
+  );
+  final hasBackendPortfolioValue =
+      portfolioSummary != null &&
+      (backendPortfolioValue != 0 ||
+          (portfolioSummary['holdings'] as List? ?? const []).isNotEmpty ||
+          (portfolioSummary['broker_accounts'] as List? ?? const [])
+              .isNotEmpty);
+  final portfolioValue = hasBackendPortfolioValue
+      ? backendPortfolioValue
+      : localPortfolioValue;
+  final portfolioCost = hasBackendPortfolioValue
+      ? backendPortfolioCost
+      : localPortfolioCost;
+  final backendPortfolioGain = asDouble(
+    portfolioSummary?['overall_profit_loss'] ??
+        portfolioSummary?['unrealized_gain_loss'],
+  );
+  final portfolioGain = hasBackendPortfolioValue
+      ? backendPortfolioGain
+      : portfolioValue - portfolioCost;
+  final hasPortfolio = hasBackendPortfolioValue || holdings.isNotEmpty;
+
   // Mirror the backend AccountService.summary conventions: assets count only
-  // positive non-card, non-broker balances; overdrawn balances become
-  // liabilities; credit-card debt lives in `current_outstanding`, not
-  // `balance` (cards keep balance == 0).
-  // Count brokerage (broker) cash as a regular cash asset. The stock holdings
-  // are added separately as equity below, so broker cash is counted exactly
-  // once — previously it could be counted both here AND inside the portfolio
-  // total, inflating assets.
-  final cashAccounts = accounts.where((row) => !isCreditCardAccount(row));
+  // positive non-card balances; overdrawn balances become liabilities;
+  // credit-card debt lives in `current_outstanding`, not `balance`.
+  final cashAccounts = accounts.where(
+    (row) =>
+        !isCreditCardAccount(row) &&
+        !(hasPortfolio && isStockBrokerAccount(row)),
+  );
   final cashAssets = cashAccounts.fold<double>(0, (sum, row) {
     final balance = asDouble(row['balance']);
     return sum + (balance > 0 ? balance : 0);
@@ -260,45 +304,6 @@ FinanceSummary buildFinanceSummary({
     (sum, row) => sum + asDouble(row['spent']),
   );
 
-  final holdings = buildPortfolioHoldings(stocks, portfolioTransactions);
-  final localPortfolioValue = holdings.fold<double>(
-    0,
-    (sum, row) => sum + row.marketValue,
-  );
-  final localPortfolioCost = holdings.fold<double>(
-    0,
-    (sum, row) => sum + row.cost,
-  );
-  // The "stock portfolio" figure is the market value of holdings only
-  // (current_equity_value), NOT total_portfolio_value — the latter bundles
-  // uninvested broker cash and would roughly double the displayed value. That
-  // cash is already counted as a cash asset above.
-  final backendPortfolioValue = asDouble(
-    portfolioSummary?['current_equity_value'],
-  );
-  final backendPortfolioCost = asDouble(
-    portfolioSummary?['active_cost_basis'] ??
-        portfolioSummary?['invested_capital'],
-  );
-  final hasBackendPortfolioValue =
-      portfolioSummary != null &&
-      (backendPortfolioValue != 0 ||
-          (portfolioSummary['holdings'] as List? ?? const []).isNotEmpty ||
-          (portfolioSummary['broker_accounts'] as List? ?? const [])
-              .isNotEmpty);
-  final portfolioValue = hasBackendPortfolioValue
-      ? backendPortfolioValue
-      : localPortfolioValue;
-  final portfolioCost = hasBackendPortfolioValue
-      ? backendPortfolioCost
-      : localPortfolioCost;
-  final backendPortfolioGain = asDouble(
-    portfolioSummary?['overall_profit_loss'] ??
-        portfolioSummary?['unrealized_gain_loss'],
-  );
-  final portfolioGain = hasBackendPortfolioValue
-      ? backendPortfolioGain
-      : portfolioValue - portfolioCost;
   final assets = cashAssets + portfolioValue;
   final liabilities = cardDebt + overdrawn;
 

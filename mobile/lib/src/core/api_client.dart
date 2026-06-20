@@ -310,16 +310,71 @@ class ApiClient {
 
   Future<List<Map<String, dynamic>>> getPortfolioTransactions({
     int limit = 100,
+    String? portfolioId,
   }) async {
     final response = await _dio.get<List<dynamic>>(
       '/portfolio/transactions',
-      queryParameters: {'limit': limit},
+      queryParameters: {
+        'limit': limit,
+        if (portfolioId != null && portfolioId.isNotEmpty)
+          'portfolio_id': portfolioId,
+      },
     );
     return _asMapList(response.data);
   }
 
-  Future<Map<String, dynamic>> getPortfolioSummary() async {
-    final response = await _dio.get<Map<String, dynamic>>('/portfolio/summary');
+  Future<Map<String, dynamic>> getPortfolioSummary({String? portfolioId}) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/portfolio/summary',
+      queryParameters: {
+        if (portfolioId != null && portfolioId.isNotEmpty)
+          'portfolio_id': portfolioId,
+      },
+    );
+    return response.data ?? {};
+  }
+
+  Future<List<Map<String, dynamic>>> getPortfolios() async {
+    final response = await _dio.get<List<dynamic>>('/portfolio/portfolios');
+    return _asMapList(response.data);
+  }
+
+  Future<Map<String, dynamic>> getPortfolioAnalytics({
+    String? portfolioId,
+  }) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/portfolio/analytics',
+      queryParameters: {
+        if (portfolioId != null && portfolioId.isNotEmpty)
+          'portfolio_id': portfolioId,
+      },
+    );
+    return response.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> getPortfolioAnnualPerformance({
+    String? portfolioId,
+  }) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/portfolio/performance/annual',
+      queryParameters: {
+        if (portfolioId != null && portfolioId.isNotEmpty)
+          'portfolio_id': portfolioId,
+      },
+    );
+    return response.data ?? {};
+  }
+
+  Future<Map<String, dynamic>> getPortfolioPerformanceSeries({
+    String? portfolioId,
+  }) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/portfolio/performance/series',
+      queryParameters: {
+        if (portfolioId != null && portfolioId.isNotEmpty)
+          'portfolio_id': portfolioId,
+      },
+    );
     return response.data ?? {};
   }
 

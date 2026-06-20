@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -14,7 +15,7 @@ import '../../widgets/skeleton.dart';
 import '../../widgets/stat_card.dart';
 import '../dashboard/dashboard_page.dart';
 
-enum _PortfolioTab { dashboard, holding, trade, dividend, market }
+enum _PortfolioTab { dashboard, holding, performance, trade, dividend, market }
 
 class PortfolioPage extends ConsumerStatefulWidget {
   const PortfolioPage({super.key});
@@ -25,6 +26,21 @@ class PortfolioPage extends ConsumerStatefulWidget {
 
 class _PortfolioPageState extends ConsumerState<PortfolioPage> {
   _PortfolioTab _tab = _PortfolioTab.dashboard;
+  String? _selectedPortfolioId;
+  Map<String, dynamic>? _selectedSummary;
+
+  Future<void> _selectPortfolio(String? id) async {
+    setState(() {
+      _selectedPortfolioId = id;
+      _selectedSummary = null;
+    });
+    if (id == null) return;
+    final loaded = await ref
+        .read(appControllerProvider.notifier)
+        .loadPortfolioSummaryFor(id);
+    if (!mounted || _selectedPortfolioId != id) return;
+    setState(() => _selectedSummary = loaded);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,14 +50,25 @@ class _PortfolioPageState extends ConsumerState<PortfolioPage> {
     }
 
     final currency = snapshot.session?.currency ?? 'BDT';
-    final summary = _effectivePortfolioSummary(
+    final advanced = snapshot.portfolioAdvanced;
+    final portfolios = snapshot.portfolios;
+    final allSummary = _effectivePortfolioSummary(
       snapshot.portfolioSummary ?? const <String, dynamic>{},
       snapshot.stocks,
       snapshot.portfolioTransactions,
       snapshot.accounts,
     );
+    // When a specific portfolio is selected, prefer its live/cached summary.
+    final summary = _selectedPortfolioId == null
+        ? allSummary
+        : (_selectedSummary ?? allSummary);
     final brokerAccounts = _brokerAccounts(summary, snapshot.accounts);
     final holdings = _holdings(summary);
+    final portfolioNameById = <String, String>{
+      for (final portfolio in portfolios)
+        if (portfolio['id'] != null)
+          portfolio['id'].toString(): portfolio['name'] as String? ?? 'Portfolio',
+    };
 
     return Scaffold(
       floatingActionButton: _tab == _PortfolioTab.trade
@@ -58,6 +85,16 @@ class _PortfolioPageState extends ConsumerState<PortfolioPage> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
               sliver: SliverList.list(
                 children: [
+                  _PortfolioHeader(
+                    portfolios: portfolios,
+                    selectedPortfolioId: _selectedPortfolioId,
+                    advanced: advanced,
+                    onSelect: _selectPortfolio,
+                    onToggleAdvanced: () => ref
+                        .read(appControllerProvider.notifier)
+                        .setPortfolioAdvanced(!advanced),
+                  ),
+                  const SizedBox(height: 12),
                   _PortfolioTabs(
                     selected: _tab,
                     onChanged: (tab) => setState(() => _tab = tab),
@@ -68,16 +105,24 @@ class _PortfolioPageState extends ConsumerState<PortfolioPage> {
                       summary: summary,
                       brokerAccounts: brokerAccounts,
                       currency: currency,
+                      advanced: advanced,
                     ),
                     _PortfolioTab.holding => _HoldingView(
                       summary: summary,
                       holdings: holdings,
+                      currency: currency,
+                      advanced: advanced,
+                    ),
+                    _PortfolioTab.performance => _PerformanceView(
+                      portfolioId: _selectedPortfolioId,
+                      advanced: advanced,
                       currency: currency,
                     ),
                     _PortfolioTab.trade => _TradeView(
                       transactions: snapshot.portfolioTransactions,
                       stocks: snapshot.stocks,
                       brokerAccounts: brokerAccounts,
+                      portfolioNameById: portfolioNameById,
                       onAdd: () => _showTradeEditor(),
                       onEdit: _showTradeEditor,
                       onDelete: _confirmDeleteTrade,
@@ -127,6 +172,10 @@ class _PortfolioPageState extends ConsumerState<PortfolioPage> {
   Future<void> _showTradeEditor([Map<String, dynamic>? transaction]) async {
     final snapshot = ref.read(appControllerProvider).asData?.value;
     if (snapshot == null) return;
+    final selectedPortfolio = snapshot.portfolios.firstWhere(
+      (portfolio) => portfolio['id'] == _selectedPortfolioId,
+      orElse: () => const <String, dynamic>{},
+    );
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -138,6 +187,8 @@ class _PortfolioPageState extends ConsumerState<PortfolioPage> {
           snapshot.portfolioSummary ?? const <String, dynamic>{},
           snapshot.accounts,
         ),
+        initialBrokerAccountId:
+            selectedPortfolio['broker_account_id'] as String?,
       ),
     );
   }
@@ -172,6 +223,7 @@ class _PortfolioTabs extends StatelessWidget {
     const tabs = [
       _PortfolioTab.dashboard,
       _PortfolioTab.holding,
+      _PortfolioTab.performance,
       _PortfolioTab.trade,
       _PortfolioTab.dividend,
       _PortfolioTab.market,
@@ -215,51 +267,115 @@ class _DashboardView extends StatelessWidget {
     required this.summary,
     required this.brokerAccounts,
     required this.currency,
+    required this.advanced,
   });
 
   final Map<String, dynamic> summary;
   final List<Map<String, dynamic>> brokerAccounts;
   final String currency;
+  final bool advanced;
 
   @override
   Widget build(BuildContext context) {
-    final profitLoss = _num(summary['overall_profit_loss']);
-    final cash = _num(summary['cash_balance']);
+    final totalReturn = _num(summary['total_return']);
+    final realized = _num(summary['total_realized_profit']);
+    final unrealized = _num(
+      summary['total_unrealized_gain'] ?? summary['unrealized_gain_loss'],
+    );
+    final dividend = _num(
+      summary['total_dividend_income'] ?? summary['dividend_income'],
+    );
+    final roi = _num(summary['roi_percent']);
     return Column(
       children: [
         MetricGrid(
           children: [
             StatCard(
-              label: 'Portfolio',
-              amount: _num(summary['total_portfolio_value']),
-              currency: currency,
-              icon: Icons.trending_up,
-            ),
-            StatCard(
-              label: 'Broker cash',
-              amount: cash,
+              label: 'Total Investment',
+              amount: _num(summary['total_investment']),
               currency: currency,
               icon: Icons.account_balance_wallet_outlined,
-              amountColor: cash < 0
-                  ? AppColors.amount(context, positive: false)
-                  : null,
             ),
             StatCard(
-              label: 'Equity value',
+              label: 'Current Value',
               amount: _num(summary['current_equity_value']),
               currency: currency,
               icon: Icons.paid_outlined,
             ),
             StatCard(
-              label: 'Profit / Loss',
-              amount: profitLoss,
+              label: 'Total Return',
+              amount: totalReturn,
               currency: currency,
-              icon: Icons.monetization_on_outlined,
+              icon: Icons.trending_up,
               signed: true,
-              amountColor: AppColors.amount(context, positive: profitLoss >= 0),
+              amountColor: AppColors.amount(context, positive: totalReturn >= 0),
+            ),
+            StatCard(
+              label: 'Portfolio Value',
+              amount: _num(summary['total_portfolio_value']),
+              currency: currency,
+              icon: Icons.speed_outlined,
             ),
           ],
         ),
+        const SizedBox(height: AppSpacing.md),
+        _Panel(
+          title: 'Returns',
+          child: GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            childAspectRatio: 2.8,
+            children: [
+              _MiniMetric(
+                'Realized Gain',
+                money(realized, currency: currency),
+                danger: realized < 0,
+              ),
+              _MiniMetric(
+                'Unrealized Gain',
+                money(unrealized, currency: currency),
+                danger: unrealized < 0,
+              ),
+              _MiniMetric('Dividend Income', money(dividend, currency: currency)),
+              _MiniMetric(
+                'ROI',
+                '${roi >= 0 ? '+' : ''}${roi.toStringAsFixed(2)}%',
+                danger: roi < 0,
+              ),
+            ],
+          ),
+        ),
+        if (advanced) ...[
+          const SizedBox(height: AppSpacing.md),
+          _Panel(
+            title: 'Advanced Investor Analytics',
+            child: GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              childAspectRatio: 2.8,
+              children: [
+                _MiniMetric(
+                  'Net Capital Invested',
+                  money(_num(summary['net_capital_invested']), currency: currency),
+                ),
+                _MiniMetric(
+                  'Capital Recovery',
+                  '${_num(summary['capital_recovery_percent']).toStringAsFixed(1)}%',
+                ),
+                _MiniMetric(
+                  'Wealth Multiple',
+                  '${_num(summary['wealth_multiple']).toStringAsFixed(2)}×',
+                ),
+                _MiniMetric(
+                  'Withdrawals',
+                  money(_num(summary['total_withdrawals']), currency: currency),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: AppSpacing.lg),
         _Panel(
           title: 'Portfolio Snapshot',
@@ -278,12 +394,8 @@ class _DashboardView extends StatelessWidget {
                 money(_num(summary['active_cost_basis']), currency: currency),
               ),
               _MiniMetric(
-                'Dividend',
-                money(_num(summary['dividend_income']), currency: currency),
-              ),
-              _MiniMetric(
-                'Return',
-                '${_num(summary['return_percent']).toStringAsFixed(1)}%',
+                'Cash',
+                money(_num(summary['cash_balance']), currency: currency),
               ),
               _MiniMetric(
                 'CAGR',
@@ -319,11 +431,13 @@ class _HoldingView extends StatelessWidget {
     required this.summary,
     required this.holdings,
     required this.currency,
+    required this.advanced,
   });
 
   final Map<String, dynamic> summary;
   final List<Map<String, dynamic>> holdings;
   final String currency;
+  final bool advanced;
 
   @override
   Widget build(BuildContext context) {
@@ -362,21 +476,27 @@ class _HoldingView extends StatelessWidget {
             final weightPercent = weight * 100;
             final unrealized = _num(holding['unrealized_profit_loss']);
             final quantity = _num(holding['quantity']);
-            final invested = _num(holding['invested_amount']);
-            final avgPrice = _num(holding['avg_buy_price']);
+            final realized = _num(holding['realized_profit_loss']);
+            final totalReturn = _num(
+              holding['total_return'] ?? holding['total_profit_loss'],
+            );
+            final brokerCost = _num(
+              holding['broker_cost_basis'] ?? holding['avg_buy_price'],
+            );
+            final marketPrice = _num(
+              holding['market_price'] ?? holding['stock']?['last_price'],
+            );
+            final stockCurrency = stock['currency'] as String? ?? currency;
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: _Panel(
                 title: stock['name'] as String? ?? 'Stock',
-                trailing: money(
-                  marketValue,
-                  currency: stock['currency'] as String? ?? currency,
-                ),
+                trailing: money(marketValue, currency: stockCurrency),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${quantity.toStringAsFixed(4)} shares at avg ${money(avgPrice, currency: stock['currency'] as String? ?? currency)}',
+                      '${quantity.toStringAsFixed(4)} shares · Broker cost ${money(brokerCost, currency: stockCurrency)}',
                     ),
                     const SizedBox(height: 10),
                     Row(
@@ -401,8 +521,8 @@ class _HoldingView extends StatelessWidget {
                       childAspectRatio: 2.6,
                       children: [
                         _MiniMetric(
-                          'Cost',
-                          money(invested, currency: currency),
+                          'Market Price',
+                          money(marketPrice, currency: stockCurrency),
                         ),
                         _MiniMetric(
                           'Unrealized',
@@ -412,6 +532,12 @@ class _HoldingView extends StatelessWidget {
                         _MiniMetric(
                           'Gain %',
                           '${_num(holding['unrealized_percent']).toStringAsFixed(2)}%',
+                          danger: unrealized < 0,
+                        ),
+                        _MiniMetric(
+                          'Realized',
+                          money(realized, currency: currency),
+                          danger: realized < 0,
                         ),
                         _MiniMetric(
                           'Dividend',
@@ -420,8 +546,46 @@ class _HoldingView extends StatelessWidget {
                             currency: currency,
                           ),
                         ),
+                        _MiniMetric(
+                          'Total Return',
+                          money(totalReturn, currency: currency),
+                          danger: totalReturn < 0,
+                        ),
                       ],
                     ),
+                    if (advanced) ...[
+                      const SizedBox(height: 8),
+                      GridView.count(
+                        crossAxisCount: 2,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        childAspectRatio: 2.6,
+                        children: [
+                          _MiniMetric(
+                            'Effective Cost',
+                            money(
+                              _num(holding['effective_cost_basis']),
+                              currency: stockCurrency,
+                            ),
+                          ),
+                          _MiniMetric(
+                            'Net Capital',
+                            money(
+                              _num(holding['net_capital_invested']),
+                              currency: currency,
+                            ),
+                          ),
+                          _MiniMetric(
+                            'Capital Recovery',
+                            '${_num(holding['capital_recovery_percent']).toStringAsFixed(1)}%',
+                          ),
+                          _MiniMetric(
+                            'Wealth Multiple',
+                            '${_num(holding['wealth_multiple']).toStringAsFixed(2)}×',
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -437,6 +601,7 @@ class _TradeView extends StatelessWidget {
     required this.transactions,
     required this.stocks,
     required this.brokerAccounts,
+    required this.portfolioNameById,
     required this.onAdd,
     required this.onEdit,
     required this.onDelete,
@@ -445,6 +610,7 @@ class _TradeView extends StatelessWidget {
   final List<Map<String, dynamic>> transactions;
   final List<Map<String, dynamic>> stocks;
   final List<Map<String, dynamic>> brokerAccounts;
+  final Map<String, String> portfolioNameById;
   final VoidCallback onAdd;
   final ValueChanged<Map<String, dynamic>> onEdit;
   final ValueChanged<Map<String, dynamic>> onDelete;
@@ -468,6 +634,12 @@ class _TradeView extends StatelessWidget {
                   children: transactions.map((transaction) {
                     final cashFlow = _num(transaction['cash_flow']);
                     final stock = _stockFromTransaction(transaction);
+                    final portfolioId = transaction['portfolio_id']?.toString();
+                    final portfolioName =
+                        (portfolioId != null
+                            ? portfolioNameById[portfolioId]
+                            : null) ??
+                        'Unassigned';
                     final positive = cashFlow >= 0;
                     final accent = AppColors.amount(
                       context,
@@ -522,6 +694,8 @@ class _TradeView extends StatelessWidget {
                                               ).colorScheme.onSurfaceVariant,
                                             ),
                                       ),
+                                      const SizedBox(height: 4),
+                                      _PortfolioBadge(label: portfolioName),
                                     ],
                                   ),
                                 ),
@@ -1008,12 +1182,14 @@ class _TradeEditorSheet extends ConsumerStatefulWidget {
     required this.stocks,
     required this.transactions,
     required this.brokerAccounts,
+    this.initialBrokerAccountId,
   });
 
   final Map<String, dynamic>? initial;
   final List<Map<String, dynamic>> stocks;
   final List<Map<String, dynamic>> transactions;
   final List<Map<String, dynamic>> brokerAccounts;
+  final String? initialBrokerAccountId;
 
   @override
   ConsumerState<_TradeEditorSheet> createState() => _TradeEditorSheetState();
@@ -1061,6 +1237,9 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
           DateTime.tryParse(initial['txn_date'] as String? ?? '') ??
           DateTime.now();
       _recordDate = DateTime.tryParse(initial['record_date'] as String? ?? '');
+    } else {
+      // New trade: default the portfolio (broker account) to the selected one.
+      _brokerAccountId = widget.initialBrokerAccountId;
     }
   }
 
@@ -1134,11 +1313,13 @@ class _TradeEditorSheetState extends ConsumerState<_TradeEditorSheet> {
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: _brokerAccountId,
-                decoration: const InputDecoration(labelText: 'Broker account'),
+                decoration: const InputDecoration(
+                  labelText: 'Portfolio (broker account)',
+                ),
                 items: [
                   const DropdownMenuItem<String>(
                     value: '',
-                    child: Text('No broker account'),
+                    child: Text('My Portfolio (no broker account)'),
                   ),
                   ...widget.brokerAccounts.map(
                     (account) => DropdownMenuItem<String>(
@@ -1948,6 +2129,501 @@ class _MiniMetric extends StatelessWidget {
   }
 }
 
+class _PortfolioHeader extends StatelessWidget {
+  const _PortfolioHeader({
+    required this.portfolios,
+    required this.selectedPortfolioId,
+    required this.advanced,
+    required this.onSelect,
+    required this.onToggleAdvanced,
+  });
+
+  final List<Map<String, dynamic>> portfolios;
+  final String? selectedPortfolioId;
+  final bool advanced;
+  final ValueChanged<String?> onSelect;
+  final VoidCallback onToggleAdvanced;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                initialValue: selectedPortfolioId ?? '',
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Portfolio',
+                  isDense: true,
+                ),
+                items: [
+                  const DropdownMenuItem<String>(
+                    value: '',
+                    child: Text('All Portfolios'),
+                  ),
+                  ...portfolios.map(
+                    (portfolio) => DropdownMenuItem<String>(
+                      value: portfolio['id'] as String,
+                      child: Text(
+                        '${portfolio['name']} · ${_kindLabel(portfolio['kind'] as String?)}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                ],
+                onChanged: (value) =>
+                    onSelect(value == null || value.isEmpty ? null : value),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilterChip(
+              selected: advanced,
+              label: const Text('Advanced'),
+              avatar: const Icon(Icons.auto_awesome, size: 16),
+              onSelected: (_) => onToggleAdvanced(),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Each broker account is a portfolio — a trade joins its broker account.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PortfolioBadge extends StatelessWidget {
+  const _PortfolioBadge({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onPrimaryContainer,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _PerformanceView extends ConsumerStatefulWidget {
+  const _PerformanceView({
+    required this.portfolioId,
+    required this.advanced,
+    required this.currency,
+  });
+
+  final String? portfolioId;
+  final bool advanced;
+  final String currency;
+
+  @override
+  ConsumerState<_PerformanceView> createState() => _PerformanceViewState();
+}
+
+class _PerformanceViewState extends ConsumerState<_PerformanceView> {
+  late Future<Map<String, dynamic>> _series;
+  late Future<Map<String, dynamic>> _annual;
+  late Future<Map<String, dynamic>> _analytics;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_PerformanceView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.portfolioId != widget.portfolioId) _load();
+  }
+
+  void _load() {
+    final notifier = ref.read(appControllerProvider.notifier);
+    _series = notifier.loadPortfolioSeries(widget.portfolioId);
+    _annual = notifier.loadPortfolioAnnual(widget.portfolioId);
+    _analytics = notifier.loadPortfolioAnalytics(widget.portfolioId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FutureBuilder<Map<String, dynamic>>(
+          future: _series,
+          builder: (context, snapshot) {
+            final data = snapshot.data;
+            if (data == null) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            final growth = _rows(data['growth']);
+            final composition = _rows(data['return_composition']);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _Panel(
+                  title: 'Portfolio Growth',
+                  child: _LineChartCard(
+                    points: growth,
+                    valueKey: 'portfolio_value',
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _Panel(
+                  title: 'Total Return Growth',
+                  child: _LineChartCard(
+                    points: growth,
+                    valueKey: 'cumulative_return',
+                    color: Colors.green,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _Panel(
+                  title: 'Return Composition',
+                  child: _CompositionChart(
+                    rows: composition,
+                    currency: widget.currency,
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+            );
+          },
+        ),
+        FutureBuilder<Map<String, dynamic>>(
+          future: _annual,
+          builder: (context, snapshot) {
+            final rows = _rows(snapshot.data?['rows']);
+            return _Panel(
+              title: 'Annual Performance Report',
+              child: _AnnualTable(rows: rows, currency: widget.currency),
+            );
+          },
+        ),
+        if (widget.advanced) ...[
+          const SizedBox(height: 12),
+          FutureBuilder<Map<String, dynamic>>(
+            future: _analytics,
+            builder: (context, snapshot) {
+              final data = snapshot.data ?? const <String, dynamic>{};
+              return _Panel(
+                title: 'Advanced Investor Analytics',
+                child: _AnalyticsGrid(
+                  data: data,
+                  currency: widget.currency,
+                ),
+              );
+            },
+          ),
+        ],
+      ],
+    );
+  }
+
+  List<Map<String, dynamic>> _rows(Object? value) {
+    return (value as List? ?? [])
+        .whereType<Map>()
+        .map((row) => row.cast<String, dynamic>())
+        .toList();
+  }
+}
+
+class _LineChartCard extends StatelessWidget {
+  const _LineChartCard({
+    required this.points,
+    required this.valueKey,
+    required this.color,
+  });
+
+  final List<Map<String, dynamic>> points;
+  final String valueKey;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    if (points.length < 2) {
+      return const SizedBox(
+        height: 80,
+        child: Center(child: Text('Not enough data yet.')),
+      );
+    }
+    final spots = <FlSpot>[
+      for (var i = 0; i < points.length; i++)
+        FlSpot(i.toDouble(), _num(points[i][valueKey])),
+    ];
+    return SizedBox(
+      height: 180,
+      child: LineChart(
+        LineChartData(
+          gridData: const FlGridData(show: true, drawVerticalLine: false),
+          titlesData: const FlTitlesData(show: false),
+          borderData: FlBorderData(show: false),
+          lineBarsData: [
+            LineChartBarData(
+              spots: spots,
+              isCurved: true,
+              color: color,
+              barWidth: 2,
+              dotData: const FlDotData(show: false),
+              belowBarData: BarAreaData(
+                show: true,
+                color: color.withValues(alpha: 0.12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CompositionChart extends StatelessWidget {
+  const _CompositionChart({required this.rows, required this.currency});
+
+  final List<Map<String, dynamic>> rows;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = [Colors.indigo, Colors.green, Colors.orange];
+    final positive = rows
+        .where((row) => _num(row['value']) != 0)
+        .toList();
+    if (positive.isEmpty) {
+      return const SizedBox(
+        height: 80,
+        child: Center(child: Text('Not enough data yet.')),
+      );
+    }
+    return Row(
+      children: [
+        SizedBox(
+          height: 140,
+          width: 140,
+          child: PieChart(
+            PieChartData(
+              centerSpaceRadius: 36,
+              sectionsSpace: 2,
+              sections: [
+                for (var i = 0; i < positive.length; i++)
+                  PieChartSectionData(
+                    value: _num(positive[i]['value']).abs(),
+                    color: colors[i % colors.length],
+                    radius: 26,
+                    showTitle: false,
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < positive.length; i++)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: colors[i % colors.length],
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          positive[i]['label'] as String? ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                      Text(
+                        money(_num(positive[i]['value']), currency: currency),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AnnualTable extends StatelessWidget {
+  const _AnnualTable({required this.rows, required this.currency});
+
+  final List<Map<String, dynamic>> rows;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    if (rows.isEmpty) return const Text('No yearly activity yet.');
+    final sorted = [...rows]
+      ..sort((a, b) => _num(b['year']).compareTo(_num(a['year'])));
+    return Column(
+      children: [
+        for (final row in sorted)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      _num(row['year']).toStringAsFixed(0),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${_num(row['annual_return_percent']) >= 0 ? '+' : ''}${_num(row['annual_return_percent']).toStringAsFixed(2)}%',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.amount(
+                          context,
+                          positive: _num(row['annual_return_percent']) >= 0,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                GridView.count(
+                  crossAxisCount: 2,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  childAspectRatio: 3.2,
+                  children: [
+                    _MiniMetric(
+                      'New Invest',
+                      money(_num(row['new_investment']), currency: currency),
+                    ),
+                    _MiniMetric(
+                      'Realized',
+                      money(_num(row['realized_gain']), currency: currency),
+                    ),
+                    _MiniMetric(
+                      'Dividend',
+                      money(_num(row['dividend_income']), currency: currency),
+                    ),
+                    _MiniMetric(
+                      'Ending',
+                      money(_num(row['ending_value']), currency: currency),
+                    ),
+                  ],
+                ),
+                const Divider(height: 16),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _AnalyticsGrid extends StatelessWidget {
+  const _AnalyticsGrid({required this.data, required this.currency});
+
+  final Map<String, dynamic> data;
+  final String currency;
+
+  String _pct(Object? value) {
+    if (value == null) return '—';
+    final num = _num(value);
+    return '${num >= 0 ? '+' : ''}${num.toStringAsFixed(2)}%';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final best = (data['best_trade'] as Map?)?.cast<String, dynamic>();
+    final worst = (data['worst_trade'] as Map?)?.cast<String, dynamic>();
+    final profitFactor = data['profit_factor'];
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      childAspectRatio: 2.8,
+      children: [
+        _MiniMetric('Portfolio XIRR', _pct(data['portfolio_xirr_percent'])),
+        _MiniMetric('CAGR', _pct(data['cagr_percent'])),
+        _MiniMetric(
+          'Win Rate',
+          '${_num(data['win_rate_percent']).toStringAsFixed(1)}%',
+        ),
+        _MiniMetric(
+          'Profit Factor',
+          profitFactor == null ? '—' : _num(profitFactor).toStringAsFixed(2),
+        ),
+        _MiniMetric('Avg Gain', _pct(data['average_gain_percent'])),
+        _MiniMetric('Avg Loss', _pct(data['average_loss_percent'])),
+        _MiniMetric(
+          'Avg Holding',
+          '${_num(data['average_holding_period_days']).toStringAsFixed(0)} d',
+        ),
+        _MiniMetric(
+          'Turnover',
+          '${_num(data['portfolio_turnover_ratio']).toStringAsFixed(2)}×',
+        ),
+        _MiniMetric(
+          'Best Trade',
+          best == null
+              ? '—'
+              : '${best['symbol']} ${money(_num(best['profit']), currency: currency)}',
+        ),
+        _MiniMetric(
+          'Worst Trade',
+          worst == null
+              ? '—'
+              : '${worst['symbol']} ${money(_num(worst['profit']), currency: currency)}',
+          danger: worst != null && _num(worst['profit']) < 0,
+        ),
+        _MiniMetric('Trades', '${data['total_trades'] ?? 0}'),
+        _MiniMetric(
+          'Win / Loss',
+          '${data['winning_trades'] ?? 0} / ${data['losing_trades'] ?? 0}',
+        ),
+      ],
+    );
+  }
+}
+
 class _ListAmountRow extends StatelessWidget {
   const _ListAmountRow({required this.title, required this.amount});
 
@@ -2179,12 +2855,14 @@ Map<String, dynamic> _effectivePortfolioSummary(
   var dividendIncome = 0.0;
   var principal = 0.0;
   var cashBalance = 0.0;
+  var withdrawals = 0.0;
 
   for (final transaction in transactions.reversed) {
     final txnType = transaction['txn_type'] as String? ?? '';
     final totalAmount = _num(transaction['total_amount']);
     cashBalance += _num(transaction['cash_flow']);
     if (txnType == 'deposit') principal += totalAmount;
+    if (txnType == 'withdraw') withdrawals += totalAmount;
     if (txnType == 'income') {
       dividendIncome += totalAmount;
       continue;
@@ -2263,14 +2941,19 @@ Map<String, dynamic> _effectivePortfolioSummary(
     (sum, account) => sum + _num(account['balance']),
   );
   final fallbackCash = cashBalance == 0 ? brokerCash : cashBalance;
-  final overallProfitLoss = realized + (equityValue - activeCostBasis);
+  final unrealizedTotal = equityValue - activeCostBasis;
+  final overallProfitLoss = realized + unrealizedTotal;
+  final totalReturn = realized + dividendIncome + unrealizedTotal;
+  // Total Investment = deposited cash; fall back to cost basis when untracked.
+  final investmentBase = principal != 0 ? principal : activeCostBasis;
+  final recovered = realized + dividendIncome;
   return {
     ...backendSummary,
     'total_principal_investment': principal,
     'invested_capital': principal,
     'active_cost_basis': activeCostBasis,
     'current_equity_value': equityValue,
-    'unrealized_gain_loss': equityValue - activeCostBasis,
+    'unrealized_gain_loss': unrealizedTotal,
     'cash_balance': fallbackCash,
     'total_portfolio_value': equityValue + fallbackCash,
     'total_realized_capital_gain_loss': realized,
@@ -2279,6 +2962,20 @@ Map<String, dynamic> _effectivePortfolioSummary(
     'overall_profit_loss': overallProfitLoss,
     'return_percent': principal == 0 ? 0 : overallProfitLoss / principal * 100,
     'cagr_percent': 0,
+    // Spec dashboard + advanced fields (so offline cold-start isn't all zeros).
+    'total_investment': investmentBase,
+    'total_dividend_income': dividendIncome,
+    'total_unrealized_gain': unrealizedTotal,
+    'total_return': totalReturn,
+    'roi_percent': investmentBase == 0 ? 0 : totalReturn / investmentBase * 100,
+    'net_capital_invested': investmentBase - recovered - withdrawals,
+    'capital_recovery_percent': investmentBase == 0
+        ? 0
+        : recovered / investmentBase * 100,
+    'wealth_multiple': investmentBase == 0
+        ? 0
+        : (equityValue + withdrawals) / investmentBase,
+    'total_withdrawals': withdrawals,
     'broker_accounts': brokerAccounts,
     'holdings': holdings,
   };
@@ -2330,6 +3027,7 @@ String _tabLabel(_PortfolioTab tab) {
   return switch (tab) {
     _PortfolioTab.dashboard => 'Dash',
     _PortfolioTab.holding => 'Holding',
+    _PortfolioTab.performance => 'Perf',
     _PortfolioTab.trade => 'Trade',
     _PortfolioTab.dividend => 'Dividend',
     _PortfolioTab.market => 'Market',
@@ -2340,9 +3038,18 @@ IconData _tabIcon(_PortfolioTab tab) {
   return switch (tab) {
     _PortfolioTab.dashboard => Icons.dashboard_outlined,
     _PortfolioTab.holding => Icons.pie_chart_outline,
+    _PortfolioTab.performance => Icons.insights_outlined,
     _PortfolioTab.trade => Icons.swap_vert,
     _PortfolioTab.dividend => Icons.payments_outlined,
     _PortfolioTab.market => Icons.show_chart,
+  };
+}
+
+String _kindLabel(String? kind) {
+  return switch (kind) {
+    'long_term_sip' => 'Long-Term SIP',
+    'mid_term_trading' => 'Mid-Term Trading',
+    _ => 'General',
   };
 }
 

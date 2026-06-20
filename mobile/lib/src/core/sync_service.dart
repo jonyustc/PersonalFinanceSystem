@@ -53,6 +53,12 @@ class SyncService {
       // usable when this endpoint is temporarily unavailable.
     }
     try {
+      await _db.savePortfolios(await _api.getPortfolios());
+    } catch (_) {
+      // Portfolios list (broker-account portfolios) is an enhancement; keep
+      // sync usable if the endpoint is temporarily unavailable.
+    }
+    try {
       await _db.saveDashboardSummary(
         await _api.getSimpleDashboard(_monthKey(DateTime.now())),
       );

@@ -11,7 +11,7 @@ class AppDatabase {
     final path = p.join(await getDatabasesPath(), 'personal_finance.db');
     _db = await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: _create,
       onUpgrade: _upgrade,
     );
@@ -135,6 +135,9 @@ class AppDatabase {
     if (oldVersion < 8) {
       await _createRecurringTable(db);
     }
+    if (oldVersion < 9) {
+      await _addColumnSafely(db, 'portfolio_transactions', 'portfolio_id', 'TEXT');
+    }
   }
 
   Future<void> _createRecurringTable(Database db) async {
@@ -190,6 +193,7 @@ class AppDatabase {
       CREATE TABLE IF NOT EXISTS portfolio_transactions (
         id TEXT PRIMARY KEY,
         stock_id TEXT,
+        portfolio_id TEXT,
         broker_account_id TEXT,
         txn_type TEXT NOT NULL,
         quantity REAL NOT NULL DEFAULT 0,
@@ -377,6 +381,47 @@ class AppDatabase {
     await db.insert('meta', {
       'key': 'portfolio_summary',
       'value': jsonEncode(summary),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Map<String, dynamic>>> portfolios() async {
+    final decoded = await metaJsonList('portfolios');
+    return decoded;
+  }
+
+  Future<void> savePortfolios(List<Map<String, dynamic>> rows) async {
+    await saveMetaJson('portfolios', rows);
+  }
+
+  /// Reads a JSON value cached in the meta table. Returns a map, or null.
+  Future<Map<String, dynamic>?> metaJson(String key) async {
+    final db = await database;
+    final rows = await db.query('meta', where: 'key = ?', whereArgs: [key]);
+    if (rows.isEmpty) return null;
+    final decoded = jsonDecode(rows.first['value'] as String);
+    if (decoded is Map) return decoded.cast<String, dynamic>();
+    return null;
+  }
+
+  Future<List<Map<String, dynamic>>> metaJsonList(String key) async {
+    final db = await database;
+    final rows = await db.query('meta', where: 'key = ?', whereArgs: [key]);
+    if (rows.isEmpty) return const [];
+    final decoded = jsonDecode(rows.first['value'] as String);
+    if (decoded is List) {
+      return decoded
+          .whereType<Map>()
+          .map((row) => row.cast<String, dynamic>())
+          .toList();
+    }
+    return const [];
+  }
+
+  Future<void> saveMetaJson(String key, Object value) async {
+    final db = await database;
+    await db.insert('meta', {
+      'key': key,
+      'value': jsonEncode(value),
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -747,6 +792,7 @@ class AppDatabase {
     return {
       'id': row['id'].toString(),
       'stock_id': row['stock_id']?.toString(),
+      'portfolio_id': row['portfolio_id']?.toString(),
       'broker_account_id': row['broker_account_id']?.toString(),
       'txn_type': row['txn_type'] ?? 'buy',
       'quantity': _num(row['quantity']),
