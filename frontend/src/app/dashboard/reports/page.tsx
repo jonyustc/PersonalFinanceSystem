@@ -1,21 +1,38 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import {
-  ArrowDownRight,
-  ArrowLeft,
-  CalendarDays,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react";
-import { useMemo, useState } from "react";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { PieChart as PieChartIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { ExpenseDrilldownDrawer } from "@/components/reports/expense-drilldown-drawer";
 import {
-  ExpenseHierarchyChart,
-  type ExpenseSlice,
-} from "@/components/reports/expense-hierarchy-chart";
-import { cn, formatCurrency } from "@/lib/utils";
+  BudgetSection,
+  type BudgetSummary,
+} from "@/components/reports/budget-section";
+import {
+  CategoryBreakdown,
+  type CategoryRowDatum,
+} from "@/components/reports/category-breakdown";
+import { CategoryDonut } from "@/components/reports/category-donut";
+import { ExpenseDrilldownDrawer } from "@/components/reports/expense-drilldown-drawer";
+import { PeriodControls } from "@/components/reports/period-controls";
+import {
+  monthKeyFor,
+  periodLabel,
+  periodStartFor,
+  previousRange,
+  rangeFromStart,
+  shiftPeriodStart,
+  trendBuckets,
+  type Granularity,
+} from "@/components/reports/report-period";
+import {
+  SPEND_SOURCES,
+  SpendingSummaryCard,
+  type SpendSource,
+} from "@/components/reports/spending-summary-card";
+import { TrendChart } from "@/components/reports/trend-chart";
+import { EmptyPanel } from "@/components/ui/empty-panel";
+import { categoryVisual, CHART_COLORS } from "@/lib/category-visuals";
 import {
   fetchBudgetSummary,
   fetchCategorySpending,
@@ -23,487 +40,413 @@ import {
   fetchTransactionAnalytics,
   fetchTransactions,
 } from "@/services/finance-service";
-import type { Category, Transaction, TransactionAnalytics } from "@/types/api";
+import type { Category, TransactionAnalytics } from "@/types/api";
 
-function monthKey(date = new Date()) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+const GRANULARITY_NOUN: Record<Granularity, string> = {
+  week: "weeks",
+  month: "months",
+  year: "years",
+};
+
+function expenseChildren(category: Category): Category[] {
+  return (category.children ?? []).filter(
+    (child) => child.type?.toLowerCase() === "expense",
+  );
 }
 
-function monthRange(month: string) {
-  const [year, monthIndex] = month.split("-").map(Number);
-  const first = new Date(year, monthIndex - 1, 1);
-  const last = new Date(year, monthIndex, 0);
-  const format = (date: Date) =>
-    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  return { fromDate: format(first), toDate: format(last) };
-}
-
-function shiftMonth(month: string, offset: number) {
-  const [year, monthIndex] = month.split("-").map(Number);
-  const next = new Date(year, monthIndex - 1 + offset, 1);
-  return monthKey(next);
-}
-
-function monthLabel(month: string) {
-  const [year, monthIndex] = month.split("-").map(Number);
-  return new Date(year, monthIndex - 1, 1).toLocaleDateString("en-US", {
-    month: "long",
-    year: "numeric",
-  });
-}
-
-function findCategoryPath(
-  nodes: Category[],
-  targetId: string,
-  path: Category[] = [],
-): Category[] | null {
-  for (const node of nodes) {
-    const currentPath = [...path, node];
-    if (node.id === targetId) return currentPath;
-    if (node.children?.length) {
-      const next = findCategoryPath(node.children, targetId, currentPath);
-      if (next) return next;
-    }
-  }
-  return null;
-}
-
-function expenseCategories(categories: Category[]) {
-  return categories.filter((category) => category.type?.toLowerCase() === "expense");
-}
-
-const SPEND_SOURCE_LABELS = ["Cash", "Bank", "Card"] as const;
-type SpendSourceLabel = (typeof SPEND_SOURCE_LABELS)[number];
-
-function spendSourceAmount(
+function sourceAmount(
   rows: TransactionAnalytics["account_breakdown"] | undefined,
-  label: SpendSourceLabel,
-) {
-  const row = rows?.find((item) => item.label?.toLowerCase() === label.toLowerCase());
+  label: SpendSource,
+): number {
+  const row = rows?.find(
+    (item) => item.label?.toLowerCase() === label.toLowerCase(),
+  );
   const amount = Number(row?.amount ?? 0);
   return Number.isFinite(amount) ? amount : 0;
 }
 
-export default function ReportsPage() {
-  const [month, setMonth] = useState(monthKey());
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
-    null,
-  );
-  const [activeCategory, setActiveCategory] = useState<Category | null>(null);
-  const [activeSpendSource, setActiveSpendSource] =
-    useState<SpendSourceLabel | null>(null);
+function seriesColor(index: number, name: string): string {
+  return index < CHART_COLORS.length
+    ? CHART_COLORS[index]
+    : categoryVisual(name).color;
+}
 
-  const { fromDate, toDate } = useMemo(() => monthRange(month), [month]);
+export default function ReportsPage() {
+  const queryClient = useQueryClient();
+
+  const [granularity, setGranularity] = useState<Granularity>("month");
+  const [periodStart, setPeriodStart] = useState<Date>(() =>
+    periodStartFor("month", new Date()),
+  );
+  const [drillPath, setDrillPath] = useState<string[]>([]);
+  const [drawerCategory, setDrawerCategory] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [drawerSource, setDrawerSource] = useState<SpendSource | null>(null);
+  // Captured once per mount; only used to disable navigating into the future.
+  const [now] = useState(() => Date.now());
+
+  const range = useMemo(
+    () => rangeFromStart(granularity, periodStart),
+    [granularity, periodStart],
+  );
+  const prevRange = useMemo(
+    () => previousRange(granularity, periodStart),
+    [granularity, periodStart],
+  );
+  const buckets = useMemo(
+    () => trendBuckets(granularity, periodStart),
+    [granularity, periodStart],
+  );
+  const nextDisabled =
+    shiftPeriodStart(granularity, periodStart, 1).getTime() > now;
+
+  /* ------------------------------ queries ------------------------------ */
 
   const analyticsQuery = useQuery({
-    queryKey: ["reports-analytics", fromDate, toDate, "expense"],
+    queryKey: ["reports", "analytics", granularity, range.fromDate, range.toDate],
     queryFn: () =>
-      fetchTransactionAnalytics({ from_date: fromDate, to_date: toDate }),
+      fetchTransactionAnalytics({
+        from_date: range.fromDate,
+        to_date: range.toDate,
+      }),
+  });
+
+  const prevAnalyticsQuery = useQuery({
+    queryKey: [
+      "reports",
+      "analytics-prev",
+      granularity,
+      prevRange.fromDate,
+      prevRange.toDate,
+    ],
+    queryFn: () =>
+      fetchTransactionAnalytics({
+        from_date: prevRange.fromDate,
+        to_date: prevRange.toDate,
+      }),
   });
 
   const categoryTreeQuery = useQuery({
-    queryKey: ["category-tree"],
+    queryKey: ["reports", "category-tree"],
     queryFn: fetchCategoryTree,
   });
 
   const categorySpendingQuery = useQuery({
-    queryKey: ["category-spending", fromDate, toDate, "expense"],
+    queryKey: ["reports", "category-spending", range.fromDate, range.toDate],
     queryFn: () =>
-      fetchCategorySpending({ from_date: fromDate, to_date: toDate }),
-  });
-
-  const budgetSummaryQuery = useQuery({
-    queryKey: ["budget-summary", month],
-    queryFn: () => fetchBudgetSummary(month),
-  });
-
-  const activeTransactionsQuery = useQuery({
-    queryKey: ["drill-transactions", activeCategory?.id, fromDate, toDate],
-    enabled: Boolean(activeCategory?.id),
-    queryFn: () =>
-      fetchTransactions({
-        category_id: activeCategory?.id,
-        from_date: fromDate,
-        to_date: toDate,
-        type: "expense",
+      fetchCategorySpending({
+        from_date: range.fromDate,
+        to_date: range.toDate,
       }),
   });
 
-  const activeSpendSourceQuery = useQuery({
-    queryKey: ["source-transactions", activeSpendSource, fromDate, toDate],
-    enabled: Boolean(activeSpendSource),
+  const monthKey = monthKeyFor(periodStart);
+  const budgetQuery = useQuery({
+    queryKey: ["reports", "budget", monthKey],
+    enabled: granularity === "month",
+    queryFn: async () => (await fetchBudgetSummary(monthKey)) as BudgetSummary,
+  });
+
+  const trendQueries = useQueries({
+    queries: buckets.map((bucket) => ({
+      queryKey: ["reports", "trend", granularity, bucket.fromDate],
+      queryFn: () =>
+        fetchTransactionAnalytics({
+          from_date: bucket.fromDate,
+          to_date: bucket.toDate,
+        }),
+    })),
+  });
+
+  const drillTransactionsQuery = useQuery({
+    queryKey: [
+      "reports",
+      "drill-category",
+      drawerCategory?.id,
+      range.fromDate,
+      range.toDate,
+    ],
+    enabled: Boolean(drawerCategory),
     queryFn: () =>
       fetchTransactions({
-        account_source: activeSpendSource?.toLowerCase() as "cash" | "bank" | "card",
-        from_date: fromDate,
-        to_date: toDate,
+        category_id: drawerCategory?.id,
+        from_date: range.fromDate,
+        to_date: range.toDate,
         type: "expense",
         limit: 1000,
       }),
   });
 
-  const analytics = analyticsQuery.data as TransactionAnalytics | undefined;
-  const budgetSummary = budgetSummaryQuery.data as any;
-  const categories = expenseCategories(categoryTreeQuery.data ?? []);
-  const categorySpending = useMemo(
-    () => categorySpendingQuery.data ?? [],
-    [categorySpendingQuery.data],
-  );
+  const sourceTransactionsQuery = useQuery({
+    queryKey: [
+      "reports",
+      "drill-source",
+      drawerSource,
+      range.fromDate,
+      range.toDate,
+    ],
+    enabled: Boolean(drawerSource),
+    queryFn: () =>
+      fetchTransactions({
+        account_source: (drawerSource?.toLowerCase() ?? "cash") as
+          | "cash"
+          | "bank"
+          | "card",
+        from_date: range.fromDate,
+        to_date: range.toDate,
+        type: "expense",
+        limit: 1000,
+      }),
+  });
 
-  const directAmountByCategory = useMemo(
+  // Any transaction/budget mutation elsewhere in the app refreshes reports.
+  useEffect(() => {
+    const invalidate = () =>
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+    window.addEventListener("finance:data-mutated", invalidate);
+    return () => window.removeEventListener("finance:data-mutated", invalidate);
+  }, [queryClient]);
+
+  /* ------------------------- category roll-up -------------------------- */
+
+  const expenseTree = useMemo(
     () =>
-      new Map(
-        categorySpending
-          .filter((row) => row.id)
-          .map((row) => [row.id as string, Number(row.amount)]),
+      (categoryTreeQuery.data ?? []).filter(
+        (category) => category.type?.toLowerCase() === "expense",
       ),
-    [categorySpending],
+    [categoryTreeQuery.data],
   );
 
-  const categoryTotal = useMemo(() => {
+  const directAmountByCategory = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of categorySpendingQuery.data ?? []) {
+      if (!row.id) continue;
+      const amount = Number(row.amount);
+      if (Number.isFinite(amount)) map.set(row.id, amount);
+    }
+    return map;
+  }, [categorySpendingQuery.data]);
+
+  // Total per category including all descendants.
+  const rolledUpTotals = useMemo(() => {
     const totals = new Map<string, number>();
     const visit = (category: Category): number => {
       const own = directAmountByCategory.get(category.id) ?? 0;
-      const childTotal =
-        category.children?.reduce((sum, child) => sum + visit(child), 0) ?? 0;
+      const childTotal = expenseChildren(category).reduce(
+        (sum, child) => sum + visit(child),
+        0,
+      );
       const total = own + childTotal;
       totals.set(category.id, total);
       return total;
     };
-    categories.forEach(visit);
+    expenseTree.forEach(visit);
     return totals;
-  }, [categories, directAmountByCategory]);
+  }, [expenseTree, directAmountByCategory]);
 
-  const selectedPath = useMemo(
-    () =>
-      selectedCategoryId
-        ? (findCategoryPath(categories, selectedCategoryId) ?? [])
-        : [],
-    [categories, selectedCategoryId],
+  // Category nodes along the current drill path (empty at the top level).
+  const drillNodes = useMemo(() => {
+    const nodes: Category[] = [];
+    let level = expenseTree;
+    for (const id of drillPath) {
+      const node = level.find((category) => category.id === id);
+      if (!node) break;
+      nodes.push(node);
+      level = expenseChildren(node);
+    }
+    return nodes;
+  }, [expenseTree, drillPath]);
+
+  const levelRows = useMemo<CategoryRowDatum[]>(() => {
+    const parent = drillNodes[drillNodes.length - 1];
+    const nodes = parent ? expenseChildren(parent) : expenseTree;
+    const rows = nodes
+      .map((category) => ({
+        id: category.id,
+        name: category.name,
+        amount: rolledUpTotals.get(category.id) ?? 0,
+        hasChildren: expenseChildren(category).length > 0,
+      }))
+      .filter((row) => row.amount > 0);
+
+    // Spend recorded directly on the drilled parent (not on a subcategory).
+    if (parent) {
+      const direct = directAmountByCategory.get(parent.id) ?? 0;
+      if (direct > 0) {
+        rows.push({
+          id: parent.id,
+          name: `${parent.name} (direct)`,
+          amount: direct,
+          hasChildren: false,
+        });
+      }
+    }
+
+    return rows
+      .sort((a, b) => b.amount - a.amount)
+      .map((row, index) => ({ ...row, color: seriesColor(index, row.name) }));
+  }, [drillNodes, expenseTree, rolledUpTotals, directAmountByCategory]);
+
+  const levelTotal = useMemo(
+    () => levelRows.reduce((sum, row) => sum + row.amount, 0),
+    [levelRows],
   );
 
-  const selectedCategory = selectedPath[selectedPath.length - 1] ?? null;
-  const currentLevel = selectedCategory?.children?.length
-    ? expenseCategories(selectedCategory.children)
-    : categories;
+  /* ------------------------------ derived ------------------------------ */
 
-  const slices: ExpenseSlice[] = useMemo(
-    () =>
-      currentLevel
-        .map((category) => ({
-          id: category.id,
-          label: category.name,
-          value: categoryTotal.get(category.id) ?? 0,
-          childrenCount: expenseCategories(category.children ?? []).length,
-        }))
-        .filter((slice) => slice.value > 0)
-        .sort((a, b) => b.value - a.value),
-    [currentLevel, categoryTotal],
-  );
-
+  const analytics = analyticsQuery.data;
   const totalExpense = Number(analytics?.total_expense ?? 0);
   const totalIncome = Number(analytics?.total_income ?? 0);
-  const averageSpend = Number(analytics?.average_daily_spending ?? 0);
-  const spendSources = SPEND_SOURCE_LABELS.map((label) => ({
-    label,
-    value: spendSourceAmount(analytics?.account_breakdown, label),
-  }));
-  const selectedTotal = selectedCategory
-    ? categoryTotal.get(selectedCategory.id) ?? 0
-    : totalExpense;
-  const selectedPercent =
-    totalExpense > 0 ? Math.round((selectedTotal / totalExpense) * 100) : 0;
+  const previousSpent = prevAnalyticsQuery.data
+    ? Number(prevAnalyticsQuery.data.total_expense ?? 0)
+    : null;
 
-  function resetDrilldown() {
-    setSelectedCategoryId(null);
-    setActiveCategory(null);
-    setActiveSpendSource(null);
-  }
+  const reportedDailyAverage = Number(analytics?.average_daily_spending ?? 0);
+  const dailyAverage =
+    Number.isFinite(reportedDailyAverage) && reportedDailyAverage > 0
+      ? reportedDailyAverage
+      : range.days > 0
+        ? totalExpense / range.days
+        : 0;
 
-  function handleMonthChange(nextMonth: string) {
-    setMonth(nextMonth);
-    resetDrilldown();
-  }
-
-  function handleSliceClick(id: string) {
-    const path = findCategoryPath(categories, id);
-    if (!path) return;
-    const category = path[path.length - 1];
-    if (expenseCategories(category.children ?? []).length > 0) {
-      setSelectedCategoryId(id);
-      setActiveCategory(null);
-      setActiveSpendSource(null);
-      return;
+  const sources = useMemo(() => {
+    const map = {} as Record<SpendSource, number>;
+    for (const source of SPEND_SOURCES) {
+      map[source] = sourceAmount(analytics?.account_breakdown, source);
     }
-    setActiveCategory(category);
-    setActiveSpendSource(null);
-  }
+    return map;
+  }, [analytics?.account_breakdown]);
 
-  function handleSpendSourceClick(source: SpendSourceLabel) {
-    if (loading) return;
-    setActiveSpendSource(source);
-    setActiveCategory(null);
-  }
+  const trendData = buckets.map((bucket, index) => ({
+    key: bucket.key,
+    label: bucket.label,
+    amount: Number(trendQueries[index]?.data?.total_expense ?? 0),
+  }));
+  const trendLoading = trendQueries.some((query) => query.isLoading);
 
-  const loading =
+  const breadcrumb = drillNodes.map((node) => node.name);
+
+  const initialLoading =
     analyticsQuery.isLoading ||
     categoryTreeQuery.isLoading ||
     categorySpendingQuery.isLoading;
 
+  const hasExpenses = totalExpense > 0 || levelTotal > 0;
+
+  /* ------------------------------ handlers ----------------------------- */
+
+  const resetDrill = useCallback(() => {
+    setDrillPath([]);
+    setDrawerCategory(null);
+    setDrawerSource(null);
+  }, []);
+
+  function handleGranularityChange(next: Granularity) {
+    setGranularity(next);
+    setPeriodStart(periodStartFor(next, new Date()));
+    resetDrill();
+  }
+
+  function handleShift(offset: number) {
+    setPeriodStart((start) => shiftPeriodStart(granularity, start, offset));
+    resetDrill();
+  }
+
+  function handleRowClick(row: CategoryRowDatum) {
+    if (row.hasChildren) {
+      setDrillPath((path) => [...path, row.id]);
+      return;
+    }
+    setDrawerCategory({ id: row.id, name: row.name });
+  }
+
+  function handleBack() {
+    setDrillPath((path) => path.slice(0, -1));
+  }
+
+  /* ------------------------------- render ------------------------------ */
+
   return (
-    <div className="space-y-3 pb-8 md:space-y-4">
-      <section className="-mx-3 border-y border-line bg-surface/95 px-3 py-2 backdrop-blur sm:-mx-4 sm:px-4 md:mx-0 md:rounded-md md:border md:px-4">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-white text-muted"
-            onClick={() => handleMonthChange(shiftMonth(month, -1))}
-            title="Previous month"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className="flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink"
-            onClick={() => handleMonthChange(monthKey())}
-            title="Go to current month"
-          >
-            <CalendarDays className="h-4 w-4 shrink-0 text-brand-700" />
-            <span className="truncate">{monthLabel(month)}</span>
-          </button>
-          <button
-            type="button"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-white text-muted"
-            onClick={() => handleMonthChange(shiftMonth(month, 1))}
-            title="Next month"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </section>
-
-      <section className="rounded-md border border-line bg-white p-3 shadow-sm sm:p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase text-brand-700">
-              Expense report
-            </p>
-            <h1 className="mt-1 break-words text-xl font-semibold text-ink">
-              {selectedCategory?.name ?? "All parent categories"}
-            </h1>
-            <p className="mt-1 text-sm text-muted">
-              {selectedCategory
-                ? `${selectedPercent}% of ${monthLabel(month)} spending`
-                : "Parent categories first. Tap one to see subcategories."}
-            </p>
-          </div>
-          {selectedCategory ? (
-            <button
-              type="button"
-              onClick={() => setSelectedCategoryId(null)}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line bg-surface text-muted"
-              title="Back to parent categories"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-          ) : (
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-rose-50 text-rose-600">
-              <ArrowDownRight className="h-4 w-4" />
-            </span>
-          )}
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <ReportMetric label="Spent" value={totalExpense} loading={loading} />
-          <ReportMetric label="Income" value={totalIncome} loading={loading} />
-          <ReportMetric label="Avg/day" value={averageSpend} loading={loading} />
-        </div>
-
-        <div className="mt-3 rounded-md bg-surface p-3">
-          <p className="text-xs font-semibold uppercase text-muted">
-            Spent from
-          </p>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-            {spendSources.map((source) => (
-              <button
-                key={source.label}
-                type="button"
-                onClick={() => handleSpendSourceClick(source.label)}
-                className="min-w-0 rounded-md bg-white p-2.5 text-left transition hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-100"
-                title={`${source.label} spent history`}
-              >
-                <p className="text-xs font-medium text-muted">{source.label}</p>
-                <p className="mt-1 break-words text-sm font-semibold text-ink">
-                  {loading ? "--" : formatCurrency(source.value)}
-                </p>
-                <p className="mt-1 text-xs font-medium text-brand-700">
-                  View history
-                </p>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <ExpenseHierarchyChart
-        data={slices}
-        selectedId={selectedCategoryId ?? activeCategory?.id}
-        title={selectedCategory ? `${selectedCategory.name} subcategories` : "Parent categories"}
-        total={selectedCategory ? selectedTotal : totalExpense}
-        subtitle={
-          selectedCategory
-            ? "Tap a subcategory to view transactions."
-            : "Tap a parent category to drill down."
-        }
-        onSliceClick={handleSliceClick}
+    <div className="mx-auto max-w-2xl space-y-3 pb-8 lg:max-w-4xl">
+      <PeriodControls
+        granularity={granularity}
+        label={periodLabel(granularity, range)}
+        nextDisabled={nextDisabled}
+        onGranularityChange={handleGranularityChange}
+        onPrevious={() => handleShift(-1)}
+        onNext={() => handleShift(1)}
       />
 
-      {selectedPath.length > 0 ? (
-        <section className="rounded-md border border-line bg-white p-3 shadow-sm">
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={resetDrilldown}
-              className="rounded-full bg-surface px-3 py-1.5 text-xs font-semibold text-muted"
-            >
-              All expenses
-            </button>
-            {selectedPath.map((category) => (
-              <button
-                key={category.id}
-                type="button"
-                onClick={() => {
-                  setSelectedCategoryId(category.id);
-                  setActiveCategory(null);
-                }}
-                className={cn(
-                  "rounded-full px-3 py-1.5 text-xs font-semibold",
-                  category.id === selectedCategoryId
-                    ? "bg-brand-600 text-white"
-                    : "bg-surface text-muted",
-                )}
-              >
-                {category.name}
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <section className="rounded-md border border-line bg-white p-3 shadow-sm sm:p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-ink">Budget vs expense</p>
-            <p className="mt-1 text-xs text-muted">
-              {monthLabel(month)} plan compared with posted expenses.
-            </p>
-          </div>
-          <span
-            className={cn(
-              "w-fit max-w-full rounded-full px-3 py-1 text-xs font-semibold",
-              Number(budgetSummary?.actual_balance ?? 0) < 0
-                ? "bg-rose-50 text-rose-600"
-                : "bg-emerald-50 text-emerald-700",
-            )}
-          >
-            Balance {formatCurrency(Number(budgetSummary?.actual_balance ?? 0))}
-          </span>
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <ReportMetric
-            label="Total budget"
-            value={Number(budgetSummary?.total_budget ?? 0)}
-            loading={budgetSummaryQuery.isLoading}
+      {initialLoading ? (
+        <>
+          <div className="card h-52 animate-pulse" />
+          <div className="card h-60 animate-pulse" />
+          <div className="card h-64 animate-pulse" />
+          <div className="card h-48 animate-pulse" />
+        </>
+      ) : (
+        <>
+          <SpendingSummaryCard
+            spent={totalExpense}
+            income={totalIncome}
+            previousSpent={previousSpent}
+            dailyAverage={dailyAverage}
+            sources={sources}
+            onSourceClick={(source) => {
+              setDrawerSource(source);
+              setDrawerCategory(null);
+            }}
           />
-          <ReportMetric
-            label="Spent"
-            value={Number(budgetSummary?.total_spent ?? 0)}
-            loading={budgetSummaryQuery.isLoading}
-          />
-          <ReportMetric
-            label="Planned left"
-            value={Number(budgetSummary?.planned_balance ?? 0)}
-            loading={budgetSummaryQuery.isLoading}
-          />
-        </div>
 
-        <div className="mt-4 space-y-2">
-          {(budgetSummary?.categories ?? []).length ? (
-            budgetSummary.categories.map((item: any) => {
-              const budget = Number(item.budget ?? 0);
-              const spent = Number(item.spent ?? 0);
-              const used = budget > 0 ? Math.min((spent / budget) * 100, 100) : 0;
-              const over = spent > budget;
-              return (
-                <div key={item.category_id} className="rounded-md bg-surface p-3">
-                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                    <span className="min-w-0 break-words text-sm font-semibold text-ink">
-                      {item.category_name}
-                    </span>
-                    <span className={cn("break-words text-sm font-semibold sm:shrink-0 sm:text-right", over ? "text-rose-600" : "text-ink")}>
-                      {formatCurrency(spent)} / {formatCurrency(budget)}
-                    </span>
-                  </div>
-                  <div className="mt-2 h-2 rounded-full bg-white">
-                    <div
-                      className={cn("h-2 rounded-full", over ? "bg-rose-500" : "bg-emerald-600")}
-                      style={{ width: `${used}%` }}
-                    />
-                  </div>
-                  <p className={cn("mt-1 text-xs", over ? "text-rose-600" : "text-muted")}>
-                    Remaining {formatCurrency(budget - spent)}
-                  </p>
-                </div>
-              );
-            })
+          {hasExpenses ? (
+            <>
+              <TrendChart
+                data={trendData}
+                loading={trendLoading}
+                subtitle={`Last 6 ${GRANULARITY_NOUN[granularity]}`}
+              />
+              <CategoryDonut rows={levelRows} total={levelTotal} />
+              <CategoryBreakdown
+                rows={levelRows}
+                total={levelTotal}
+                breadcrumb={breadcrumb}
+                onRowClick={handleRowClick}
+                onBack={handleBack}
+              />
+            </>
           ) : (
-            <p className="rounded-md border border-dashed border-line p-4 text-sm text-muted">
-              No budget plan found for this month.
-            </p>
+            <EmptyPanel
+              icon={PieChartIcon}
+              title="No expense data"
+              body="Transactions you add will show up here"
+            />
           )}
-        </div>
-      </section>
+
+          {granularity === "month" ? (
+            <BudgetSection
+              summary={budgetQuery.data}
+              loading={budgetQuery.isLoading}
+            />
+          ) : null}
+        </>
+      )}
 
       <ExpenseDrilldownDrawer
-        open={Boolean(activeCategory)}
-        categoryName={activeCategory?.name ?? "Category"}
-        transactions={
-          (activeTransactionsQuery.data as { items: Transaction[] } | undefined)
-            ?.items ?? []
-        }
-        loading={activeTransactionsQuery.isFetching}
-        onClose={() => setActiveCategory(null)}
+        open={Boolean(drawerCategory)}
+        categoryName={drawerCategory?.name ?? "Category"}
+        transactions={drillTransactionsQuery.data?.items ?? []}
+        loading={drillTransactionsQuery.isFetching}
+        onClose={() => setDrawerCategory(null)}
       />
       <ExpenseDrilldownDrawer
-        open={Boolean(activeSpendSource)}
-        categoryName={`${activeSpendSource ?? "Source"} spent`}
-        transactions={
-          (activeSpendSourceQuery.data as { items: Transaction[] } | undefined)
-            ?.items ?? []
-        }
-        loading={activeSpendSourceQuery.isFetching}
-        onClose={() => setActiveSpendSource(null)}
+        open={Boolean(drawerSource)}
+        categoryName={`${drawerSource ?? "Source"} spent`}
+        transactions={sourceTransactionsQuery.data?.items ?? []}
+        loading={sourceTransactionsQuery.isFetching}
+        onClose={() => setDrawerSource(null)}
       />
-    </div>
-  );
-}
-
-function ReportMetric({
-  label,
-  value,
-  loading,
-}: {
-  label: string;
-  value: number;
-  loading: boolean;
-}) {
-  return (
-    <div className="min-w-0 rounded-md bg-surface p-2.5">
-      <p className="text-xs font-medium text-muted">{label}</p>
-      <p className="mt-1 break-words text-sm font-semibold text-ink">
-        {loading ? "--" : formatCurrency(value)}
-      </p>
     </div>
   );
 }

@@ -4,8 +4,9 @@
 
 :root {
   color-scheme: light;
-  background: #f7fafc;
-  color: #17212b;
+  background: #f6f8fb;
+  color: #0f172a;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 * {
@@ -15,10 +16,8 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background:
-    linear-gradient(180deg, rgba(213, 241, 234, 0.65), rgba(247, 250, 252, 0) 360px),
-    #f7fafc;
-  color: #17212b;
+  background: #f6f8fb;
+  color: #0f172a;
 }
 
 a {
@@ -35,6 +34,16 @@ textarea {
 
 @layer components {
   .input {
-    @apply w-full rounded-md border border-line bg-white px-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-600 focus:ring-4 focus:ring-brand-100;
+    @apply w-full rounded-lg border border-line bg-white px-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-600 focus:ring-4 focus:ring-brand-100;
+  }
+
+  /* Flat bordered card — mirrors the mobile app's AppCard (no shadow, hairline border) */
+  .card {
+    @apply rounded-2xl border border-line bg-white;
+  }
+
+  /* Money figures always use tabular numerals so columns line up */
+  .money {
+    font-variant-numeric: tabular-nums;
   }
 }

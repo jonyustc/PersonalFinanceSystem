@@ -25,16 +25,16 @@ export function GlobalTransactionCta() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
 
+  // Prefetched (not gated on `open`) so the sheet opens with data ready —
+  // logging a transaction should never wait on a spinner.
   const accountsQuery = useQuery({
     queryKey: ["accounts"],
     queryFn: fetchAccounts,
-    enabled: open,
   });
 
   const categoriesQuery = useQuery({
     queryKey: ["categories"],
     queryFn: fetchCategories,
-    enabled: open,
   });
 
   const accounts = accountsQuery.data ?? [];
@@ -60,50 +60,55 @@ export function GlobalTransactionCta() {
 
   return (
     <>
+      {/* FAB — sits above the mobile bottom nav; standard corner position on desktop */}
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-30 inline-flex h-14 w-14 items-center justify-center rounded-full bg-brand-600 text-white shadow-soft transition hover:bg-brand-700 focus:outline-none focus:ring-4 focus:ring-brand-100"
+        className="fixed bottom-[calc(5rem+var(--safe-bottom))] right-4 z-30 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-fab transition hover:bg-brand-700 active:scale-95 focus:outline-none focus:ring-4 focus:ring-brand-100 lg:bottom-6 lg:right-6"
         title="Add transaction"
       >
-        <Plus className="h-6 w-6" />
+        <Plus className="h-7 w-7" />
       </button>
 
       <AnimatePresence>
         {open ? (
           <motion.div
-            className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-sm"
+            className="fixed inset-0 z-50 bg-slate-950/40"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setOpen(false);
+            }}
           >
+            {/* Bottom sheet on mobile, right panel on desktop */}
             <motion.section
-              className="absolute bottom-0 right-0 top-0 flex w-full flex-col bg-white shadow-2xl ring-1 ring-slate-200 sm:max-w-xl"
-              initial={{ x: 520 }}
-              animate={{ x: 0 }}
-              exit={{ x: 520 }}
-              transition={{ type: "spring", stiffness: 320, damping: 30 }}
+              className="absolute inset-x-0 bottom-0 flex h-[94dvh] w-full flex-col rounded-t-3xl bg-white sm:inset-y-0 sm:left-auto sm:right-0 sm:h-full sm:max-w-xl sm:rounded-none sm:ring-1 sm:ring-line"
+              initial={{ y: 480, opacity: 0.6 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 480, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 340, damping: 32 }}
             >
-              <div className="flex items-center justify-between border-b border-line px-5 py-3">
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">Add transaction</p>
-                </div>
+              <div className="mx-auto mt-2 h-1.5 w-10 rounded-full bg-line sm:hidden" />
+              <div className="flex items-center justify-between px-5 pb-2 pt-3">
+                <p className="text-base font-bold text-ink">Add transaction</p>
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="rounded-full p-2 text-slate-500 hover:bg-slate-100"
+                  className="rounded-full p-2 text-muted hover:bg-surface"
+                  aria-label="Close"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-3 pt-3">
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 sm:px-5">
                 {accountsQuery.isLoading || categoriesQuery.isLoading ? (
                   <div className="space-y-3">
                     {Array.from({ length: 6 }).map((_, index) => (
                       <div
                         key={index}
-                        className="h-14 animate-pulse rounded-md bg-slate-100"
+                        className="h-14 animate-pulse rounded-xl bg-surface"
                       />
                     ))}
                   </div>

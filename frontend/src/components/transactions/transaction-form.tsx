@@ -1,13 +1,19 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeftRight, CalendarDays, ChevronDown, ChevronUp, Save } from "lucide-react";
+import {
+  ArrowLeftRight,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Delete,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 
-import { Button } from "@/components/ui/button";
 import { cn, formatCurrency } from "@/lib/utils";
+import { formatMoney } from "@/lib/money";
 import { fetchTransactions } from "@/services/finance-service";
 import { CategoryTreeSelect } from "./category-tree-select";
 
@@ -65,14 +71,16 @@ function toLocalDateInputValue(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function displayDate(value: string) {
+function dayLabel(value: string) {
   const [year, month, day] = value.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const date = new Date(year, month - 1, day);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = Math.round((date.getTime() - today.getTime()) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === -1) return "Yesterday";
+  if (diff === 1) return "Tomorrow";
+  return date.toLocaleDateString("en-US", { weekday: "long" });
 }
 
 const schema = z
@@ -112,6 +120,15 @@ type Props = {
   onCancel: () => void;
 };
 
+// Keypad layout mirrors the mobile app: AC / DEL / OK row, then digits with
+// operator column. "x" maps to "*" for evaluation.
+const KEYPAD_ROWS: string[][] = [
+  ["7", "8", "9", "/"],
+  ["4", "5", "6", "x"],
+  ["1", "2", "3", "-"],
+  ["0", "00", ".", "+"],
+];
+
 export function TransactionForm({
   accounts,
   categories,
@@ -124,12 +141,18 @@ export function TransactionForm({
 }: Props) {
   const [localCategories, setLocalCategories] = useState<Category[]>([]);
   const [amountExpression, setAmountExpression] = useState(String(transaction?.amount ?? ""));
-  const [calculatorOpen, setCalculatorOpen] = useState(autoFocusAmount);
+  const [keypadOpen, setKeypadOpen] = useState(autoFocusAmount);
   const [noteOpen, setNoteOpen] = useState(Boolean(transaction?.description));
   const [noteSuggestions, setNoteSuggestions] = useState<string[]>([]);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [touchDevice, setTouchDevice] = useState(false);
   const amountRef = useRef<HTMLInputElement | null>(null);
-  const calculatorRef = useRef<HTMLDivElement | null>(null);
   const lastAutoNoteRef = useRef("");
+
+  // On touch devices the custom keypad is the input method — suppress the OS keyboard.
+  useEffect(() => {
+    setTouchDevice(window.matchMedia("(pointer: coarse)").matches);
+  }, []);
 
   useEffect(() => {
     setLocalCategories(categories || []);
@@ -175,31 +198,6 @@ export function TransactionForm({
   );
 
   useEffect(() => {
-    if (autoFocusAmount && amountRef.current) {
-      amountRef.current.focus();
-      setCalculatorOpen(true);
-    }
-  }, [autoFocusAmount]);
-
-  useEffect(() => {
-    if (!calculatorOpen) return;
-
-    function handleOutsideClick(event: MouseEvent) {
-      const target = event.target as Node;
-      const insideAmountInput = amountRef.current?.contains(target);
-      const insideCalculator = calculatorRef.current?.contains(target);
-
-      if (!insideAmountInput && !insideCalculator) {
-        applyAmountExpression();
-        setCalculatorOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handleOutsideClick);
-    return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, [calculatorOpen, amountExpression]);
-
-  useEffect(() => {
     if (!transaction && activeAccounts.length && !watch("account_id")) {
       setValue("account_id", activeAccounts[0].id);
     }
@@ -208,8 +206,12 @@ export function TransactionForm({
   useEffect(() => {
     if (type !== "transfer") {
       setValue("transfer_account_id", "");
+    } else if (!transaction && !watch("transfer_account_id")) {
+      // Default transfer destination = second account, like the mobile app
+      const second = activeAccounts.find((account) => account.id !== watch("account_id"));
+      if (second) setValue("transfer_account_id", second.id);
     }
-  }, [type, setValue]);
+  }, [type, transaction, activeAccounts, setValue, watch]);
 
   const fromAccount = useMemo(
     () => activeAccounts.find((a) => a.id === fromId),
@@ -227,6 +229,20 @@ export function TransactionForm({
   const isCardSpendingTransfer = isTransfer && isFromCreditCard && !isToCreditCard;
   const isExpenseLikeTransfer = isCardPayment || isCardSpendingTransfer;
   const categoryType = isExpenseLikeTransfer ? "expense" : type;
+
+  // Smart default: first matching parent category, like the mobile app.
+  // Also re-defaults when switching type leaves a mismatched category selected.
+  useEffect(() => {
+    if (transaction || isTransfer || !localCategories.length) return;
+    const selected = localCategories.find((category) => category.id === categoryId);
+    if (selected && selected.type === categoryType) return;
+    const first = localCategories.find(
+      (category) => category.type === categoryType && !category.parent_id,
+    );
+    if (first) {
+      setValue("category_id", first.id, { shouldDirty: false });
+    }
+  }, [transaction, isTransfer, localCategories, categoryId, categoryType, setValue]);
 
   const selectedCategory = useMemo(
     () => localCategories.find((category) => category.id === categoryId),
@@ -337,6 +353,15 @@ export function TransactionForm({
 
   const amountRegistration = register("amount", { valueAsNumber: true });
 
+  function syncAmountFromExpression(expression: string) {
+    const result = evaluateAmountExpression(expression);
+    if (Number.isFinite(result) && result > 0) {
+      setValue("amount", result, { shouldDirty: true, shouldValidate: true });
+    } else if (!expression.trim()) {
+      setValue("amount", 0, { shouldDirty: true });
+    }
+  }
+
   function applyAmountExpression(nextExpression = amountExpression) {
     const result = evaluateAmountExpression(nextExpression);
     if (Number.isFinite(result) && result > 0) {
@@ -345,25 +370,27 @@ export function TransactionForm({
     }
   }
 
-  function appendCalculatorToken(token: string) {
-    const next = token === "clear" ? "" : `${amountExpression}${token}`;
-    setAmountExpression(next);
-    if (token === "clear") {
+  function pressKey(token: string) {
+    if (token === "ac") {
+      setAmountExpression("");
       setValue("amount", 0, { shouldDirty: true });
       return;
     }
-    const result = evaluateAmountExpression(next);
-    if (Number.isFinite(result) && result > 0) {
-      setValue("amount", result, { shouldDirty: true, shouldValidate: true });
+    if (token === "del") {
+      const next = amountExpression.slice(0, -1);
+      setAmountExpression(next);
+      syncAmountFromExpression(next);
+      return;
     }
-  }
-
-  function setQuickDate(daysOffset: number) {
-    const date = new Date();
-    date.setDate(date.getDate() + daysOffset);
-    setValue("txn_date", combineLocalDateTime(toLocalDateInputValue(date), dateParts.time), {
-      shouldDirty: true,
-    });
+    if (token === "ok") {
+      applyAmountExpression();
+      setKeypadOpen(false);
+      return;
+    }
+    const value = token === "x" ? "*" : token;
+    const next = `${amountExpression}${value}`;
+    setAmountExpression(next);
+    syncAmountFromExpression(next);
   }
 
   function nudgeDate(days: number) {
@@ -393,19 +420,25 @@ export function TransactionForm({
     });
   }
 
+  const amountTone =
+    type === "income" ? "text-income" : type === "expense" ? "text-expense" : "text-brand-700";
+
+  const hasOperator = /[+\-*/]/.test(amountExpression.slice(1));
+
   return (
-    <form onSubmit={handleSubmit(submit)} className="flex min-h-full flex-col gap-3 pb-16">
-      <div className="grid grid-cols-3 gap-2">
+    <form onSubmit={handleSubmit(submit)} className="flex min-h-full flex-col gap-3 pb-2">
+      {/* TYPE TABS — Flutter-style uppercase tab bar with bottom indicator */}
+      <div className="grid grid-cols-3 border-b border-line">
         {(["expense", "income", "transfer"] as const).map((option) => (
           <button
             key={option}
             type="button"
             onClick={() => setValue("type", option)}
             className={cn(
-              "rounded-md border px-3 py-2 text-sm font-semibold capitalize transition",
+              "border-b-[3px] px-2 pb-2.5 pt-1 text-[13px] font-extrabold uppercase tracking-wide transition",
               type === option
-                ? "border-brand-600 bg-brand-600 text-white"
-                : "border-line bg-white text-slate-600 hover:bg-slate-50",
+                ? "border-brand-600 text-brand-700"
+                : "border-transparent text-muted hover:text-ink",
             )}
           >
             {option}
@@ -413,136 +446,203 @@ export function TransactionForm({
         ))}
       </div>
 
-      <div className="relative rounded-md border border-slate-200 bg-slate-50 p-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium text-slate-500">Amount</span>
-          <span className="text-xs font-semibold text-muted">
-            Tap amount to {calculatorOpen ? "hide" : "calculate"}
-          </span>
-        </div>
-        <div className="mt-2 flex items-center gap-3">
-          <span className="min-w-[120px] text-2xl font-semibold text-slate-900">
-            {amountNumber ? formatCurrency(amountNumber) : "$0.00"}
-          </span>
+      {/* AMOUNT HEADER — tap to toggle the keypad */}
+      <div
+        className={cn(
+          "rounded-xl border bg-surface px-4 py-3 transition",
+          keypadOpen ? "border-brand-600" : "border-line",
+        )}
+        onClick={() => {
+          setKeypadOpen(true);
+          amountRef.current?.focus();
+        }}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium text-muted">Amount</span>
           <input
             ref={amountRef}
             type="text"
-            inputMode="decimal"
-            placeholder="1200+250"
+            inputMode={touchDevice ? "none" : "decimal"}
+            placeholder="0"
             value={amountExpression}
-            onClick={() => setCalculatorOpen((current) => !current)}
+            onFocus={() => setKeypadOpen(true)}
             onBlur={() => applyAmountExpression()}
             onChange={(event) => {
               setAmountExpression(event.target.value);
-              const result = evaluateAmountExpression(event.target.value);
-              if (Number.isFinite(result) && result > 0) {
-                setValue("amount", result, { shouldDirty: true, shouldValidate: true });
-              }
+              syncAmountFromExpression(event.target.value);
             }}
-            className="min-w-[120px] flex-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-xl font-semibold text-slate-900 outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-100"
+            className={cn(
+              "money min-w-0 flex-1 bg-transparent text-right text-4xl font-semibold outline-none placeholder:text-muted/50",
+              amountTone,
+            )}
           />
-          <input
-            className="sr-only"
-            type="number"
-            {...amountRegistration}
-            ref={amountRegistration.ref}
-          />
+          <input className="sr-only" type="number" {...amountRegistration} ref={amountRegistration.ref} />
         </div>
-        {calculatorOpen ? (
-          <div ref={calculatorRef} className="absolute left-3 right-3 top-full z-50 mt-2 grid grid-cols-4 gap-2 rounded-md border border-line bg-white p-3 shadow-2xl">
-            {["7", "8", "9", "/", "4", "5", "6", "*", "1", "2", "3", "-", "0", ".", "+", "clear"].map((token) => (
-              <button
-                key={token}
-                type="button"
-                onClick={() => appendCalculatorToken(token)}
-                className={cn(
-                  "h-10 rounded-md border border-line bg-surface text-sm font-semibold text-ink hover:bg-brand-50",
-                  token === "clear" && "col-span-4 text-red-600",
-                )}
-              >
-                {token === "clear" ? "Clear" : token}
-              </button>
-            ))}
-          </div>
+        {hasOperator && amountNumber > 0 ? (
+          <p className="money text-right text-sm font-medium text-muted">
+            = {formatMoney(amountNumber, fromAccount?.currency)}
+          </p>
         ) : null}
         {errors.amount && (
-          <p className="mt-2 text-sm text-red-600">{errors.amount.message}</p>
+          <p className="mt-1 text-right text-xs font-medium text-expense">{errors.amount.message}</p>
         )}
       </div>
 
-      {quickCategories.length > 0 && (!isTransfer || isExpenseLikeTransfer) ? (
-        <div className="space-y-2">
-          <p className="text-xs font-semibold text-slate-900">
-            Quick categories
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {quickCategories.map((category) => (
-              <button
-                key={category.id}
-                type="button"
-                onClick={() => setValue("category_id", category.id)}
-                className={cn(
-                  "rounded-full border px-3 py-1.5 text-xs transition",
-                  categoryId === category.id
-                    ? "border-brand-600 bg-brand-50 text-brand-700"
-                    : "border-line bg-white text-slate-600 hover:bg-slate-50",
-                )}
-              >
-                {category.name}
-              </button>
-            ))}
-          </div>
+      {/* DATE STRIP — ‹ Today · date · time › */}
+      <div className="flex items-center rounded-xl bg-surface border border-line px-1 py-1">
+        <button
+          type="button"
+          onClick={() => nudgeDate(-1)}
+          className="rounded-lg p-2 text-muted hover:bg-white"
+          aria-label="Previous day"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setDatePickerOpen((current) => !current)}
+          className="min-w-0 flex-1 text-center"
+        >
+          <span className="text-sm font-semibold text-ink">{dayLabel(dateParts.date)}</span>
+          <span className="ml-2 text-xs text-muted">
+            {dateParts.date} · {dateParts.time}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setDatePickerOpen((current) => !current)}
+          className="rounded-lg p-2 text-brand-700 hover:bg-white"
+          aria-label="Pick date"
+        >
+          <CalendarDays className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => nudgeDate(1)}
+          className="rounded-lg p-2 text-muted hover:bg-white"
+          aria-label="Next day"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+        <input type="hidden" {...register("txn_date")} />
+      </div>
+
+      {datePickerOpen ? (
+        <div className="grid grid-cols-[1fr_120px] gap-2">
+          <input
+            type="date"
+            className="input h-11"
+            value={dateParts.date}
+            onChange={(event) =>
+              setValue("txn_date", combineLocalDateTime(event.target.value, dateParts.time), {
+                shouldDirty: true,
+              })
+            }
+          />
+          <input
+            type="time"
+            className="input h-11"
+            value={dateParts.time}
+            onChange={(event) =>
+              setValue("txn_date", combineLocalDateTime(dateParts.date, event.target.value), {
+                shouldDirty: true,
+              })
+            }
+          />
         </div>
       ) : null}
 
-      <div className="space-y-2 rounded-md bg-gray-50 p-3">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <select {...register("account_id")} className="input">
-            <option value="">From</option>
-            {activeAccounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({accountOptionBalance(a)})
-              </option>
-            ))}
-          </select>
+      {/* QUICK CATEGORIES */}
+      {quickCategories.length > 0 && (!isTransfer || isExpenseLikeTransfer) ? (
+        <div className="flex gap-2 overflow-x-auto pb-0.5">
+          {quickCategories.map((category) => (
+            <button
+              key={category.id}
+              type="button"
+              onClick={() => setValue("category_id", category.id)}
+              className={cn(
+                "shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition",
+                categoryId === category.id
+                  ? "border-brand-600 bg-brand-600/15 text-brand-700"
+                  : "border-line bg-white text-muted hover:text-ink",
+              )}
+            >
+              {category.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
-          {isTransfer && (
-            <select {...register("transfer_account_id")} className="input">
-              <option value="">To</option>
+      {/* ACCOUNTS */}
+      <div className="space-y-2 rounded-xl border border-line bg-white p-3">
+        <div className={cn("grid gap-2", isTransfer && "sm:grid-cols-[1fr_auto_1fr]")}>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">
+              {isTransfer ? "From" : "Account"}
+            </span>
+            <select {...register("account_id")} className="input h-11">
+              <option value="">Select account</option>
               {activeAccounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name} ({accountOptionBalance(a)})
                 </option>
               ))}
             </select>
+          </label>
+
+          {isTransfer && (
+            <>
+              <button
+                type="button"
+                onClick={handleSwap}
+                className="mx-auto mt-5 hidden h-9 w-9 items-center justify-center rounded-full border border-line text-brand-700 hover:bg-brand-50 sm:flex"
+                title="Swap accounts"
+              >
+                <ArrowLeftRight className="h-4 w-4" />
+              </button>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  To
+                </span>
+                <select {...register("transfer_account_id")} className="input h-11">
+                  <option value="">Select account</option>
+                  {activeAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({accountOptionBalance(a)})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={handleSwap}
+                className="flex items-center gap-1.5 text-xs font-semibold text-brand-700 sm:hidden"
+              >
+                <ArrowLeftRight className="h-3.5 w-3.5" />
+                Swap accounts
+              </button>
+            </>
           )}
         </div>
 
-        {isTransfer && (
-          <button
-            type="button"
-            onClick={handleSwap}
-            className="text-xs text-blue-600 flex items-center gap-1"
-          >
-            <ArrowLeftRight size={14} />
-            Swap
-          </button>
+        {errors.transfer_account_id && (
+          <p className="text-xs font-medium text-expense">{errors.transfer_account_id.message}</p>
         )}
 
         {fromAccount && amountNumber > 0 && (
-          <div className="text-xs space-y-1">
+          <div className="money space-y-1 text-xs text-muted">
             <div>
-              From: {formatCurrency(fromBalance)} →{" "}
-              <span className={insufficient ? "text-red-500" : ""}>
-                {formatCurrency(previewFrom)}
+              {fromAccount.name}: {formatMoney(fromBalance, fromAccount.currency)} →{" "}
+              <span className={insufficient ? "font-semibold text-expense" : "font-semibold text-ink"}>
+                {formatMoney(previewFrom, fromAccount.currency)}
               </span>
             </div>
 
             {isTransfer && toAccount && (
               <div>
-                To: {formatCurrency(toBalance)} →{" "}
-                <span className="text-green-600">
-                  {formatCurrency(previewTo)}
+                {toAccount.name}: {formatMoney(toBalance, toAccount.currency)} →{" "}
+                <span className="font-semibold text-income">
+                  {formatMoney(previewTo, toAccount.currency)}
                 </span>
               </div>
             )}
@@ -550,28 +650,29 @@ export function TransactionForm({
         )}
 
         {isCardPayment ? (
-          <p className="text-amber-600 text-xs">
-            This transfer will be saved as a card payment and reduce outstanding.
+          <p className="text-xs font-medium text-warning">
+            Saved as a card payment — outstanding drops to {formatMoney(previewToOutstanding, toAccount?.currency)}.
           </p>
         ) : null}
 
         {isCardSpendingTransfer ? (
-          <p className="text-amber-600 text-xs">
-            This transfer will be saved as card spending and outstanding will become {formatCurrency(previewFromOutstanding, fromAccount?.currency)}.
+          <p className="text-xs font-medium text-warning">
+            Saved as card spending — outstanding becomes {formatMoney(previewFromOutstanding, fromAccount?.currency)}.
           </p>
         ) : null}
 
         {type === "expense" && isFromCreditCard ? (
-          <p className="text-amber-600 text-xs">
-            Card outstanding will become {formatCurrency(previewFromOutstanding, fromAccount?.currency)}.
+          <p className="text-xs font-medium text-warning">
+            Card outstanding will become {formatMoney(previewFromOutstanding, fromAccount?.currency)}.
           </p>
         ) : null}
 
         {insufficient && (
-          <p className="text-red-500 text-xs">⚠️ Insufficient balance</p>
+          <p className="text-xs font-semibold text-expense">⚠️ Insufficient balance</p>
         )}
       </div>
 
+      {/* CATEGORY */}
       {(!isTransfer || isExpenseLikeTransfer) && (
         <CategoryTreeSelect
           categories={localCategories}
@@ -586,66 +687,14 @@ export function TransactionForm({
         />
       )}
 
-      <div className="rounded-md border border-line bg-white p-3">
-        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-ink">
-          <CalendarDays className="h-4 w-4 text-brand-600" />
-          Date
-        </div>
-        <div className="mb-2 flex flex-wrap gap-2">
-          {[
-            { label: "Today", offset: 0 },
-            { label: "Yesterday", offset: -1 },
-            { label: "Tomorrow", offset: 1 },
-          ].map((option) => (
-            <button
-              key={option.label}
-              type="button"
-              onClick={() => setQuickDate(option.offset)}
-              className="rounded-md border border-line bg-surface px-3 py-1 text-xs font-semibold text-muted"
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-        <div className="grid gap-2 sm:grid-cols-[1fr_110px]">
-          <div className="flex items-center justify-between rounded-md border border-line bg-surface px-2 py-1.5">
-            <button
-              type="button"
-              className="rounded-md p-1.5 text-muted hover:bg-white"
-              onClick={() => nudgeDate(-1)}
-              title="Previous day"
-            >
-              <ChevronDown className="h-4 w-4" />
-            </button>
-            <span className="text-sm font-semibold text-ink">
-              {displayDate(dateParts.date)}
-            </span>
-            <button
-              type="button"
-              className="rounded-md p-1.5 text-muted hover:bg-white"
-              onClick={() => nudgeDate(1)}
-              title="Next day"
-            >
-              <ChevronUp className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="rounded-md border border-line bg-surface px-3 py-2 text-center text-sm font-semibold text-ink">
-            {dateParts.time}
-          </div>
-        </div>
-        <input type="hidden" {...register("txn_date")} />
-      </div>
-
+      {/* NOTE */}
       {noteOpen ? (
         <div className="space-y-2">
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-ink">Note</span>
-            <input
-              className="h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
-              placeholder="Add a short memo"
-              {...register("description")}
-            />
-          </label>
+          <input
+            className="input h-11"
+            placeholder="Add a short memo"
+            {...register("description")}
+          />
 
           {noteSuggestions.length > 0 ? (
             <div className="flex flex-wrap gap-2">
@@ -657,7 +706,7 @@ export function TransactionForm({
                     setValue("description", note, { shouldDirty: true });
                     setNoteOpen(true);
                   }}
-                  className="max-w-full truncate rounded-full border border-line bg-white px-3 py-1.5 text-xs font-medium text-muted transition hover:border-brand-300 hover:text-brand-700"
+                  className="max-w-full truncate rounded-full border border-line bg-white px-3 py-1.5 text-xs font-medium text-muted transition hover:border-brand-500 hover:text-brand-700"
                   title={note}
                 >
                   {note}
@@ -670,20 +719,81 @@ export function TransactionForm({
         <button
           type="button"
           onClick={() => setNoteOpen(true)}
-          className="h-10 rounded-md border border-dashed border-line bg-white text-sm font-semibold text-muted"
+          className="h-11 rounded-xl border border-dashed border-line bg-white text-sm font-semibold text-muted hover:text-ink"
         >
           {description ? `Note: ${description}` : "Add note"}
         </button>
       )}
 
-      <div className="sticky bottom-0 z-20 -mx-1 mt-auto flex justify-end gap-2 border-t border-line bg-white/95 px-1 py-2 backdrop-blur">
-        <Button type="button" onClick={onCancel} variant="secondary">
-          Cancel
-        </Button>
-        <Button type="submit" disabled={isSubmitting}>
-          <Save className="h-4 w-4" />
-          Save
-        </Button>
+      {/* KEYPAD or SAVE BAR */}
+      <div className="sticky bottom-0 z-20 mt-auto -mx-1 border-t border-line bg-white/95 px-1 pb-2 pt-2 backdrop-blur">
+        {keypadOpen ? (
+          <div className="space-y-1.5">
+            <div className="grid grid-cols-4 gap-1.5">
+              <button
+                type="button"
+                onClick={() => pressKey("ac")}
+                className="h-12 rounded-xl bg-expense-soft text-sm font-extrabold text-expense active:scale-95"
+              >
+                AC
+              </button>
+              <button
+                type="button"
+                onClick={() => pressKey("del")}
+                className="flex h-12 items-center justify-center rounded-xl bg-surface text-ink active:scale-95"
+                aria-label="Backspace"
+              >
+                <Delete className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => pressKey("ok")}
+                className="col-span-2 h-12 rounded-xl bg-brand-600 text-sm font-extrabold text-white active:scale-95"
+              >
+                OK
+              </button>
+            </div>
+            {KEYPAD_ROWS.map((row) => (
+              <div key={row.join()} className="grid grid-cols-4 gap-1.5">
+                {row.map((token) => {
+                  const isOperator = ["/", "x", "-", "+"].includes(token);
+                  return (
+                    <button
+                      key={token}
+                      type="button"
+                      onClick={() => pressKey(token)}
+                      className={cn(
+                        "h-12 rounded-xl text-xl font-bold active:scale-95",
+                        isOperator
+                          ? "bg-brand-600/15 text-brand-700"
+                          : "bg-surface text-ink hover:bg-brand-50",
+                      )}
+                    >
+                      {token === "x" ? "×" : token}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="h-12 rounded-xl border border-line bg-white px-5 text-sm font-semibold text-muted hover:text-ink"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="h-12 flex-1 rounded-xl bg-brand-600 text-sm font-bold text-white transition hover:bg-brand-700 disabled:opacity-60"
+            >
+              {isSubmitting ? "Saving…" : "Save transaction"}
+            </button>
+          </div>
+        )}
       </div>
     </form>
   );
