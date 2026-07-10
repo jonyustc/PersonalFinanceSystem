@@ -142,9 +142,18 @@ class TransactionDetailsPage extends ConsumerWidget {
       destructive: true,
     );
     if (!confirmed || !context.mounted) return;
-    await ref
-        .read(appControllerProvider.notifier)
-        .deleteTransaction(row['id'] as String);
+    try {
+      await ref
+          .read(appControllerProvider.notifier)
+          .deleteTransaction(row['id'] as String);
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+      return;
+    }
     if (context.mounted) Navigator.of(context).pop();
   }
 

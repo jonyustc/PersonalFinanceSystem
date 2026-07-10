@@ -165,9 +165,16 @@ class _TransactionsPageState extends ConsumerState<TransactionsPage> {
       destructive: true,
     );
     if (!confirmed) return;
-    await ref
-        .read(appControllerProvider.notifier)
-        .deleteTransaction(row['id'] as String);
+    try {
+      await ref
+          .read(appControllerProvider.notifier)
+          .deleteTransaction(row['id'] as String);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
   }
 }
 

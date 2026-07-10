@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -118,6 +118,18 @@ class AppSnapshot {
   }
 }
 
+/// A server write that could not be committed (offline, timeout, or the
+/// server rejected the payload). `toString` returns the user-facing message
+/// so call sites can show it in a SnackBar directly.
+class ApiWriteException implements Exception {
+  ApiWriteException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class AppController extends AsyncNotifier<AppSnapshot>
     with WidgetsBindingObserver {
   Timer? _timer;
@@ -232,6 +244,9 @@ class AppController extends AsyncNotifier<AppSnapshot>
     }
   }
 
+  // Transactions and transfers are API-first: the write must reach the
+  // server (which owns ids and balance math) or fail loudly — no optimistic
+  // local insert and no offline queueing on these paths.
   Future<void> createTransaction({
     required String accountId,
     required String type,
@@ -241,7 +256,6 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? merchantName,
     String? description,
   }) async {
-    final localId = const Uuid().v4();
     final payload = {
       'account_id': accountId,
       'category_id': categoryId,
@@ -252,16 +266,17 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'description': _blankToNull(description),
       'tags': <String>[],
       'transaction_status': 'posted',
-      'reference_number': localId,
     };
 
-    final local = {...payload, 'id': localId, 'payment_method': null};
-    await _db.upsertTransaction(local, pending: true);
-    await _db.applyTransactionBalance(local);
-    await _db.queuePost('/transactions', payload);
+    final created = await _writeToServer(
+      () => _api.createTransaction(payload),
+    );
+    if (created['id'] != null) {
+      await _db.upsertTransaction(created);
+    }
+    await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
-    unawaited(syncNow(silent: true));
   }
 
   Future<void> updateTransaction({
@@ -288,37 +303,21 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'transaction_status': 'posted',
     };
 
-    try {
-      final updated = await _api.updateTransaction(id, payload);
+    final updated = await _writeToServer(
+      () => _api.updateTransaction(id, payload),
+    );
+    if (updated['id'] != null) {
       await _db.upsertTransaction(updated);
-      await syncNow(silent: true);
-    } catch (_) {
-      final oldRow = await _db.transactionById(id);
-      if (oldRow != null) {
-        await _db.applyTransactionBalance(_decodeRaw(oldRow), reverse: true);
-      }
-      final local = {...payload, 'id': id, 'payment_method': null};
-      await _db.upsertTransaction(local, pending: true);
-      await _db.applyTransactionBalance(local);
-      await _db.queueMutation('PATCH', '/transactions/$id', payload);
     }
+    await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
   }
 
   Future<void> deleteTransaction(String id) async {
-    try {
-      await _api.deleteTransaction(id);
-      await _db.deleteTransaction(id);
-      await syncNow(silent: true);
-    } catch (_) {
-      final oldRow = await _db.transactionById(id);
-      if (oldRow != null) {
-        await _db.applyTransactionBalance(_decodeRaw(oldRow), reverse: true);
-      }
-      await _db.deleteTransaction(id);
-      await _db.queueMutation('DELETE', '/transactions/$id', const {});
-    }
+    await _writeToServer(() => _api.deleteTransaction(id));
+    await _db.deleteTransaction(id);
+    await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
   }
@@ -339,26 +338,35 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'notes': _blankToNull(notes),
       'is_card_payment': isCardPayment,
     };
-    final local = {
-      'id': const Uuid().v4(),
-      'account_id': fromAccountId,
-      'transfer_account_id': toAccountId,
-      'type': 'transfer',
-      'amount': amount,
-      'txn_date': date.toUtc().toIso8601String(),
-      'transaction_date': date.toUtc().toIso8601String(),
-      'description': _blankToNull(notes),
-      'merchant_name': null,
-      'payment_method': null,
-      'tags': <String>[],
-      'transaction_status': 'posted',
-    };
-    await _db.upsertTransaction(local, pending: true);
-    await _db.applyTransactionBalance(local);
-    await _db.queueMutation('POST', '/transfers', payload);
+    // The response is a transfer record, not a transaction row, so the local
+    // mirror is refreshed by the pull in syncNow rather than an upsert here.
+    await _writeToServer(() => _api.createTransfer(payload));
+    await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
-    unawaited(syncNow(silent: true));
+  }
+
+  /// Runs a server write and converts transport/HTTP failures into a clean
+  /// user-facing [ApiWriteException]. API-first: failures are surfaced to the
+  /// caller instead of being queued for later sync.
+  Future<T> _writeToServer<T>(Future<T> Function() request) async {
+    try {
+      return await request();
+    } on DioException catch (error) {
+      throw ApiWriteException(_writeErrorMessage(error));
+    }
+  }
+
+  String _writeErrorMessage(DioException error) {
+    final data = error.response?.data;
+    if (data is Map && data['detail'] is String) {
+      return data['detail'] as String;
+    }
+    final status = error.response?.statusCode;
+    if (status != null) {
+      return 'The server rejected this change (HTTP $status).';
+    }
+    return 'Could not reach the server — check your connection and try again.';
   }
 
   Future<void> updateAccount({
@@ -855,7 +863,14 @@ class AppController extends AsyncNotifier<AppSnapshot>
       while (!nextRun!.isAfter(todayDate) &&
           (end == null || !nextRun.isAfter(end)) &&
           guard < 120) {
-        await _createFromRecurring(rule, nextRun);
+        try {
+          await _createFromRecurring(rule, nextRun);
+        } catch (_) {
+          // Transaction writes are API-first, so creation can fail while
+          // offline. Stop without advancing the schedule; the occurrence is
+          // retried on the next materialization pass.
+          break;
+        }
         created = true;
         lastRun = _dateOnlyIso(nextRun);
         nextRun = _advanceDate(nextRun, frequency, interval);
@@ -986,19 +1001,6 @@ class AppController extends AsyncNotifier<AppSnapshot>
       return match.group(0)!;
     }
     return 'Using local data. Sync failed.';
-  }
-
-  Map<String, dynamic> _decodeRaw(Map<String, dynamic> row) {
-    final raw = row['raw_json'];
-    if (raw is String) {
-      try {
-        final decoded = jsonDecode(raw);
-        if (decoded is Map) return decoded.cast<String, dynamic>();
-      } catch (_) {
-        return row;
-      }
-    }
-    return row;
   }
 
   Map<String, dynamic> _localPortfolioTransaction({
