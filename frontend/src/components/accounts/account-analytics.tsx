@@ -46,7 +46,7 @@ export function AccountAnalyticsCharts({ analytics }: Props) {
 
   return (
     <div className="grid gap-4 xl:grid-cols-2">
-      <section className="rounded-md border border-line bg-white p-4 shadow-soft">
+      <section className="rounded-md border border-line bg-card p-4 shadow-soft">
         <h2 className="text-sm font-semibold text-ink">Net Worth Trend</h2>
         <div className="mt-4 h-72">
           <ResponsiveContainer width="100%" height="100%">
@@ -67,7 +67,7 @@ export function AccountAnalyticsCharts({ analytics }: Props) {
         </div>
       </section>
 
-      <section className="rounded-md border border-line bg-white p-4 shadow-soft">
+      <section className="rounded-md border border-line bg-card p-4 shadow-soft">
         <h2 className="text-sm font-semibold text-ink">Account Distribution</h2>
         <div className="mt-4 h-72">
           <ResponsiveContainer width="100%" height="100%">
@@ -83,7 +83,7 @@ export function AccountAnalyticsCharts({ analytics }: Props) {
         </div>
       </section>
 
-      <section className="rounded-md border border-line bg-white p-4 shadow-soft xl:col-span-2">
+      <section className="rounded-md border border-line bg-card p-4 shadow-soft xl:col-span-2">
         <h2 className="text-sm font-semibold text-ink">Debt vs Assets</h2>
         <div className="mt-4 h-72">
           <ResponsiveContainer width="100%" height="100%">

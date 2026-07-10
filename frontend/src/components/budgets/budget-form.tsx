@@ -63,8 +63,8 @@ export function BudgetForm({
     <form onSubmit={submit} className="space-y-5">
       {/* INCOME INPUT */}
       {!isEdit && (
-        <div className="bg-gray-50 p-3 rounded-lg">
-          <p className="text-sm text-gray-500 mb-1">Monthly Income</p>
+        <div className="bg-surface p-3 rounded-lg">
+          <p className="text-sm text-muted mb-1">Monthly Income</p>
           <input
             type="number"
             value={income}
@@ -81,7 +81,7 @@ export function BudgetForm({
           <button
             type="button"
             onClick={() => applyRule("needs")}
-            className="p-2 bg-blue-50 rounded"
+            className="rounded-lg border border-line bg-brand-600/10 p-2 text-ink hover:bg-brand-600/20"
           >
             Needs (50%)
             <br />
@@ -91,7 +91,7 @@ export function BudgetForm({
           <button
             type="button"
             onClick={() => applyRule("wants")}
-            className="p-2 bg-yellow-50 rounded"
+            className="rounded-lg border border-line bg-warning-soft p-2 text-ink hover:bg-warning/20"
           >
             Wants (30%)
             <br />
@@ -101,7 +101,7 @@ export function BudgetForm({
           <button
             type="button"
             onClick={() => applyRule("savings")}
-            className="p-2 bg-green-50 rounded"
+            className="rounded-lg border border-line bg-income-soft p-2 text-ink hover:bg-income/20"
           >
             Savings (20%)
             <br />
@@ -145,7 +145,7 @@ export function BudgetForm({
                 key={p}
                 type="button"
                 onClick={() => applyPercent(p)}
-                className="px-2 py-1 bg-gray-100 rounded"
+                className="px-2 py-1 bg-surface rounded"
               >
                 {p}%
               </button>

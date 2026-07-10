@@ -18,6 +18,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { GlobalTransactionCta } from "@/components/transactions/global-transaction-cta";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { cn } from "@/lib/utils";
 import { getMe, logout } from "@/services/auth-service";
 import {
@@ -109,7 +110,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       {/* SIDEBAR — permanent on desktop, drawer on mobile (secondary destinations) */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] lg:w-64 bg-white border-r border-line transition-transform",
+          "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] lg:w-64 bg-card border-r border-line transition-transform",
           open ? "translate-x-0" : "-translate-x-full",
           "lg:translate-x-0",
         )}
@@ -185,7 +186,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-surface/95 px-4 backdrop-blur">
           <button
             onClick={() => setOpen(true)}
-            className="lg:hidden rounded-lg p-1.5 -ml-1.5 text-ink hover:bg-white"
+            className="lg:hidden rounded-lg p-1.5 -ml-1.5 text-ink hover:bg-card"
             aria-label="Open menu"
           >
             <Menu className="h-5 w-5" />
@@ -193,8 +194,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
           <h1 className="text-lg font-bold tracking-tight text-ink">{title}</h1>
 
-          <div className="ml-auto hidden lg:flex items-center gap-3">
-            <div className="text-right">
+          <div className="ml-auto flex items-center gap-3">
+            <ThemeToggle />
+            <div className="hidden text-right lg:block">
               <p className="text-sm font-medium">{user?.full_name || "User"}</p>
               <p className="text-xs text-muted">{user?.email}</p>
             </div>
@@ -210,7 +212,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* BOTTOM NAV — mobile only, mirrors the Flutter app's 5 tabs */}
         <nav
-          className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-white lg:hidden"
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-card lg:hidden"
           style={{ paddingBottom: "var(--safe-bottom)" }}
         >
           <div className="grid h-16 grid-cols-5">

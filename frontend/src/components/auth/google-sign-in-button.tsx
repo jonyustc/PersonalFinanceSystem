@@ -105,7 +105,7 @@ export function GoogleSignInButton() {
         <span className="h-px flex-1 bg-line" />
       </div>
       <div ref={containerRef} className="flex justify-center" />
-      {error ? <p className="text-center text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="text-center text-sm text-expense">{error}</p> : null}
     </div>
   );
 }

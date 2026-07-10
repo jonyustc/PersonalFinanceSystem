@@ -16,14 +16,14 @@ const COLORS = [
 export function CategoryPie({ data }: { data: any[] }) {
   if (!data?.length) {
     return (
-      <div className="bg-white p-4 rounded-2xl border border-gray-100">
-        <p className="text-sm text-gray-500">No category data</p>
+      <div className="bg-card p-4 rounded-2xl border border-line">
+        <p className="text-sm text-muted">No category data</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+    <div className="bg-card p-4 rounded-2xl border border-line shadow-sm">
       <h3 className="mb-3 font-semibold">Expenses by Category</h3>
 
       <ResponsiveContainer width="100%" height={260}>

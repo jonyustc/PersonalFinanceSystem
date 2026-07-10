@@ -30,7 +30,7 @@ export function MonthStepper({ month, onChange }: MonthStepperProps) {
   const atCurrentMonth = month >= currentMonth();
 
   return (
-    <div className="flex h-9 items-center rounded-full border border-line bg-white">
+    <div className="flex h-9 items-center rounded-full border border-line bg-card">
       <button
         type="button"
         aria-label="Previous month"

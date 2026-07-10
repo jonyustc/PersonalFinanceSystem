@@ -86,7 +86,7 @@ export function TransferModal({ accounts, onSubmit, onCancel }: Props) {
                 </option>
               ))}
             </select>
-            {errors.from_account_id ? <span className="mt-1 block text-xs text-red-600">{errors.from_account_id.message}</span> : null}
+            {errors.from_account_id ? <span className="mt-1 block text-xs text-expense">{errors.from_account_id.message}</span> : null}
           </label>
 
           <label className="block">
@@ -99,7 +99,7 @@ export function TransferModal({ accounts, onSubmit, onCancel }: Props) {
                 </option>
               ))}
             </select>
-            {errors.to_account_id ? <span className="mt-1 block text-xs text-red-600">{errors.to_account_id.message}</span> : null}
+            {errors.to_account_id ? <span className="mt-1 block text-xs text-expense">{errors.to_account_id.message}</span> : null}
           </label>
         </div>
       </div>
@@ -115,7 +115,7 @@ export function TransferModal({ accounts, onSubmit, onCancel }: Props) {
       </label>
 
       {isCreditCardDestination ? (
-        <label className="flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <label className="flex items-start gap-3 rounded-md border border-warning/30 bg-warning-soft p-3 text-sm text-warning">
           <input className="mt-1" type="checkbox" {...register("is_card_payment")} />
           <span>
             Treat this transfer as a credit card payment. This reduces card outstanding instead of increasing the card balance.

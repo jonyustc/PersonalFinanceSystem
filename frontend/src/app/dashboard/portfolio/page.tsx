@@ -329,7 +329,7 @@ export default function PortfolioPage() {
 
   return (
     <div className="min-w-0 max-w-full overflow-x-hidden space-y-3 md:space-y-6">
-      <section className="-mx-3 border-b border-line bg-white px-3 py-3 shadow-sm sm:-mx-4 sm:px-4 md:mx-0 md:rounded-md md:border md:px-4 md:py-4">
+      <section className="-mx-3 border-b border-line bg-card px-3 py-3 shadow-sm sm:-mx-4 sm:px-4 md:mx-0 md:rounded-md md:border md:px-4 md:py-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold text-ink md:text-2xl">Stock Portfolio</h1>
@@ -351,8 +351,8 @@ export default function PortfolioPage() {
         </div>
       </section>
 
-      {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
-      {dataError ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage(dataError)}</div> : null}
+      {error ? <div className="rounded-md border border-expense/30 bg-expense-soft px-3 py-2 text-sm text-expense">{error}</div> : null}
+      {dataError ? <div className="rounded-md border border-expense/30 bg-expense-soft px-3 py-2 text-sm text-expense">{errorMessage(dataError)}</div> : null}
 
       {activeTab === "dashboard" ? (
         <>
@@ -393,14 +393,14 @@ export default function PortfolioPage() {
 
       {activeTab === "transaction" ? (
         <>
-          <section className="rounded-md border border-line bg-white p-3 shadow-sm md:p-4">
+          <section className="rounded-md border border-line bg-card p-3 shadow-sm md:p-4">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-ink">{editing ? "Edit Stock Transaction" : "Add Stock Transaction"}</h2>
               {editing ? (
                 <button
                   type="button"
                   onClick={cancelEdit}
-                  className="inline-flex h-8 items-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-semibold text-muted"
+                  className="inline-flex h-8 items-center gap-1 rounded-md border border-line bg-card px-2 text-xs font-semibold text-muted"
                 >
                   <X className="h-3.5 w-3.5" />
                   Cancel
@@ -574,7 +574,7 @@ export default function PortfolioPage() {
 
 function PortfolioTabs({ activeTab, onChange }: { activeTab: PortfolioTab; onChange: (tab: PortfolioTab) => void }) {
   return (
-    <section className="rounded-md border border-line bg-white p-1 shadow-sm">
+    <section className="rounded-md border border-line bg-card p-1 shadow-sm">
       <div className="grid grid-cols-3 gap-1 sm:grid-cols-6">
         {portfolioTabs.map((tab) => (
           <button
@@ -637,7 +637,7 @@ function HoldingsSection({ summary, loading, advanced }: { summary?: PortfolioSu
 
   return (
     <section className="min-w-0 space-y-3">
-      <div className="rounded-md border border-line bg-white p-3 shadow-sm md:p-4">
+      <div className="rounded-md border border-line bg-card p-3 shadow-sm md:p-4">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-sm font-semibold text-ink">Holdings Allocation</h2>
@@ -661,10 +661,10 @@ function HoldingsSection({ summary, loading, advanced }: { summary?: PortfolioSu
               <AllocationMetric label="Cash" value={displayPercent(cashPercent)} subValue={formatCurrency(summary?.cash_balance ?? 0, "BDT")} tone="cash" />
             </div>
 
-            <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
+            <div className="mt-4 h-3 overflow-hidden rounded-full bg-surface">
               <div className="flex h-full">
                 <div className="bg-brand-600" style={{ width: barWidth(equityPercent) }} />
-                <div className="bg-amber-500" style={{ width: barWidth(cashPercent) }} />
+                <div className="bg-accent-500" style={{ width: barWidth(cashPercent) }} />
               </div>
             </div>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
@@ -673,7 +673,7 @@ function HoldingsSection({ summary, loading, advanced }: { summary?: PortfolioSu
                 Stocks {displayPercent(equityPercent)}
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                <span className="h-2.5 w-2.5 rounded-full bg-accent-500" />
                 Cash {displayPercent(cashPercent)}
               </span>
             </div>
@@ -684,7 +684,7 @@ function HoldingsSection({ summary, loading, advanced }: { summary?: PortfolioSu
       {loading ? (
         null
       ) : !sortedHoldings.length ? (
-        <div className="rounded-md border border-dashed border-line bg-white px-4 py-8 text-center text-sm text-muted">No holdings yet.</div>
+        <div className="rounded-md border border-dashed border-line bg-card px-4 py-8 text-center text-sm text-muted">No holdings yet.</div>
       ) : (
         <div className="grid min-w-0 gap-3 xl:grid-cols-2">
           {sortedHoldings.map((holding) => {
@@ -693,7 +693,7 @@ function HoldingsSection({ summary, loading, advanced }: { summary?: PortfolioSu
             const loss = asNumber(holding.unrealized_profit_loss) < 0;
 
             return (
-            <article key={holding.stock.id} className="min-w-0 rounded-md border border-line bg-white p-3 shadow-sm md:p-4">
+            <article key={holding.stock.id} className="min-w-0 rounded-md border border-line bg-card p-3 shadow-sm md:p-4">
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
@@ -710,7 +710,7 @@ function HoldingsSection({ summary, loading, advanced }: { summary?: PortfolioSu
                 </div>
               </div>
 
-              <div className="mt-3 h-2 rounded-full bg-slate-100">
+              <div className="mt-3 h-2 rounded-full bg-surface">
                 <div className="h-2 rounded-full bg-brand-600" style={{ width: barWidth(holdingPercent) }} />
               </div>
 
@@ -753,7 +753,7 @@ function AllocationMetric({
   tone?: "stock" | "cash";
 }) {
   return (
-    <div className={cn("rounded-md p-3", tone === "cash" ? "bg-amber-50" : "bg-surface")}>
+    <div className={cn("rounded-md p-3", tone === "cash" ? "bg-warning-soft" : "bg-surface")}>
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-muted">{label}</p>
         {Icon ? <Icon className="h-4 w-4 text-brand-600" /> : null}
@@ -806,7 +806,7 @@ function TransactionsSection({
   onDelete: (transaction: PortfolioTransaction) => void;
 }) {
   return (
-    <section className="rounded-md border border-line bg-white p-3 shadow-sm md:p-4">
+    <section className="rounded-md border border-line bg-card p-3 shadow-sm md:p-4">
       <h2 className="mb-3 text-sm font-semibold text-ink">Transaction List</h2>
       {loading ? (
         <p className="text-sm text-muted">Loading transactions...</p>
@@ -817,10 +817,10 @@ function TransactionsSection({
           {transactions.map((transaction) => {
             const positive = asNumber(transaction.cash_flow) >= 0;
             return (
-              <article key={transaction.id} className="rounded-md border border-line bg-white p-3">
+              <article key={transaction.id} className="rounded-md border border-line bg-card p-3">
                 <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-center gap-3">
-                    <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-md", positive ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700")}>
+                    <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-md", positive ? "bg-income-soft text-income" : "bg-expense-soft text-expense")}>
                       {positive ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
                     </span>
                     <div className="min-w-0">
@@ -833,7 +833,7 @@ function TransactionsSection({
                       </span>
                     </div>
                   </div>
-                  <p className={cn("max-w-full truncate text-sm font-semibold sm:shrink-0 sm:text-right", positive ? "text-emerald-700" : "text-rose-700")}>
+                  <p className={cn("max-w-full truncate text-sm font-semibold sm:shrink-0 sm:text-right", positive ? "text-income" : "text-expense")}>
                     {positive ? "+" : "-"}{formatCurrency(Math.abs(asNumber(transaction.cash_flow)), transaction.stock?.currency || "BDT")}
                   </p>
                 </div>
@@ -841,7 +841,7 @@ function TransactionsSection({
                   <button
                     type="button"
                     onClick={() => onEdit(transaction)}
-                    className="inline-flex h-8 items-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-semibold text-muted hover:text-brand-700"
+                    className="inline-flex h-8 items-center gap-1 rounded-md border border-line bg-card px-2 text-xs font-semibold text-muted hover:text-brand-700"
                   >
                     <Pencil className="h-3.5 w-3.5" />
                     Edit
@@ -849,7 +849,7 @@ function TransactionsSection({
                   <button
                     type="button"
                     onClick={() => onDelete(transaction)}
-                    className="inline-flex h-8 items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 text-xs font-semibold text-red-700 hover:bg-red-100"
+                    className="inline-flex h-8 items-center gap-1 rounded-md border border-expense/30 bg-expense-soft px-2 text-xs font-semibold text-expense hover:bg-expense/20"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                     Delete
@@ -866,12 +866,12 @@ function TransactionsSection({
 
 function Metric({ label, value, icon: Icon, warn = false }: { label: string; value?: string; icon: any; warn?: boolean }) {
   return (
-    <div className="rounded-md border border-line bg-white p-3 shadow-sm">
+    <div className="rounded-md border border-line bg-card p-3 shadow-sm">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-muted">{label}</p>
-        <Icon className={cn("h-4 w-4", warn ? "text-rose-600" : "text-brand-600")} />
+        <Icon className={cn("h-4 w-4", warn ? "text-expense" : "text-brand-600")} />
       </div>
-      <p className={cn("mt-2 truncate text-sm font-semibold md:text-lg", warn ? "text-rose-700" : "text-ink")}>
+      <p className={cn("mt-2 truncate text-sm font-semibold md:text-lg", warn ? "text-expense" : "text-ink")}>
         {formatCurrency(value ?? 0, "BDT")}
       </p>
     </div>
@@ -881,12 +881,12 @@ function Metric({ label, value, icon: Icon, warn = false }: { label: string; val
 function PercentMetric({ label, value }: { label: string; value?: string }) {
   const negative = asNumber(value) < 0;
   return (
-    <div className="rounded-md border border-line bg-white p-3 shadow-sm">
+    <div className="rounded-md border border-line bg-card p-3 shadow-sm">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-muted">{label}</p>
-        <TrendingUp className={cn("h-4 w-4", negative ? "text-rose-600" : "text-brand-600")} />
+        <TrendingUp className={cn("h-4 w-4", negative ? "text-expense" : "text-brand-600")} />
       </div>
-      <p className={cn("mt-2 truncate text-sm font-semibold md:text-lg", negative ? "text-rose-700" : "text-ink")}>
+      <p className={cn("mt-2 truncate text-sm font-semibold md:text-lg", negative ? "text-expense" : "text-ink")}>
         {signedPercent(value)}
       </p>
     </div>
@@ -897,7 +897,7 @@ function Mini({ label, value, danger = false }: { label: string; value: string; 
   return (
     <div>
       <p className="text-muted">{label}</p>
-      <p className={cn("truncate font-semibold", danger ? "text-rose-700" : "text-ink")}>{value}</p>
+      <p className={cn("truncate font-semibold", danger ? "text-expense" : "text-ink")}>{value}</p>
     </div>
   );
 }
@@ -932,7 +932,7 @@ function MarketPriceSection({
   }
 
   return (
-    <section className="rounded-md border border-line bg-white p-3 shadow-sm md:p-4">
+    <section className="rounded-md border border-line bg-card p-3 shadow-sm md:p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-ink">Current Market Price</h2>
@@ -943,8 +943,8 @@ function MarketPriceSection({
           {refreshing ? "Fetching" : "Fetch DSE"}
         </Button>
       </div>
-      {error ? <p className="mb-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p> : null}
-      {notice ? <p className="mb-2 rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{notice}</p> : null}
+      {error ? <p className="mb-2 rounded-md bg-expense-soft px-3 py-2 text-xs text-expense">{error}</p> : null}
+      {notice ? <p className="mb-2 rounded-md bg-income-soft px-3 py-2 text-xs text-income">{notice}</p> : null}
       {loading ? (
         <p className="text-sm text-muted">Loading stocks...</p>
       ) : stocks.length === 0 ? (
@@ -973,7 +973,7 @@ function MarketPriceSection({
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-md border border-line bg-white p-3 shadow-sm md:p-4">
+    <div className="rounded-md border border-line bg-card p-3 shadow-sm md:p-4">
       <h2 className="mb-3 text-sm font-semibold text-ink">{title}</h2>
       <div className="space-y-2">{children}</div>
     </div>
@@ -1014,7 +1014,7 @@ function PortfolioControls({
           onClick={onToggleAdvanced}
           className={cn(
             "inline-flex h-9 items-center gap-1 rounded-md border px-2 text-xs font-semibold transition",
-            advanced ? "border-brand-600 bg-brand-600 text-white" : "border-line bg-white text-muted hover:text-brand-700",
+            advanced ? "border-brand-600 bg-brand-600 text-white" : "border-line bg-card text-muted hover:text-brand-700",
           )}
           aria-pressed={advanced}
         >
@@ -1031,7 +1031,7 @@ function AdvancedInvestorPanel({ summary }: { summary?: PortfolioSummaryV2 }) {
   return (
     <section className="rounded-md border border-indigo-200 bg-indigo-50/60 p-3 shadow-sm md:p-4">
       <div className="mb-3 flex items-center gap-2">
-        <Sparkles className="h-4 w-4 text-indigo-600" />
+        <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
         <h2 className="text-sm font-semibold text-ink">Advanced Investor Analytics</h2>
       </div>
       <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
@@ -1158,7 +1158,7 @@ function PerformanceSection({
 
 function ChartCard({ title, icon: Icon, children }: { title: string; icon: any; children: React.ReactNode }) {
   return (
-    <div className="min-w-0 rounded-md border border-line bg-white p-3 shadow-sm md:p-4">
+    <div className="min-w-0 rounded-md border border-line bg-card p-3 shadow-sm md:p-4">
       <div className="mb-2 flex items-center gap-2">
         <Icon className="h-4 w-4 text-brand-600" />
         <h3 className="text-sm font-semibold text-ink">{title}</h3>
@@ -1181,7 +1181,7 @@ function compactNumber(value: number) {
 
 function AnnualPerformanceTable({ rows }: { rows: AnnualPerformanceResponse["rows"] }) {
   return (
-    <div className="min-w-0 rounded-md border border-line bg-white p-3 shadow-sm md:p-4">
+    <div className="min-w-0 rounded-md border border-line bg-card p-3 shadow-sm md:p-4">
       <h3 className="mb-3 text-sm font-semibold text-ink">Annual Performance Report</h3>
       {!rows.length ? (
         <p className="text-sm text-muted">No yearly activity yet.</p>
@@ -1213,10 +1213,10 @@ function AnnualPerformanceTable({ rows }: { rows: AnnualPerformanceResponse["row
                     <td className="px-2 py-1.5 text-right">{formatCurrency(row.dividend_income, "BDT")}</td>
                     <td className="px-2 py-1.5 text-right">{formatCurrency(row.unrealized_gain, "BDT")}</td>
                     <td className="px-2 py-1.5 text-right">{formatCurrency(row.ending_value, "BDT")}</td>
-                    <td className={cn("px-2 py-1.5 text-right font-semibold", negative ? "text-rose-700" : "text-emerald-700")}>
+                    <td className={cn("px-2 py-1.5 text-right font-semibold", negative ? "text-expense" : "text-income")}>
                       {formatCurrency(row.total_return, "BDT")}
                     </td>
-                    <td className={cn("px-2 py-1.5 text-right font-semibold", negative ? "text-rose-700" : "text-emerald-700")}>
+                    <td className={cn("px-2 py-1.5 text-right font-semibold", negative ? "text-expense" : "text-income")}>
                       {signedPercent(row.annual_return_percent)}
                     </td>
                   </tr>
@@ -1235,7 +1235,7 @@ function AdvancedAnalyticsPanel({ analytics }: { analytics?: PortfolioAnalyticsR
   return (
     <section className="space-y-3 rounded-md border border-indigo-200 bg-indigo-50/60 p-3 shadow-sm md:p-4">
       <div className="flex items-center gap-2">
-        <Sparkles className="h-4 w-4 text-indigo-600" />
+        <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
         <h3 className="text-sm font-semibold text-ink">Advanced Investor Analytics</h3>
       </div>
       <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">

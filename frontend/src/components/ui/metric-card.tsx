@@ -13,7 +13,7 @@ interface MetricCardProps {
 }
 
 const toneStyles: Record<NonNullable<MetricCardProps["tone"]>, { chip: string; value: string }> = {
-  default: { chip: "bg-slate-500/15 text-slate-600", value: "text-ink" },
+  default: { chip: "bg-muted/15 text-muted", value: "text-ink" },
   income: { chip: "bg-income/15 text-income", value: "text-income" },
   expense: { chip: "bg-expense/15 text-expense", value: "text-expense" },
   brand: { chip: "bg-brand-600/15 text-brand-700", value: "text-ink" },

@@ -493,7 +493,7 @@ export function TransactionForm({
         <button
           type="button"
           onClick={() => nudgeDate(-1)}
-          className="rounded-lg p-2 text-muted hover:bg-white"
+          className="rounded-lg p-2 text-muted hover:bg-card"
           aria-label="Previous day"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -511,7 +511,7 @@ export function TransactionForm({
         <button
           type="button"
           onClick={() => setDatePickerOpen((current) => !current)}
-          className="rounded-lg p-2 text-brand-700 hover:bg-white"
+          className="rounded-lg p-2 text-brand-700 hover:bg-card"
           aria-label="Pick date"
         >
           <CalendarDays className="h-4 w-4" />
@@ -519,7 +519,7 @@ export function TransactionForm({
         <button
           type="button"
           onClick={() => nudgeDate(1)}
-          className="rounded-lg p-2 text-muted hover:bg-white"
+          className="rounded-lg p-2 text-muted hover:bg-card"
           aria-label="Next day"
         >
           <ChevronRight className="h-4 w-4" />
@@ -564,7 +564,7 @@ export function TransactionForm({
                 "shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition",
                 categoryId === category.id
                   ? "border-brand-600 bg-brand-600/15 text-brand-700"
-                  : "border-line bg-white text-muted hover:text-ink",
+                  : "border-line bg-card text-muted hover:text-ink",
               )}
             >
               {category.name}
@@ -574,7 +574,7 @@ export function TransactionForm({
       ) : null}
 
       {/* ACCOUNTS */}
-      <div className="space-y-2 rounded-xl border border-line bg-white p-3">
+      <div className="space-y-2 rounded-xl border border-line bg-card p-3">
         <div className={cn("grid gap-2", isTransfer && "sm:grid-cols-[1fr_auto_1fr]")}>
           <label className="block">
             <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">
@@ -706,7 +706,7 @@ export function TransactionForm({
                     setValue("description", note, { shouldDirty: true });
                     setNoteOpen(true);
                   }}
-                  className="max-w-full truncate rounded-full border border-line bg-white px-3 py-1.5 text-xs font-medium text-muted transition hover:border-brand-500 hover:text-brand-700"
+                  className="max-w-full truncate rounded-full border border-line bg-card px-3 py-1.5 text-xs font-medium text-muted transition hover:border-brand-500 hover:text-brand-700"
                   title={note}
                 >
                   {note}
@@ -719,14 +719,14 @@ export function TransactionForm({
         <button
           type="button"
           onClick={() => setNoteOpen(true)}
-          className="h-11 rounded-xl border border-dashed border-line bg-white text-sm font-semibold text-muted hover:text-ink"
+          className="h-11 rounded-xl border border-dashed border-line bg-card text-sm font-semibold text-muted hover:text-ink"
         >
           {description ? `Note: ${description}` : "Add note"}
         </button>
       )}
 
       {/* KEYPAD or SAVE BAR */}
-      <div className="sticky bottom-0 z-20 mt-auto -mx-1 border-t border-line bg-white/95 px-1 pb-2 pt-2 backdrop-blur">
+      <div className="sticky bottom-0 z-20 mt-auto -mx-1 border-t border-line bg-card/95 px-1 pb-2 pt-2 backdrop-blur">
         {keypadOpen ? (
           <div className="space-y-1.5">
             <div className="grid grid-cols-4 gap-1.5">
@@ -781,7 +781,7 @@ export function TransactionForm({
             <button
               type="button"
               onClick={onCancel}
-              className="h-12 rounded-xl border border-line bg-white px-5 text-sm font-semibold text-muted hover:text-ink"
+              className="h-12 rounded-xl border border-line bg-card px-5 text-sm font-semibold text-muted hover:text-ink"
             >
               Cancel
             </button>

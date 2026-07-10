@@ -115,7 +115,7 @@ export function CategoryForm({
         </div>
 
         {open && (
-          <div className="absolute z-50 mt-1 bg-white border rounded-xl shadow-lg w-full max-h-64 overflow-y-auto">
+          <div className="absolute z-50 mt-1 bg-card border rounded-xl shadow-lg w-full max-h-64 overflow-y-auto">
             {/* NO PARENT */}
             <div
               onClick={() => {
@@ -125,7 +125,7 @@ export function CategoryForm({
                 });
                 setOpen(false);
               }}
-              className="px-3 py-2 hover:bg-gray-100 cursor-pointer"
+              className="px-3 py-2 hover:bg-surface cursor-pointer"
             >
               No Parent
             </div>
@@ -141,8 +141,8 @@ export function CategoryForm({
                   });
                   setOpen(false);
                 }}
-                className={`px-3 py-2 cursor-pointer hover:bg-blue-100 ${
-                  selectedParent === p.id ? "bg-blue-50" : ""
+                className={`px-3 py-2 cursor-pointer hover:bg-brand-600/10 ${
+                  selectedParent === p.id ? "bg-brand-600/15 text-brand-700" : ""
                 }`}
               >
                 {p.name}

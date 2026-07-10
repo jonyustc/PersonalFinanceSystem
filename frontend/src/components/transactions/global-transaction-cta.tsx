@@ -83,7 +83,7 @@ export function GlobalTransactionCta() {
           >
             {/* Bottom sheet on mobile, right panel on desktop */}
             <motion.section
-              className="absolute inset-x-0 bottom-0 flex h-[94dvh] w-full flex-col rounded-t-3xl bg-white sm:inset-y-0 sm:left-auto sm:right-0 sm:h-full sm:max-w-xl sm:rounded-none sm:ring-1 sm:ring-line"
+              className="absolute inset-x-0 bottom-0 flex h-[94dvh] w-full flex-col rounded-t-3xl bg-card sm:inset-y-0 sm:left-auto sm:right-0 sm:h-full sm:max-w-xl sm:rounded-none sm:ring-1 sm:ring-line"
               initial={{ y: 480, opacity: 0.6 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 480, opacity: 0 }}

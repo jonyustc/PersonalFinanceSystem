@@ -269,7 +269,7 @@ export default function DashboardPage() {
           }
         />
         {todayQuery.isLoading ? (
-          <div className="card h-40 animate-pulse bg-slate-100" />
+          <div className="card h-40 animate-pulse bg-surface" />
         ) : todayQuery.isError ? (
           <ErrorCard
             message="Couldn't load today's transactions."
@@ -307,22 +307,22 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
 function DashboardSkeleton() {
   return (
     <div className="mx-auto max-w-2xl space-y-4 lg:max-w-5xl">
-      <div className="h-36 animate-pulse rounded-2xl bg-slate-200/70" />
+      <div className="h-36 animate-pulse rounded-2xl bg-line/70" />
       <div className="flex justify-end">
-        <div className="h-9 w-44 animate-pulse rounded-full bg-slate-200/70" />
+        <div className="h-9 w-44 animate-pulse rounded-full bg-line/70" />
       </div>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="h-32 animate-pulse rounded-2xl bg-slate-200/70" />
+          <div key={index} className="h-32 animate-pulse rounded-2xl bg-line/70" />
         ))}
       </div>
-      <div className="h-24 animate-pulse rounded-2xl bg-slate-200/70" />
+      <div className="h-24 animate-pulse rounded-2xl bg-line/70" />
       <div className="-mx-3 flex gap-3 overflow-hidden px-3">
         {Array.from({ length: 3 }).map((_, index) => (
-          <div key={index} className="h-24 min-w-[160px] animate-pulse rounded-2xl bg-slate-200/70" />
+          <div key={index} className="h-24 min-w-[160px] animate-pulse rounded-2xl bg-line/70" />
         ))}
       </div>
-      <div className="h-64 animate-pulse rounded-2xl bg-slate-200/70" />
+      <div className="h-64 animate-pulse rounded-2xl bg-line/70" />
     </div>
   );
 }

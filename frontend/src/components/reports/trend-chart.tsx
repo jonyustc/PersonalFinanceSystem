@@ -38,7 +38,7 @@ function TrendTooltip({ active, label, payload }: TrendTooltipProps) {
   if (!active || !payload?.length) return null;
   const value = Number(payload[0]?.value ?? 0);
   return (
-    <div className="rounded-lg border border-line bg-white px-2.5 py-1.5">
+    <div className="rounded-lg border border-line bg-card px-2.5 py-1.5">
       <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
         {label}
       </p>

@@ -9,7 +9,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           </h2>
           <div className="mt-8 grid max-w-lg grid-cols-2 gap-3">
             {["Bank balances", "Monthly budgets", "Stock holdings", "Reports"].map((item) => (
-              <div className="rounded-lg border border-line bg-white p-4 shadow-soft" key={item}>
+              <div className="rounded-lg border border-line bg-card p-4 shadow-soft" key={item}>
                 <p className="text-sm font-medium text-ink">{item}</p>
               </div>
             ))}

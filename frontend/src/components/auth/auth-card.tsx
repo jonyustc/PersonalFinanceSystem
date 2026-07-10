@@ -12,7 +12,7 @@ type AuthCardProps = {
 
 export function AuthCard({ title, subtitle, switchLabel, switchHref, switchText, children }: AuthCardProps) {
   return (
-    <div className="mx-auto w-full max-w-md rounded-lg border border-line bg-white p-6 shadow-soft sm:p-8">
+    <div className="mx-auto w-full max-w-md rounded-lg border border-line bg-card p-6 shadow-soft sm:p-8">
       <div className="mb-7">
         <p className="text-sm font-semibold text-brand-700">Personal Finance</p>
         <h1 className="mt-3 text-3xl font-semibold text-ink">{title}</h1>

@@ -140,7 +140,7 @@ export function AccountForm({ account, onSubmit, onCancel }: Props) {
                 key={type.value}
                 className={cn(
                   "flex h-11 cursor-pointer items-center justify-center gap-2 rounded-md border text-sm font-semibold",
-                  active ? "border-brand-600 bg-brand-50 text-brand-700" : "border-line bg-white text-muted",
+                  active ? "border-brand-600 bg-brand-50 text-brand-700" : "border-line bg-card text-muted",
                 )}
               >
                 <input className="sr-only" type="radio" value={type.value} {...register("type")} />

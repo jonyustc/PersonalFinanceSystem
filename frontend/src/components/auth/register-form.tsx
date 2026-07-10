@@ -44,7 +44,7 @@ export function RegisterForm() {
       <Input label="Full name" autoComplete="name" error={errors.full_name?.message} {...register("full_name")} />
       <Input label="Email" type="email" autoComplete="email" error={errors.email?.message} {...register("email")} />
       <Input label="Password" type="password" autoComplete="new-password" error={errors.password?.message} {...register("password")} />
-      {error ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="rounded-md bg-expense-soft px-3 py-2 text-sm text-expense">{error}</p> : null}
       <Button className="w-full" disabled={isSubmitting} type="submit">
         <UserPlus className="h-4 w-4" aria-hidden />
         {isSubmitting ? "Creating account..." : "Create account"}

@@ -163,7 +163,7 @@ export default function CategoriesPage() {
     return (
       <div key={cat.id}>
         <div
-          className="flex justify-between items-center bg-white border rounded p-3 mb-2"
+          className="flex justify-between items-center bg-card border rounded p-3 mb-2"
           style={{ marginLeft: level * 20 }}
         >
           <div className="flex items-center gap-3">
@@ -191,7 +191,7 @@ export default function CategoriesPage() {
             {/* NAME */}
             <div>
               <p className="font-medium">{cat.name}</p>
-              <p className="text-xs text-gray-500">{cat.type}</p>
+              <p className="text-xs text-muted">{cat.type}</p>
             </div>
           </div>
 
@@ -202,7 +202,7 @@ export default function CategoriesPage() {
             </button>
 
             <button onClick={() => handleDelete(cat)}>
-              <Trash2 size={16} className="text-red-500" />
+              <Trash2 size={16} className="text-expense" />
             </button>
           </div>
         </div>
@@ -233,7 +233,7 @@ export default function CategoriesPage() {
         </div>
       </div>
 
-      {error && <p className="text-red-500">{error}</p>}
+      {error && <p className="text-expense">{error}</p>}
 
       {/* SUMMARY */}
       <div className="grid md:grid-cols-2 gap-4">
@@ -282,7 +282,7 @@ export default function CategoriesPage() {
 
 function Card({ title, children }: any) {
   return (
-    <div className="bg-white p-4 rounded-xl border shadow-sm">
+    <div className="bg-card p-4 rounded-xl border shadow-sm">
       <h2 className="font-semibold mb-2">{title}</h2>
       {children}
     </div>

@@ -2,11 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Light palette (default) — mirrors mobile/lib/src/theme light values */
 :root {
   color-scheme: light;
-  background: #f6f8fb;
-  color: #0f172a;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  --c-surface: 246 248 251; /* #F6F8FB */
+  --c-card: 255 255 255;
+  --c-line: 231 236 243; /* #E7ECF3 */
+  --c-ink: 15 23 42; /* #0F172A */
+  --c-muted: 102 112 133; /* #667085 */
+
+  --c-brand-50: 240 253 250;
+  --c-brand-100: 204 251 241;
+  --c-brand-700: 17 94 89; /* #115E59 */
+
+  --c-income: 21 128 61; /* #15803D */
+  --c-income-soft: 220 252 231;
+  --c-expense: 185 28 28; /* #B91C1C */
+  --c-expense-soft: 254 226 226;
+  --c-warning: 180 83 9; /* #B45309 */
+  --c-warning-soft: 254 243 199;
+}
+
+/* Dark palette — mirrors the mobile app's dark theme */
+.dark {
+  color-scheme: dark;
+
+  --c-surface: 11 17 24; /* #0B1118 */
+  --c-card: 19 26 38; /* #131A26 */
+  --c-line: 39 50 68; /* #273244 */
+  --c-ink: 226 232 240; /* #E2E8F0 */
+  --c-muted: 148 163 184; /* #94A3B8 */
+
+  --c-brand-50: 4 47 46;
+  --c-brand-100: 19 78 74;
+  --c-brand-700: 45 212 191; /* bright teal for text accents on dark */
+
+  --c-income: 74 222 128; /* #4ADE80 */
+  --c-income-soft: 20 83 45;
+  --c-expense: 248 113 113; /* #F87171 */
+  --c-expense-soft: 69 10 10;
+  --c-warning: 251 191 36; /* #FBBF24 */
+  --c-warning-soft: 69 26 3;
 }
 
 * {
@@ -16,8 +54,8 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: #f6f8fb;
-  color: #0f172a;
+  background: rgb(var(--c-surface));
+  color: rgb(var(--c-ink));
 }
 
 a {
@@ -34,16 +72,38 @@ textarea {
 
 @layer components {
   .input {
-    @apply w-full rounded-lg border border-line bg-white px-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-600 focus:ring-4 focus:ring-brand-100;
+    @apply w-full rounded-lg border border-line bg-card px-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-brand-600 focus:ring-4 focus:ring-brand-100;
   }
 
   /* Flat bordered card — mirrors the mobile app's AppCard (no shadow, hairline border) */
   .card {
-    @apply rounded-2xl border border-line bg-white;
+    @apply rounded-2xl border border-line bg-card;
   }
 
   /* Money figures always use tabular numerals so columns line up */
   .money {
     font-variant-numeric: tabular-nums;
   }
+}
+
+/* Recharts theme awareness — default tooltips, slice separators, and axis
+   ticks follow the semantic palette in both light and dark. */
+.recharts-default-tooltip {
+  background-color: rgb(var(--c-card)) !important;
+  border: 1px solid rgb(var(--c-line)) !important;
+  border-radius: 12px;
+  color: rgb(var(--c-ink)) !important;
+}
+
+.recharts-tooltip-label,
+.recharts-tooltip-item {
+  color: rgb(var(--c-ink)) !important;
+}
+
+.recharts-sector {
+  stroke: rgb(var(--c-card));
+}
+
+.recharts-cartesian-axis-tick-value {
+  fill: rgb(var(--c-muted));
 }

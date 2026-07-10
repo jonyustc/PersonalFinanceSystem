@@ -178,12 +178,12 @@ export function TransactionExperience() {
 
   return (
     <div className="w-full max-w-full overflow-x-hidden min-h-[calc(100vh-7rem)] space-y-3 pb-28 md:space-y-5 md:pb-6">
-      <section className="-mx-3 overflow-hidden border-b border-line bg-white px-3 py-3 shadow-sm sm:-mx-4 sm:px-4 md:mx-0 md:rounded-md md:border md:px-4">
+      <section className="-mx-3 overflow-hidden border-b border-line bg-card px-3 py-3 shadow-sm sm:-mx-4 sm:px-4 md:mx-0 md:rounded-md md:border md:px-4">
         <div className="min-w-0 space-y-3">
           <SmartSearchBar value={searchDraft} onChange={setSearchDraft} />
 
           <div className="flex min-w-0 gap-2">
-            <div className="flex h-11 flex-1 items-center rounded-md border border-line bg-white">
+            <div className="flex h-11 flex-1 items-center rounded-md border border-line bg-card">
               <button
                 type="button"
                 className="flex h-10 w-11 shrink-0 items-center justify-center text-muted hover:text-brand-700"
@@ -218,7 +218,7 @@ export function TransactionExperience() {
                   setSearchDraft("");
                   setFilters({ from_date: todayIso, to_date: todayIso, type: "expense", limit: 30 });
                 }}
-                className="inline-flex h-11 shrink-0 items-center justify-center rounded-md border border-line bg-white px-3 text-xs font-semibold text-muted"
+                className="inline-flex h-11 shrink-0 items-center justify-center rounded-md border border-line bg-card px-3 text-xs font-semibold text-muted"
               >
                 Clear
               </button>
@@ -335,7 +335,7 @@ function DaySummaryPanel({
   ].filter(Boolean) as { label: string; onClear: () => void }[];
 
   return (
-    <section className="min-w-0 rounded-md border border-line bg-white p-3 shadow-sm">
+    <section className="min-w-0 rounded-md border border-line bg-card p-3 shadow-sm">
       <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-ink">
@@ -383,8 +383,8 @@ function SummaryMetric({
   loading: boolean;
 }) {
   const colors = {
-    income: "text-emerald-700",
-    expense: "text-rose-700",
+    income: "text-income",
+    expense: "text-expense",
     net: "text-ink",
   };
   return (
@@ -411,7 +411,7 @@ function SmartSearchBar({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder="Search merchant, note, amount, tags..."
-        className="h-11 w-full rounded-full border border-line bg-white pl-10 pr-4 text-sm outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
+        className="h-11 w-full rounded-full border border-line bg-card pl-10 pr-4 text-sm outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
       />
     </label>
   );
@@ -448,7 +448,7 @@ function TypeTabs({
                 "h-10 rounded-full border px-4 text-sm font-semibold transition",
                 active
                   ? "border-brand-600 bg-brand-600 text-white shadow-sm"
-                  : "border-line bg-white text-muted hover:border-brand-200 hover:text-brand-700",
+                  : "border-line bg-card text-muted hover:border-brand-200 hover:text-brand-700",
               )}
             >
               {option.label}
@@ -482,7 +482,7 @@ function AccountTabs({
             "h-10 rounded-full border px-4 text-sm font-semibold transition",
             !value
               ? "border-ink bg-ink text-white shadow-sm"
-              : "border-line bg-white text-muted hover:border-brand-200 hover:text-brand-700",
+              : "border-line bg-card text-muted hover:border-brand-200 hover:text-brand-700",
           )}
         >
           All accounts
@@ -498,7 +498,7 @@ function AccountTabs({
                 "h-10 max-w-44 rounded-full border px-4 text-sm font-semibold transition",
                 active
                   ? "border-ink bg-ink text-white shadow-sm"
-                  : "border-line bg-white text-muted hover:border-brand-200 hover:text-brand-700",
+                  : "border-line bg-card text-muted hover:border-brand-200 hover:text-brand-700",
               )}
               title={account.name}
             >
@@ -611,17 +611,17 @@ function TransactionCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index * 0.025, 0.18) }}
-      className="group min-w-0 rounded-md border border-line bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft"
+      className="group min-w-0 rounded-md border border-line bg-card p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft"
     >
       <div className="flex min-w-0 items-start gap-3">
         <div
           className={cn(
             "flex h-11 w-11 shrink-0 items-center justify-center rounded-md",
             type === "income"
-              ? "bg-emerald-50 text-emerald-600"
+              ? "bg-income-soft text-income"
               : type === "transfer" && !isCardSpending
-                ? "bg-slate-100 text-slate-600"
-                : "bg-rose-50 text-rose-600",
+                ? "bg-surface text-muted"
+                : "bg-expense-soft text-expense",
           )}
         >
           <Icon className="h-5 w-5" />
@@ -640,10 +640,10 @@ function TransactionCard({
               className={cn(
                 "max-w-full truncate text-left text-base font-semibold sm:shrink-0 sm:text-right",
                 type === "income"
-                  ? "text-emerald-600"
+                  ? "text-income"
                   : type === "transfer" && !isCardSpending
-                    ? "text-slate-600"
-                    : "text-rose-600",
+                    ? "text-muted"
+                    : "text-expense",
               )}
             >
               {type === "income" ? "+" : type === "expense" || isCardSpending ? "-" : ""}
@@ -678,7 +678,7 @@ function TransactionCard({
           Edit
         </button>
         <button
-          className="rounded-full bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-600"
+          className="rounded-full bg-expense-soft px-3 py-1.5 text-xs font-semibold text-expense"
           onClick={onDelete}
         >
           Delete
@@ -728,7 +728,7 @@ function TransactionSidePanel({
           exit={{ opacity: 0 }}
         >
           <motion.section
-            className="absolute bottom-0 right-0 top-0 flex w-full flex-col bg-white shadow-2xl ring-1 ring-slate-200 sm:max-w-xl"
+            className="absolute bottom-0 right-0 top-0 flex w-full flex-col bg-card shadow-2xl ring-1 ring-line sm:max-w-xl"
             initial={{ x: 520 }}
             animate={{ x: 0 }}
             exit={{ x: 520 }}
@@ -736,14 +736,14 @@ function TransactionSidePanel({
           >
             <div className="flex items-center justify-between border-b border-line px-5 py-3">
               <div>
-                <p className="text-sm font-semibold text-slate-900">
+                <p className="text-sm font-semibold text-ink">
                   {title}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={onClose}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-line bg-slate-50 text-slate-700"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface text-ink"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -774,7 +774,7 @@ function SkeletonTimeline() {
       {Array.from({ length: 7 }).map((_, i) => (
         <div
           key={i}
-          className="h-24 animate-pulse rounded-md border border-line bg-white"
+          className="h-24 animate-pulse rounded-md border border-line bg-card"
         />
       ))}
     </div>
@@ -783,7 +783,7 @@ function SkeletonTimeline() {
 
 function EmptyState() {
   return (
-    <div className="rounded-md border border-dashed border-line bg-white p-8 text-center">
+    <div className="rounded-md border border-dashed border-line bg-card p-8 text-center">
       <CreditCard className="mx-auto h-10 w-10 text-brand-600" />
       <h2 className="mt-3 font-semibold">No transactions here</h2>
       <p className="mt-1 text-sm text-muted">

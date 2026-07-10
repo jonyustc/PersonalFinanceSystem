@@ -17,7 +17,7 @@ export function Modal({ open, title, description, children, onClose }: ModalProp
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
       <button className="absolute inset-0 bg-ink/35" onClick={onClose} type="button" aria-label="Close modal" />
-      <section className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-line bg-white p-5 shadow-soft">
+      <section className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-line bg-card p-5 shadow-soft">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-ink">{title}</h2>

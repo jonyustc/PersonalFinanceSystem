@@ -163,7 +163,7 @@ export default function BudgetsPage() {
     return (
       <div className="space-y-3">
         {Array.from({ length: 5 }).map((_, index) => (
-          <div key={index} className="h-24 animate-pulse rounded-md bg-white" />
+          <div key={index} className="h-24 animate-pulse rounded-md bg-card" />
         ))}
       </div>
     );
@@ -171,11 +171,11 @@ export default function BudgetsPage() {
 
   return (
     <div className="space-y-3 pb-24 md:space-y-5">
-      <section className="-mx-3 border-b border-line bg-white px-3 py-3 shadow-sm sm:-mx-4 sm:px-4 md:mx-0 md:rounded-md md:border md:px-4">
+      <section className="-mx-3 border-b border-line bg-card px-3 py-3 shadow-sm sm:-mx-4 sm:px-4 md:mx-0 md:rounded-md md:border md:px-4">
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-white text-muted"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-card text-muted"
             onClick={() => setMonth(shiftMonth(month, -1))}
             title="Previous month"
           >
@@ -183,7 +183,7 @@ export default function BudgetsPage() {
           </button>
           <button
             type="button"
-            className="flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink"
+            className="flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-md border border-line bg-card px-3 text-sm font-semibold text-ink"
             onClick={() => setMonth(monthKey())}
             title="Go to current month"
           >
@@ -192,7 +192,7 @@ export default function BudgetsPage() {
           </button>
           <button
             type="button"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-white text-muted"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-line bg-card text-muted"
             onClick={() => setMonth(shiftMonth(month, 1))}
             title="Next month"
           >
@@ -201,7 +201,7 @@ export default function BudgetsPage() {
         </div>
       </section>
 
-      <section className="rounded-md border border-line bg-white p-4 shadow-sm">
+      <section className="rounded-md border border-line bg-card p-4 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase text-brand-700">
@@ -214,7 +214,7 @@ export default function BudgetsPage() {
               Plan category cost, then compare with real expense in reports.
             </p>
           </div>
-          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-income-soft text-income">
             <Wallet className="h-4 w-4" />
           </span>
         </div>
@@ -257,7 +257,7 @@ export default function BudgetsPage() {
         </div>
 
         {expenseParents.length === 0 ? (
-          <div className="rounded-md border border-dashed border-line bg-white p-6 text-center text-sm text-muted">
+          <div className="rounded-md border border-dashed border-line bg-card p-6 text-center text-sm text-muted">
             Add parent expense categories like Needs, Want, Loan, Investment.
           </div>
         ) : (
@@ -273,8 +273,8 @@ export default function BudgetsPage() {
                 <article
                   key={category.id}
                   className={cn(
-                    "rounded-md border bg-white p-4 shadow-sm",
-                    over ? "border-rose-200" : "border-line",
+                    "rounded-md border bg-card p-4 shadow-sm",
+                    over ? "border-expense/30" : "border-line",
                   )}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -300,20 +300,20 @@ export default function BudgetsPage() {
                       className="h-10 w-32 rounded-md border border-line bg-surface px-3 text-right text-sm font-semibold outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
                     />
                   </div>
-                  <div className="mt-3 h-2 rounded-full bg-slate-100">
+                  <div className="mt-3 h-2 rounded-full bg-surface">
                     <div
                       className={cn(
                         "h-2 rounded-full",
-                        over ? "bg-rose-500" : "bg-emerald-600",
+                        over ? "bg-expense" : "bg-income",
                       )}
                       style={{ width: `${Math.min(used, 100)}%` }}
                     />
                   </div>
                   <div className="mt-2 flex items-center justify-between text-xs">
-                    <span className={over ? "text-rose-600" : "text-muted"}>
+                    <span className={over ? "text-expense" : "text-muted"}>
                       {used.toFixed(0)}% used
                     </span>
-                    <span className={over ? "font-semibold text-rose-600" : "text-muted"}>
+                    <span className={over ? "font-semibold text-expense" : "text-muted"}>
                       Remaining {formatCurrency(planned - spent)}
                     </span>
                   </div>
@@ -324,7 +324,7 @@ export default function BudgetsPage() {
         )}
       </section>
 
-      <div className="sticky bottom-0 z-20 -mx-3 border-t border-line bg-white/95 px-3 py-2.5 backdrop-blur md:mx-0 md:rounded-md md:border md:px-4 md:py-3">
+      <div className="sticky bottom-0 z-20 -mx-3 border-t border-line bg-card/95 px-3 py-2.5 backdrop-blur md:mx-0 md:rounded-md md:border md:px-4 md:py-3">
         <Button className="w-full" disabled={saving} onClick={saveAll}>
           <Save className="h-4 w-4" />
           {saving ? "Saving..." : "Save monthly budget"}
@@ -370,9 +370,9 @@ function PlanMetric({
   warn?: boolean;
 }) {
   return (
-    <div className={cn("min-w-0 rounded-md bg-surface p-3", warn && "bg-rose-50")}>
+    <div className={cn("min-w-0 rounded-md bg-surface p-3", warn && "bg-expense-soft")}>
       <p className="text-xs font-medium text-muted">{label}</p>
-      <p className={cn("mt-1 truncate text-sm font-semibold", warn ? "text-rose-600" : "text-ink")}>
+      <p className={cn("mt-1 truncate text-sm font-semibold", warn ? "text-expense" : "text-ink")}>
         {formatCurrency(value)}
       </p>
     </div>

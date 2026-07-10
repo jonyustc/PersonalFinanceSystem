@@ -197,7 +197,7 @@ export default function AccountsPage() {
       </div>
 
       {error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="rounded-md border border-expense/30 bg-expense-soft px-4 py-3 text-sm text-expense">
           {error}
         </div>
       ) : null}
@@ -355,7 +355,7 @@ function AccountRow({
       : 0;
 
   return (
-    <article className="rounded-md border border-line bg-white p-4 shadow-soft">
+    <article className="rounded-md border border-line bg-card p-4 shadow-soft">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 gap-3">
           <div
@@ -393,9 +393,9 @@ function AccountRow({
                   </span>
                   <span>{utilization.toFixed(1)}% used</span>
                 </div>
-                <div className="h-2 rounded-full bg-slate-100">
+                <div className="h-2 rounded-full bg-surface">
                   <div
-                    className="h-2 rounded-full bg-amber-500"
+                    className="h-2 rounded-full bg-accent-500"
                     style={{ width: `${Math.min(utilization, 100)}%` }}
                   />
                 </div>
@@ -417,7 +417,7 @@ function AccountRow({
             <p
               className={cn(
                 "text-lg font-semibold",
-                Number(account.balance) < 0 ? "text-red-600" : "text-ink",
+                Number(account.balance) < 0 ? "text-expense" : "text-ink",
               )}
             >
               {formatCurrency(isCreditCard(account) ? currentOutstanding : account.balance, account.currency)}
@@ -446,7 +446,7 @@ function AccountRow({
               <Edit3 className="h-4 w-4" />
             </button>
             <button
-              className="rounded-md p-2 text-red-500 hover:bg-red-50"
+              className="rounded-md p-2 text-expense hover:bg-expense-soft"
               disabled={deleting}
               onClick={onDelete}
               type="button"

@@ -71,7 +71,7 @@ export function CategoryTreeSelect({
                 event.preventDefault();
                 setAddMode((current) => (current === "category" ? null : "category"));
               }}
-              className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-semibold text-brand-700"
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-card px-2 text-xs font-semibold text-brand-700"
             >
               <Plus className="h-3.5 w-3.5" />
               New
@@ -101,7 +101,7 @@ export function CategoryTreeSelect({
                 event.preventDefault();
                 setAddMode((current) => (current === "subcategory" ? null : "subcategory"));
               }}
-              className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-semibold text-brand-700 disabled:opacity-50"
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-card px-2 text-xs font-semibold text-brand-700 disabled:opacity-50"
             >
               <Plus className="h-3.5 w-3.5" />
               New
@@ -126,7 +126,7 @@ export function CategoryTreeSelect({
       {addMode ? (
         <div className="grid gap-2 rounded-md border border-line bg-surface p-2 sm:grid-cols-[1fr_auto_auto]">
           <input
-            className="input h-10 bg-white text-sm"
+            className="input h-10 bg-card text-sm"
             placeholder={addMode === "category" ? `Add ${type} category` : "Add subcategory"}
             value={addMode === "category" ? newCategoryName : newSubcategoryName}
             onChange={(event) =>
@@ -153,7 +153,7 @@ export function CategoryTreeSelect({
                 ? !newCategoryName.trim() || saving === "category"
                 : !newSubcategoryName.trim() || saving === "subcategory"
             }
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink disabled:opacity-50"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line bg-card px-3 text-sm font-semibold text-ink disabled:opacity-50"
           >
             <Plus className="h-4 w-4" />
             Add
@@ -161,7 +161,7 @@ export function CategoryTreeSelect({
           <button
             type="button"
             onClick={() => setAddMode(null)}
-            className="h-10 rounded-md border border-line bg-white px-3 text-sm font-semibold text-muted"
+            className="h-10 rounded-md border border-line bg-card px-3 text-sm font-semibold text-muted"
           >
             Cancel
           </button>

@@ -10,22 +10,22 @@ function iconByType(type: Insight["type"]) {
 }
 
 function colorByType(type: Insight["type"]) {
-  if (type === "warning") return "bg-red-50 text-red-700";
-  if (type === "success") return "bg-green-50 text-green-700";
-  return "bg-blue-50 text-blue-700";
+  if (type === "warning") return "bg-expense-soft text-expense";
+  if (type === "success") return "bg-income-soft text-income";
+  return "bg-brand-600/15 text-brand-700";
 }
 
 export function InsightsPanel({ items }: { items: Insight[] }) {
   if (!items?.length) {
     return (
-      <div className="bg-white p-4 rounded-2xl border border-gray-100">
-        <p className="text-sm text-gray-500">No insights yet</p>
+      <div className="bg-card p-4 rounded-2xl border border-line">
+        <p className="text-sm text-muted">No insights yet</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm space-y-3">
+    <div className="bg-card p-4 rounded-2xl border border-line shadow-sm space-y-3">
       <h3 className="font-semibold">AI Insights</h3>
 
       {items.map((it, i) => {

@@ -213,14 +213,14 @@ export default function FundTrackerPage() {
       <div className="flex flex-wrap gap-3">
         <button
           onClick={() => openAdd("mine")}
-          className="inline-flex items-center gap-2 rounded-md border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-semibold text-violet-700 hover:bg-violet-100 transition"
+          className="inline-flex items-center gap-2 rounded-md border border-violet-500/30 bg-violet-500/10 px-4 py-2.5 text-sm font-semibold text-violet-700 hover:bg-violet-500/20 transition dark:text-violet-300"
         >
           <Plus className="h-4 w-4" />
           Add My Expense
         </button>
         <button
           onClick={() => openAdd("friend")}
-          className="inline-flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 hover:bg-amber-100 transition"
+          className="inline-flex items-center gap-2 rounded-md border border-warning/30 bg-warning-soft px-4 py-2.5 text-sm font-semibold text-warning hover:bg-warning/20 transition"
         >
           <Plus className="h-4 w-4" />
           Add Friend's Expense
@@ -341,22 +341,22 @@ function SpendSplitBar({ summary }: { summary: FundSummary }) {
   if (total <= 0) return null;
 
   return (
-    <div className="rounded-xl border border-line bg-white p-4 shadow-soft">
+    <div className="rounded-xl border border-line bg-card p-4 shadow-soft">
       <h3 className="text-sm font-semibold text-ink mb-3">Spending Split</h3>
-      <div className="flex h-4 w-full overflow-hidden rounded-full bg-slate-100">
+      <div className="flex h-4 w-full overflow-hidden rounded-full bg-surface">
         <div
           className="h-full bg-violet-500 transition-all"
           style={{ width: `${summary.my_spent_pct}%` }}
           title={`Mine: ${summary.my_spent_pct}%`}
         />
         <div
-          className="h-full bg-amber-500 transition-all"
+          className="h-full bg-accent-500 transition-all"
           style={{ width: `${summary.friend_spent_pct}%` }}
           title={`Friend: ${summary.friend_spent_pct}%`}
         />
         {summary.untagged_pct > 0 && (
           <div
-            className="h-full bg-slate-300 transition-all"
+            className="h-full bg-muted/40 transition-all"
             style={{ width: `${summary.untagged_pct}%` }}
             title={`Untagged: ${summary.untagged_pct}%`}
           />
@@ -371,7 +371,7 @@ function SpendSplitBar({ summary }: { summary: FundSummary }) {
           </span>
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded-full bg-amber-500 inline-block" />
+          <span className="h-3 w-3 rounded-full bg-accent-500 inline-block" />
           <span className="text-muted">Friend</span>
           <span className="font-semibold text-ink">
             {formatCurrency(summary.friend_spent)} ({summary.friend_spent_pct}%)
@@ -379,7 +379,7 @@ function SpendSplitBar({ summary }: { summary: FundSummary }) {
         </span>
         {summary.untagged_spent > 0 && (
           <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-full bg-slate-300 inline-block" />
+            <span className="h-3 w-3 rounded-full bg-muted/40 inline-block" />
             <span className="text-muted">Untagged</span>
             <span className="font-semibold text-ink">
               {formatCurrency(summary.untagged_spent)} ({summary.untagged_pct}%)
@@ -395,7 +395,7 @@ function OverviewTab({ summary }: { summary: FundSummary }) {
   return (
     <div className="space-y-4">
       {/* Settlement suggestion */}
-      <div className="rounded-xl border border-line bg-white p-4 shadow-soft">
+      <div className="rounded-xl border border-line bg-card p-4 shadow-soft">
         <h3 className="text-sm font-semibold text-ink mb-1">
           Settlement Summary
         </h3>
@@ -437,7 +437,7 @@ function OverviewTab({ summary }: { summary: FundSummary }) {
       </div>
 
       {/* Recent activity */}
-      <div className="rounded-xl border border-line bg-white p-4 shadow-soft">
+      <div className="rounded-xl border border-line bg-card p-4 shadow-soft">
         <h3 className="text-sm font-semibold text-ink mb-3">Recent Activity</h3>
         {summary.recent_transactions.length === 0 ? (
           <p className="text-sm text-muted">No transactions yet.</p>
@@ -472,9 +472,9 @@ function Row({
       <span
         className={
           highlight === "green"
-            ? "text-emerald-600"
+            ? "text-income"
             : highlight === "red"
-              ? "text-red-600"
+              ? "text-expense"
               : ""
         }
       >
@@ -496,7 +496,7 @@ function TransactionList({
 }) {
   if (transactions.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-line bg-white p-8 text-center">
+      <div className="rounded-xl border border-dashed border-line bg-card p-8 text-center">
         <p className="text-sm text-muted">{emptyText}</p>
       </div>
     );
@@ -513,9 +513,9 @@ function TransactionList({
 
 function TransactionRow({ transaction }: { transaction: FundTransaction }) {
   const memberColors = {
-    mine: "bg-violet-50 text-violet-700 border-violet-200",
-    friend: "bg-amber-50 text-amber-700 border-amber-200",
-    untagged: "bg-slate-50 text-slate-500 border-slate-200",
+    mine: "bg-violet-500/10 text-violet-700 border-violet-500/30 dark:text-violet-300",
+    friend: "bg-warning-soft text-warning border-warning/30",
+    untagged: "bg-surface text-muted border-line",
   };
   const memberLabels = {
     mine: "Mine",
@@ -530,7 +530,7 @@ function TransactionRow({ transaction }: { transaction: FundTransaction }) {
         : HelpCircle;
 
   return (
-    <article className="flex items-center justify-between gap-3 rounded-lg border border-line bg-white px-4 py-3 shadow-sm">
+    <article className="flex items-center justify-between gap-3 rounded-lg border border-line bg-card px-4 py-3 shadow-sm">
       <div className="flex items-center gap-3 min-w-0">
         <div
           className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${
@@ -562,7 +562,7 @@ function TransactionRow({ transaction }: { transaction: FundTransaction }) {
         </span>
         <p
           className={`text-sm font-semibold ${
-            transaction.type === "income" ? "text-emerald-600" : "text-rose-600"
+            transaction.type === "income" ? "text-income" : "text-expense"
           }`}
         >
           {transaction.type === "expense" ? "-" : "+"}
@@ -628,8 +628,8 @@ function AddExpenseForm({
                 selectedMember === m
                   ? m === "mine"
                     ? "border-violet-600 bg-violet-600 text-white"
-                    : "border-amber-500 bg-amber-500 text-white"
-                  : "border-line bg-white text-muted hover:bg-surface"
+                    : "border-amber-500 bg-accent-500 text-white"
+                  : "border-line bg-card text-muted hover:bg-surface"
               }`}
             >
               {m === "mine" ? (
@@ -655,7 +655,7 @@ function AddExpenseForm({
           autoFocus
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
+          className="h-11 w-full rounded-md border border-line bg-card px-3 text-sm outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
           placeholder="0.00"
         />
       </div>
@@ -668,7 +668,7 @@ function AddExpenseForm({
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
+          className="h-11 w-full rounded-md border border-line bg-card px-3 text-sm outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
           placeholder="What was this for?"
         />
       </div>
@@ -680,7 +680,7 @@ function AddExpenseForm({
         <select
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
-          className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
+          className="h-11 w-full rounded-md border border-line bg-card px-3 text-sm outline-none focus:border-brand-600 focus:ring-4 focus:ring-brand-100"
         >
           <option value="">No category</option>
           {categories.map((c) => (

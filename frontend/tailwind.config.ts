@@ -2,20 +2,24 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: ["./src/**/*.{js,ts,jsx,tsx,mdx}"],
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
-        ink: "#0f172a",
-        muted: "#667085",
-        line: "#e7ecf3",
-        surface: "#f6f8fb",
+        // Semantic tokens backed by CSS variables (see globals.css) so the
+        // whole app flips between the light and dark Flutter palettes.
+        ink: "rgb(var(--c-ink) / <alpha-value>)",
+        muted: "rgb(var(--c-muted) / <alpha-value>)",
+        line: "rgb(var(--c-line) / <alpha-value>)",
+        surface: "rgb(var(--c-surface) / <alpha-value>)",
+        card: "rgb(var(--c-card) / <alpha-value>)",
         brand: {
-          50: "#f0fdfa",
-          100: "#ccfbf1",
+          50: "rgb(var(--c-brand-50) / <alpha-value>)",
+          100: "rgb(var(--c-brand-100) / <alpha-value>)",
           200: "#99f6e4",
           500: "#14b8a6",
           600: "#0f766e",
-          700: "#115e59"
+          700: "rgb(var(--c-brand-700) / <alpha-value>)"
         },
         accent: {
           100: "#fef3c7",
@@ -23,17 +27,20 @@ const config: Config = {
           600: "#b45309"
         },
         income: {
-          DEFAULT: "#15803d",
-          soft: "#dcfce7"
+          DEFAULT: "rgb(var(--c-income) / <alpha-value>)",
+          soft: "rgb(var(--c-income-soft) / <alpha-value>)"
         },
         expense: {
-          DEFAULT: "#b91c1c",
-          soft: "#fee2e2"
+          DEFAULT: "rgb(var(--c-expense) / <alpha-value>)",
+          soft: "rgb(var(--c-expense-soft) / <alpha-value>)"
         },
         warning: {
-          DEFAULT: "#b45309",
-          soft: "#fef3c7"
+          DEFAULT: "rgb(var(--c-warning) / <alpha-value>)",
+          soft: "rgb(var(--c-warning-soft) / <alpha-value>)"
         }
+      },
+      borderColor: {
+        DEFAULT: "rgb(var(--c-line) / 1)"
       },
       boxShadow: {
         soft: "0 12px 32px rgba(23, 33, 43, 0.08)",

@@ -22,7 +22,7 @@ const FALLBACK_ICONS: Record<Transaction["type"], LucideIcon> = {
 const FALLBACK_COLORS: Record<Transaction["type"], string> = {
   expense: "#dc2626",
   income: "#16a34a",
-  transfer: "#475569",
+  transfer: "#64748b",
 };
 
 const FALLBACK_TITLES: Record<Transaction["type"], string> = {

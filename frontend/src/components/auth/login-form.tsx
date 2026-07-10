@@ -42,7 +42,7 @@ export function LoginForm() {
     <form className="space-y-4" onSubmit={handleSubmit(onSubmit)}>
       <Input label="Email" type="email" autoComplete="email" error={errors.email?.message} {...register("email")} />
       <Input label="Password" type="password" autoComplete="current-password" error={errors.password?.message} {...register("password")} />
-      {error ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="rounded-md bg-expense-soft px-3 py-2 text-sm text-expense">{error}</p> : null}
       <Button className="w-full" disabled={isSubmitting} type="submit">
         <LogIn className="h-4 w-4" aria-hidden />
         {isSubmitting ? "Signing in..." : "Sign in"}
