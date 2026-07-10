@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/finance_summary.dart' show countsInTotals;
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
@@ -226,6 +227,7 @@ class _CategoriesPageState extends ConsumerState<CategoriesPage> {
       if (local.year != now.year || local.month != now.month) continue;
       final categoryId = row['category_id'] as String?;
       if (categoryId == null) continue;
+      if (!countsInTotals(row)) continue;
       direct[categoryId] = (direct[categoryId] ?? 0) + asDouble(row['amount']);
     }
 

@@ -92,6 +92,7 @@ const schema = z
     amount: z.coerce.number().gt(0, "Amount required"),
     txn_date: z.string(),
     is_emergency: z.boolean().optional(),
+    include_in_totals: z.boolean().optional(),
     description: z.string().optional(),
   })
   .refine(
@@ -177,6 +178,7 @@ export function TransactionForm({
         ? new Date(transaction.txn_date).toISOString().slice(0, 16)
         : selectedDate + "T12:00",
       is_emergency: transaction?.is_emergency ?? false,
+      include_in_totals: transaction?.include_in_totals ?? true,
       description: transaction?.description ?? "",
     },
   });
@@ -416,6 +418,7 @@ export function TransactionForm({
       txn_date: new Date(values.txn_date).toISOString(),
       merchant_name: null,
       is_emergency: values.is_emergency || false,
+      include_in_totals: values.include_in_totals ?? true,
       description: values.description || null,
     });
   }
@@ -724,6 +727,21 @@ export function TransactionForm({
           {description ? `Note: ${description}` : "Add note"}
         </button>
       )}
+
+      {/* INCLUDE IN TOTALS */}
+      <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-line bg-card px-3 py-2.5">
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold text-ink">Include in total &amp; budget</span>
+          <span className="block text-[11px] text-muted">
+            Off = still moves balance, hidden from reports &amp; budget
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          className="h-5 w-5 shrink-0 accent-brand-600"
+          {...register("include_in_totals")}
+        />
+      </label>
 
       {/* KEYPAD or SAVE BAR */}
       <div className="sticky bottom-0 z-20 mt-auto -mx-1 border-t border-line bg-card/95 px-1 pb-2 pt-2 backdrop-blur">

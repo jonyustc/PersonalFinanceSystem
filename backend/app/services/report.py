@@ -51,6 +51,7 @@ class ReportService:
             .outerjoin(Category, Category.id == Transaction.category_id)
             .where(
                 Transaction.user_id == user_id,
+                Transaction.include_in_totals.is_(True),
                 self._report_expense_filter(),
                 extract("month", Transaction.txn_date) == month,
                 extract("year", Transaction.txn_date) == year,
@@ -81,6 +82,7 @@ class ReportService:
     async def category_report(self, user_id, from_date=None, to_date=None):
         conditions = [
             Transaction.user_id == user_id,
+            Transaction.include_in_totals.is_(True),
             self._report_expense_filter(),
         ]
         conditions.extend(self._date_range_conditions(from_date, to_date))
@@ -118,6 +120,7 @@ class ReportService:
             .where(
                 Transaction.user_id == user_id,
                 Transaction.type == "income",
+                Transaction.include_in_totals.is_(True),
                 extract("year", Transaction.txn_date) == year,
             )
             .group_by(extract("month", Transaction.txn_date))
@@ -183,6 +186,7 @@ class ReportService:
             .where(
                 Transaction.user_id == user_id,
                 Transaction.transaction_status == "posted",
+                Transaction.include_in_totals.is_(True),
                 Transaction.account_id.in_(card_ids),
                 or_(
                     Transaction.type == "expense",
@@ -202,6 +206,7 @@ class ReportService:
             .where(
                 Transaction.user_id == user_id,
                 Transaction.transaction_status == "posted",
+                Transaction.include_in_totals.is_(True),
                 Transaction.transfer_account_id.in_(card_ids),
                 Transaction.type == "transfer",
                 or_(

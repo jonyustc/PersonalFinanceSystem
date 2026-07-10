@@ -145,6 +145,19 @@ class FinanceInsight {
 
 enum InsightSeverity { info, warning, positive }
 
+/// Whether a transaction row counts toward locally-computed spending/income
+/// totals, report rollups, and budget spent math. The API sends
+/// `include_in_totals` as a bool; the sqflite mirror stores it as 1/0. A
+/// missing value means true (the server default), so rows from older caches
+/// keep counting. Excluded rows still move account balances (server-owned)
+/// and still appear in transaction lists.
+bool countsInTotals(Map<String, dynamic> row) {
+  final value = row['include_in_totals'];
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  return true;
+}
+
 FinanceSummary buildFinanceSummary({
   required List<Map<String, dynamic>> accounts,
   required List<Map<String, dynamic>> categories,
@@ -240,6 +253,9 @@ FinanceSummary buildFinanceSummary({
     if ((row['transaction_status'] as String? ?? 'posted') != 'posted') {
       continue;
     }
+    // Rows flagged include_in_totals=false still move balances (already
+    // reflected in account rows) but are excluded from every local rollup.
+    if (!countsInTotals(row)) continue;
     final amount = asDouble(row['amount']);
     final type = row['type'] as String? ?? 'expense';
     final date = DateTime.tryParse(row['txn_date'] as String? ?? '');

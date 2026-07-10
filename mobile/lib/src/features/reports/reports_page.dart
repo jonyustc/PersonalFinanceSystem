@@ -4,6 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/finance_summary.dart' show countsInTotals;
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
@@ -237,6 +238,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     var total = 0.0;
     for (final row in transactions) {
       if (row['type'] != 'income') continue;
+      if (!countsInTotals(row)) continue;
       if (!_isInRange(row)) continue;
       total += asDouble(row['amount']);
     }
@@ -252,6 +254,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     var total = 0.0;
     for (final row in transactions) {
       if (!_isReportExpense(row)) continue;
+      if (!countsInTotals(row)) continue;
       final date = DateTime.tryParse(row['txn_date'] as String? ?? '');
       if (date == null) continue;
       if (date.isBefore(prevStart) || date.isAfter(prevEnd)) continue;
@@ -272,6 +275,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
     final totals = {for (final m in months) '${m.year}-${m.month}': 0.0};
     for (final row in transactions) {
       if (!_isReportExpense(row)) continue;
+      if (!countsInTotals(row)) continue;
       final date = DateTime.tryParse(row['txn_date'] as String? ?? '');
       if (date == null) continue;
       final key = '${date.year}-${date.month}';
@@ -400,6 +404,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
 
     for (final transaction in transactions) {
       if (!_isReportExpense(transaction)) continue;
+      if (!countsInTotals(transaction)) continue;
       if (!_isInRange(transaction)) continue;
       final rawCategoryId = transaction['category_id'] as String?;
       if (rawCategoryId == null) continue;
@@ -1629,9 +1634,12 @@ class _TransactionList extends StatelessWidget {
     final categoryById = {
       for (final c in categories) c['id'] as String: c,
     };
+    // Excluded rows remain visible in the list below but don't count in the
+    // category header total.
     final total = transactions.fold<double>(
       0,
-      (sum, transaction) => sum + asDouble(transaction['amount']),
+      (sum, transaction) =>
+          sum + (countsInTotals(transaction) ? asDouble(transaction['amount']) : 0),
     );
     if (transactions.isEmpty) {
       return const EmptyPanel(

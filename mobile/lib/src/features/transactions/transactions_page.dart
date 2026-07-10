@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/finance_summary.dart' show countsInTotals;
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
@@ -50,6 +51,9 @@ class _TransactionsPageState extends ConsumerState<TransactionsPage> {
     double income = 0;
     double expense = 0;
     for (final row in dayRows) {
+      // Excluded rows stay visible in the list but don't count in the
+      // income / expense / net trio.
+      if (!countsInTotals(row)) continue;
       final amount = asDouble(row['amount']);
       switch (row['type']) {
         case 'income':

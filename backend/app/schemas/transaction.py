@@ -30,6 +30,7 @@ class TransactionCreate(BaseModel):
     txn_date: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     is_emergency: bool = False
+    include_in_totals: bool = True
     description: Optional[str] = None
     merchant_name: Optional[str] = Field(default=None, max_length=160)
     tags: list[str] = Field(default_factory=list)
@@ -56,6 +57,7 @@ class TransactionUpdate(BaseModel):
     txn_date: Optional[datetime] = None
 
     is_emergency: Optional[bool] = None
+    include_in_totals: Optional[bool] = None
     description: Optional[str] = None
     merchant_name: Optional[str] = Field(default=None, max_length=160)
     tags: Optional[list[str]] = None
@@ -83,6 +85,7 @@ class TransactionResponse(BaseModel):
     transaction_date: Optional[datetime] = None
 
     is_emergency: bool
+    include_in_totals: bool = True
     description: Optional[str]
     merchant_name: Optional[str] = None
     transaction_type: Optional[str] = None

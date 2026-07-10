@@ -188,6 +188,7 @@ export type Transaction = {
   parent_transaction_id?: string | null;
   is_split?: boolean;
   is_recurring?: boolean;
+  include_in_totals?: boolean;
   transaction_status?: string;
   reference_number?: string | null;
 };
@@ -214,6 +215,7 @@ export type TransactionCreatePayload = {
   attachment_url?: string | null;
   recurring_rule?: "daily" | "weekly" | "monthly" | "yearly" | null;
   is_recurring?: boolean;
+  include_in_totals?: boolean;
   transaction_status?: "posted" | "pending" | "void";
   reference_number?: string | null;
 };

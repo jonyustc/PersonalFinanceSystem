@@ -11,7 +11,7 @@ class AppDatabase {
     final path = p.join(await getDatabasesPath(), 'personal_finance.db');
     _db = await openDatabase(
       path,
-      version: 9,
+      version: 10,
       onCreate: _create,
       onUpgrade: _upgrade,
     );
@@ -64,6 +64,7 @@ class AppDatabase {
         payment_method TEXT,
         tags_json TEXT NOT NULL DEFAULT '[]',
         transaction_status TEXT NOT NULL DEFAULT 'posted',
+        include_in_totals INTEGER NOT NULL DEFAULT 1,
         is_pending INTEGER NOT NULL DEFAULT 0,
         raw_json TEXT NOT NULL
       )
@@ -137,6 +138,14 @@ class AppDatabase {
     }
     if (oldVersion < 9) {
       await _addColumnSafely(db, 'portfolio_transactions', 'portfolio_id', 'TEXT');
+    }
+    if (oldVersion < 10) {
+      await _addColumnSafely(
+        db,
+        'transactions',
+        'include_in_totals',
+        'INTEGER NOT NULL DEFAULT 1',
+      );
     }
   }
 
@@ -720,6 +729,11 @@ class AppDatabase {
       'payment_method': row['payment_method'],
       'tags_json': jsonEncode(tags),
       'transaction_status': row['transaction_status'] ?? 'posted',
+      // Server sends a bool; the mirror stores 1/0. Missing means true.
+      'include_in_totals':
+          (row['include_in_totals'] == false || row['include_in_totals'] == 0)
+          ? 0
+          : 1,
       'is_pending': pending ? 1 : 0,
       'raw_json': jsonEncode(row),
     };

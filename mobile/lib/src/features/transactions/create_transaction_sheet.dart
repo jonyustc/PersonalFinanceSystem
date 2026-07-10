@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/finance_summary.dart' show countsInTotals;
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
@@ -52,6 +53,7 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
   bool _initialized = false;
   bool _calculatorOpen = true;
   bool _noteOpen = false;
+  bool _includeInTotals = true;
 
   @override
   void dispose() {
@@ -156,6 +158,11 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
                     open: _noteOpen,
                     onToggle: () => setState(() => _noteOpen = !_noteOpen),
                     onChanged: () => setState(() {}),
+                  ),
+                  _IncludeInTotalsRow(
+                    value: _includeInTotals,
+                    onChanged: (value) =>
+                        setState(() => _includeInTotals = value),
                   ),
                 ],
               ),
@@ -365,6 +372,7 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
           categoryId: _categoryId,
           merchantName: _payee.text,
           description: _note.text,
+          includeInTotals: _includeInTotals,
         );
       } else {
         await notifier.updateTransaction(
@@ -377,6 +385,7 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
           transferAccountId: _type == 'transfer' ? _transferAccountId : null,
           merchantName: _payee.text,
           description: _note.text,
+          includeInTotals: _includeInTotals,
         );
       }
       HapticFeedback.lightImpact();
@@ -431,6 +440,7 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
     _payee.text = initial['merchant_name'] as String? ?? '';
     _note.text = initial['description'] as String? ?? '';
     _noteOpen = _note.text.trim().isNotEmpty;
+    _includeInTotals = countsInTotals(initial);
     _date =
         DateTime.tryParse(initial['txn_date'] as String? ?? '') ??
         DateTime.now();
@@ -657,6 +667,65 @@ class _NoteSection extends StatelessWidget {
           ),
         ),
         onChanged: (_) => onChanged(),
+      ),
+    );
+  }
+}
+
+/// Compact toggle row styled after [_EntryRow]: when OFF the transaction
+/// still moves the account balance but is excluded from local totals,
+/// reports rollups, and budget spent math.
+class _IncludeInTotalsRow extends StatelessWidget {
+  const _IncludeInTotalsRow({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    // Highlight in primary when non-default (OFF), mirroring _EntryRow.
+    final highlight = !value;
+    return InkWell(
+      onTap: () => onChanged(!value),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 58),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: scheme.outlineVariant),
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Include in total & budget',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: highlight ? scheme.primary : scheme.onSurfaceVariant,
+                      fontWeight: highlight ? FontWeight.w700 : FontWeight.w400,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Off = still moves balance, hidden from reports & budget',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 14),
+            Switch(value: value, onChanged: onChanged),
+          ],
+        ),
       ),
     );
   }

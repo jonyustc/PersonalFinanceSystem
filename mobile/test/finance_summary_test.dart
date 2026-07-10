@@ -91,6 +91,60 @@ void main() {
     expect(card.utilization, 25);
   });
 
+  test('excluded expense does not count toward spent totals', () {
+    final summary = buildFinanceSummary(
+      now: DateTime(2026, 6, 5),
+      accounts: [
+        {'id': 'cash', 'name': 'Cash', 'type': 'cash', 'balance': 1000},
+      ],
+      categories: [
+        {'id': 'food', 'name': 'Food', 'type': 'expense', 'parent_id': null},
+      ],
+      transactions: [
+        {
+          'id': 't1',
+          'account_id': 'cash',
+          'category_id': 'food',
+          'type': 'expense',
+          'amount': 100,
+          'txn_date': '2026-06-03T00:00:00Z',
+          'transaction_status': 'posted',
+        },
+        // Flagged include_in_totals=false: still moves the account balance
+        // (server-owned) but must be excluded from local spending totals.
+        // The sqflite mirror stores the flag as 0/1.
+        {
+          'id': 't2',
+          'account_id': 'cash',
+          'category_id': 'food',
+          'type': 'expense',
+          'amount': 400,
+          'txn_date': '2026-06-04T00:00:00Z',
+          'transaction_status': 'posted',
+          'include_in_totals': 0,
+        },
+        {
+          'id': 't3',
+          'account_id': 'cash',
+          'type': 'income',
+          'amount': 500,
+          'txn_date': '2026-06-01T00:00:00Z',
+          'transaction_status': 'posted',
+          'include_in_totals': false,
+        },
+      ],
+      budgets: const [],
+      stocks: const [],
+      portfolioTransactions: const [],
+    );
+
+    expect(summary.monthlyExpense, 100);
+    expect(summary.monthlyIncome, 0);
+    expect(summary.cashFlow, -100);
+    expect(summary.topExpenseCategories.single.amount, 100);
+    expect(summary.accountSpending.single.amount, 100);
+  });
+
   test('overdrawn cash balances become liabilities, not negative assets', () {
     final summary = buildFinanceSummary(
       now: DateTime(2026, 6, 10),

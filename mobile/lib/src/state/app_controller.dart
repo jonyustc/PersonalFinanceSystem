@@ -255,6 +255,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? categoryId,
     String? merchantName,
     String? description,
+    bool includeInTotals = true,
   }) async {
     final payload = {
       'account_id': accountId,
@@ -266,6 +267,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'description': _blankToNull(description),
       'tags': <String>[],
       'transaction_status': 'posted',
+      'include_in_totals': includeInTotals,
     };
 
     final created = await _writeToServer(
@@ -289,6 +291,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? transferAccountId,
     String? merchantName,
     String? description,
+    bool includeInTotals = true,
   }) async {
     final payload = {
       'account_id': accountId,
@@ -301,6 +304,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'description': _blankToNull(description),
       'tags': <String>[],
       'transaction_status': 'posted',
+      'include_in_totals': includeInTotals,
     };
 
     final updated = await _writeToServer(

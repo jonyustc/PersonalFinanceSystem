@@ -115,6 +115,7 @@ class DashboardService:
             Transaction.user_id == user_id,
             Transaction.txn_date >= start_date,
             Transaction.txn_date < end_date,
+            Transaction.include_in_totals.is_(True),
         )
 
         # TOTAL BALANCE
@@ -171,7 +172,10 @@ class DashboardService:
                          Transaction.amount), else_=0)
                 ).label("expense"),
             )
-            .where(Transaction.user_id == user_id)
+            .where(
+                Transaction.user_id == user_id,
+                Transaction.include_in_totals.is_(True),
+            )
             .group_by(month_expr)
             .order_by(month_expr)
         )
@@ -234,6 +238,7 @@ class DashboardService:
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 Transaction.user_id == user_id,
                 Transaction.type == "expense",
+                Transaction.include_in_totals.is_(True),
                 Transaction.account_id.in_(card_ids),
                 Transaction.txn_date >= start_date,
                 Transaction.txn_date < end_date,
@@ -244,6 +249,7 @@ class DashboardService:
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 Transaction.user_id == user_id,
                 Transaction.type == "transfer",
+                Transaction.include_in_totals.is_(True),
                 Transaction.transfer_account_id.in_(card_ids),
                 Transaction.txn_date >= start_date,
                 Transaction.txn_date < end_date,
@@ -303,6 +309,7 @@ class DashboardService:
             Transaction.user_id == user_id,
             Transaction.txn_date >= start_date,
             Transaction.txn_date < end_date,
+            Transaction.include_in_totals.is_(True),
         )
 
         spent = await self.db.scalar(

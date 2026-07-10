@@ -629,7 +629,14 @@ function TransactionCard({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
             <div className="min-w-0">
-              <p className="truncate font-semibold text-ink">{merchant}</p>
+              <p className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate font-semibold text-ink">{merchant}</span>
+                {transaction.include_in_totals === false ? (
+                  <span className="shrink-0 rounded-full border border-line px-1.5 text-[10px] font-semibold uppercase text-muted">
+                    Excluded
+                  </span>
+                ) : null}
+              </p>
               <p className="truncate text-xs text-muted">
                 {category?.name || "Uncategorized"} -{" "}
                 {account?.name || "Unknown account"} -{" "}

@@ -206,6 +206,7 @@ class TransactionService:
                     description=item.description,
                     merchant_name=item.merchant_name or payload.parent.merchant_name,
                     tags=item.tags,
+                    include_in_totals=payload.parent.include_in_totals,
                     parent_transaction_id=parent.id,
                     transaction_status=payload.parent.transaction_status,
                 )
@@ -219,7 +220,11 @@ class TransactionService:
             raise
 
     async def analytics(self, user_id: UUID, from_date: Optional[date] = None, to_date: Optional[date] = None):
-        filters = [Transaction.user_id == user_id, Transaction.transaction_status == "posted"]
+        filters = [
+            Transaction.user_id == user_id,
+            Transaction.transaction_status == "posted",
+            Transaction.include_in_totals.is_(True),
+        ]
         if from_date:
             filters.append(Transaction.txn_date >= from_date)
         if to_date:
@@ -363,6 +368,7 @@ class TransactionService:
             txn_date=payload.txn_date,
             transaction_date=payload.txn_date,
             is_emergency=payload.is_emergency,
+            include_in_totals=payload.include_in_totals,
             description=payload.description,
             merchant_name=payload.merchant_name,
             tags=payload.tags,

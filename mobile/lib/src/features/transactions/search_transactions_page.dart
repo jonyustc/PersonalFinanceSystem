@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/finance_summary.dart' show countsInTotals;
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
@@ -57,6 +58,8 @@ class _SearchTransactionsPageState
 
     double total = 0;
     for (final row in results) {
+      // Excluded rows stay in the results list but don't count in the total.
+      if (!countsInTotals(row)) continue;
       final amount = asDouble(row['amount']);
       final type = row['type'] as String? ?? 'expense';
       total += type == 'income' ? amount : -amount;

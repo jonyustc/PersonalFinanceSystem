@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/finance_summary.dart' show countsInTotals;
 import '../../core/formatters.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/category_visuals.dart';
@@ -31,6 +32,7 @@ class TransactionTile extends StatelessWidget {
     final isIncome = type == 'income';
     final isTransfer = type == 'transfer';
     final isPending = row['is_pending'] == 1;
+    final excluded = !countsInTotals(row);
     final amount = asDouble(row['amount']);
     final title = (row['merchant_name'] ?? row['description'] ?? type) as String;
     final color = isTransfer
@@ -113,6 +115,22 @@ class TransactionTile extends StatelessWidget {
                     if (isPending) ...[
                       const SizedBox(width: AppSpacing.sm),
                       _PendingBadge(),
+                    ],
+                    if (excluded) ...[
+                      const SizedBox(width: AppSpacing.sm),
+                      Icon(
+                        Icons.visibility_off_outlined,
+                        size: 13,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        'Excluded',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          fontSize: 10,
+                        ),
+                      ),
                     ],
                   ],
                 ),

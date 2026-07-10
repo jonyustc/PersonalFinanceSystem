@@ -1,7 +1,7 @@
 from decimal import Decimal
 from datetime import datetime, UTC
 
-from sqlalchemy import String, ForeignKey, Numeric, DateTime, Boolean, CheckConstraint
+from sqlalchemy import String, ForeignKey, Numeric, DateTime, Boolean, CheckConstraint, true
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,6 +60,9 @@ class Transaction(UUIDMixin, TimestampMixin, Base):
     )
 
     is_emergency: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    include_in_totals: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False)
 
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     merchant_name: Mapped[str | None] = mapped_column(String(160), nullable=True)

@@ -101,6 +101,7 @@ class BudgetService:
                 Transaction.user_id == user_id,
                 Transaction.txn_date >= start_date,
                 Transaction.txn_date < end_date,
+                Transaction.include_in_totals.is_(True),
                 report_expense_filter,
             )
             .group_by(Child.parent_id)
@@ -116,6 +117,7 @@ class BudgetService:
                 Transaction.user_id == user_id,
                 Transaction.txn_date >= start_date,
                 Transaction.txn_date < end_date,
+                Transaction.include_in_totals.is_(True),
                 report_expense_filter,
             )
             .group_by(Transaction.category_id)
