@@ -244,9 +244,9 @@ class AppController extends AsyncNotifier<AppSnapshot>
     }
   }
 
-  // Transactions and transfers are API-first: the write must reach the
-  // server (which owns ids and balance math) or fail loudly — no optimistic
-  // local insert and no offline queueing on these paths.
+  // All writes are API-first: the write must reach the server (which owns
+  // ids and domain math) or fail loudly with an [ApiWriteException] — no
+  // optimistic local insert and no offline queueing on any write path.
   Future<void> createTransaction({
     required String accountId,
     required String type,
@@ -378,14 +378,16 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? color,
     String? icon,
   }) async {
-    await _api.updateAccount(id, {
-      'name': name,
-      'type': type,
-      'opening_balance': openingBalance,
-      'currency': currency,
-      'color': _blankToNull(color),
-      'icon': _blankToNull(icon),
-    });
+    await _writeToServer(
+      () => _api.updateAccount(id, {
+        'name': name,
+        'type': type,
+        'opening_balance': openingBalance,
+        'currency': currency,
+        'color': _blankToNull(color),
+        'icon': _blankToNull(icon),
+      }),
+    );
     await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
@@ -401,16 +403,18 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? notes,
     String? accountSubtype,
   }) async {
-    await _api.createAccount({
-      'name': name,
-      'type': type,
-      'opening_balance': openingBalance,
-      'currency': currency,
-      'color': _blankToNull(color),
-      'icon': _blankToNull(icon),
-      'notes': _blankToNull(notes),
-      'account_subtype': _blankToNull(accountSubtype),
-    });
+    await _writeToServer(
+      () => _api.createAccount({
+        'name': name,
+        'type': type,
+        'opening_balance': openingBalance,
+        'currency': currency,
+        'color': _blankToNull(color),
+        'icon': _blankToNull(icon),
+        'notes': _blankToNull(notes),
+        'account_subtype': _blankToNull(accountSubtype),
+      }),
+    );
     await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
@@ -423,22 +427,21 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? color,
     String? icon,
   }) async {
-    final localId = const Uuid().v4();
     final payload = {
-      'id': localId,
       'name': name,
       'type': type,
       'parent_id': parentId,
       'color': _blankToNull(color),
       'icon': _blankToNull(icon),
     };
-    final local = {...payload, 'children': <Map<String, dynamic>>[]};
-    await _db.upsertCategory(local, pending: true);
-    await _db.queuePost('/categories', payload);
+    final created = await _writeToServer(() => _api.createCategory(payload));
+    if (created['id'] != null) {
+      await _db.upsertCategory(created);
+    }
+    await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
-    unawaited(syncNow(silent: true));
-    return local;
+    return created;
   }
 
   Future<void> updateCategory({
@@ -449,20 +452,25 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? color,
     String? icon,
   }) async {
-    await _api.updateCategory(id, {
-      'name': name,
-      'type': type,
-      'parent_id': parentId,
-      'color': _blankToNull(color),
-      'icon': _blankToNull(icon),
-    });
+    final updated = await _writeToServer(
+      () => _api.updateCategory(id, {
+        'name': name,
+        'type': type,
+        'parent_id': parentId,
+        'color': _blankToNull(color),
+        'icon': _blankToNull(icon),
+      }),
+    );
+    if (updated['id'] != null) {
+      await _db.upsertCategory(updated);
+    }
     await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
   }
 
   Future<void> deleteCategory(String id) async {
-    await _api.deleteCategory(id);
+    await _writeToServer(() => _api.deleteCategory(id));
     await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
@@ -473,11 +481,13 @@ class AppController extends AsyncNotifier<AppSnapshot>
     required String month,
     required double amount,
   }) async {
-    await _api.upsertBudget({
-      'category_id': categoryId,
-      'month': month,
-      'amount': amount,
-    });
+    await _writeToServer(
+      () => _api.upsertBudget({
+        'category_id': categoryId,
+        'month': month,
+        'amount': amount,
+      }),
+    );
     await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
@@ -487,33 +497,35 @@ class AppController extends AsyncNotifier<AppSnapshot>
     required String id,
     required double amount,
   }) async {
-    await _api.updateBudget(id, {'amount': amount});
+    await _writeToServer(() => _api.updateBudget(id, {'amount': amount}));
     await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
   }
 
-  Future<void> addStockHolding({
-    required String symbol,
-    required String name,
-    required double quantity,
-    required double price,
-    DateTime? date,
-    String? notes,
+  /// Saves a whole month's budget in one pass: the monthly income row, every
+  /// per-category budget amount, and deletions for cleared amounts — then a
+  /// single sync. Any failed write aborts with an [ApiWriteException].
+  Future<void> saveMonthlyBudgets({
+    required String month,
+    required double income,
+    required double openingBalance,
+    List<Map<String, dynamic>> upserts = const [],
+    List<String> deleteIds = const [],
   }) async {
-    await _api.createPortfolioTransaction({
-      'stock': {
-        'symbol': symbol.toUpperCase(),
-        'name': name,
-        'currency': state.asData?.value.session?.currency ?? 'BDT',
-        'last_price': price,
-      },
-      'txn_type': 'buy',
-      'quantity': quantity,
-      'price': price,
-      'txn_date': (date ?? DateTime.now()).toIso8601String().substring(0, 10),
-      'notes': _blankToNull(notes),
-    });
+    await _writeToServer(
+      () => _api.saveMonthlyIncome({
+        'month': month,
+        'amount': income,
+        'opening_balance': openingBalance,
+      }),
+    );
+    for (final entry in upserts) {
+      await _writeToServer(() => _api.upsertBudget({...entry, 'month': month}));
+    }
+    for (final id in deleteIds) {
+      await _writeToServer(() => _api.deleteBudget(id));
+    }
     await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
@@ -562,49 +574,23 @@ class AppController extends AsyncNotifier<AppSnapshot>
           : null,
       'notes': _blankToNull(notes),
     };
-    try {
-      if (id == null) {
-        await _api.createPortfolioTransaction(payload);
-      } else {
-        await _api.updatePortfolioTransaction(id, payload);
-      }
-      await syncNow(silent: true);
-    } catch (_) {
-      final localId = id ?? const Uuid().v4();
-      final stock = (payload['stock'] as Map?)?.cast<String, dynamic>();
-      final resolvedStockId = stockId ?? (stock == null ? null : localId);
-      if (stock != null) {
-        await _db.upsertStock({'id': resolvedStockId, ...stock});
-      }
-      final local = _localPortfolioTransaction(
-        id: localId,
-        payload: payload,
-        stockId: resolvedStockId,
-        stock: stock,
-      );
-      await _db.upsertPortfolioTransaction(local, pending: true);
-      await _db.queueMutation(
-        id == null ? 'POST' : 'PATCH',
-        id == null ? '/portfolio/transactions' : '/portfolio/transactions/$id',
-        payload,
-      );
+    final saved = await _writeToServer(
+      () => id == null
+          ? _api.createPortfolioTransaction(payload)
+          : _api.updatePortfolioTransaction(id, payload),
+    );
+    if (saved['id'] != null) {
+      await _db.upsertPortfolioTransaction(saved);
     }
+    await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
   }
 
   Future<void> deletePortfolioTransaction(String id) async {
-    try {
-      await _api.deletePortfolioTransaction(id);
-      await syncNow(silent: true);
-    } catch (_) {
-      await _db.deletePortfolioTransaction(id);
-      await _db.queueMutation(
-        'DELETE',
-        '/portfolio/transactions/$id',
-        const {},
-      );
-    }
+    await _writeToServer(() => _api.deletePortfolioTransaction(id));
+    await _db.deletePortfolioTransaction(id);
+    await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
   }
@@ -652,29 +638,6 @@ class AppController extends AsyncNotifier<AppSnapshot>
     } catch (_) {
       return (await _db.metaJson(cacheKey)) ?? const <String, dynamic>{};
     }
-  }
-
-  Future<void> updateStockPrice({
-    required String id,
-    required double lastPrice,
-  }) async {
-    try {
-      await _api.updateStock(id, {'last_price': lastPrice});
-      await syncNow(silent: true);
-    } catch (_) {
-      final current = state.asData?.value;
-      final existing = current?.stocks
-          .where((stock) => stock['id'] == id)
-          .firstOrNull;
-      if (existing != null) {
-        await _db.upsertStock({...existing, 'last_price': lastPrice});
-      }
-      await _db.queueMutation('PATCH', '/portfolio/stocks/$id', {
-        'last_price': lastPrice,
-      });
-    }
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
   }
 
   Future<String> refreshStockPrices() async {
@@ -748,21 +711,15 @@ class AppController extends AsyncNotifier<AppSnapshot>
     };
     final payload = id == null ? createPayload : updatePayload;
 
-    try {
-      final saved = id == null
-          ? await _api.createStock(payload)
-          : await _api.updateStock(id, payload);
+    final saved = await _writeToServer(
+      () => id == null
+          ? _api.createStock(payload)
+          : _api.updateStock(id, payload),
+    );
+    if (saved['id'] != null) {
       await _db.upsertStock(saved);
-      await syncNow(silent: true);
-    } catch (_) {
-      final localId = id ?? const Uuid().v4();
-      await _db.upsertStock({'id': localId, ...createPayload});
-      await _db.queueMutation(
-        id == null ? 'POST' : 'PATCH',
-        id == null ? '/portfolio/stocks' : '/portfolio/stocks/$id',
-        payload,
-      );
     }
+    await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
   }
@@ -794,7 +751,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
   }
 
   Future<void> archiveAccount(String accountId) async {
-    await _api.archiveAccount(accountId);
+    await _writeToServer(() => _api.archiveAccount(accountId));
     await syncNow(silent: true);
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
@@ -1001,59 +958,6 @@ class AppController extends AsyncNotifier<AppSnapshot>
       return match.group(0)!;
     }
     return 'Using local data. Sync failed.';
-  }
-
-  Map<String, dynamic> _localPortfolioTransaction({
-    required String id,
-    required Map<String, dynamic> payload,
-    required String? stockId,
-    required Map<String, dynamic>? stock,
-  }) {
-    final txnType = payload['txn_type'] as String;
-    final quantity = _asDouble(payload['quantity']);
-    final price = _asDouble(payload['price']);
-    final fees = payload['fees'] == null
-        ? _defaultPortfolioFee(txnType, quantity, price)
-        : _asDouble(payload['fees']);
-    final total = _portfolioTotal(txnType, quantity, price, fees);
-    return {
-      'id': id,
-      'stock_id': stockId,
-      'broker_account_id': payload['broker_account_id'],
-      'txn_type': txnType,
-      'quantity': quantity,
-      'price': price,
-      'fees': fees,
-      'total_amount': total,
-      'cash_flow': _portfolioCashFlow(txnType, total),
-      'txn_date': payload['txn_date'],
-      'record_date': payload['record_date'],
-      'notes': payload['notes'],
-      'stock': stock,
-    };
-  }
-
-  double _portfolioTotal(
-    String txnType,
-    double quantity,
-    double price,
-    double fees,
-  ) {
-    if (txnType == 'buy') return quantity * price + fees;
-    if (txnType == 'sell') return quantity * price - fees;
-    return price;
-  }
-
-  double _defaultPortfolioFee(String txnType, double quantity, double price) {
-    if (txnType == 'buy' || txnType == 'sell') {
-      return quantity * price * 0.004;
-    }
-    return 0;
-  }
-
-  double _portfolioCashFlow(String txnType, double total) {
-    if (txnType == 'buy' || txnType == 'withdraw') return -total;
-    return total;
   }
 
   double _asDouble(Object? value) {

@@ -228,31 +228,27 @@ class _BudgetsPageState extends ConsumerState<BudgetsPage> {
 
   Future<void> _save(List<Map<String, dynamic>> categories) async {
     setState(() => _saving = true);
-    final api = ref.read(apiClientProvider);
     final month = _monthKey(_month);
-    try {
-      await api.saveMonthlyIncome({
-        'month': month,
-        'amount': _number(_income.text),
-        'opening_balance': _number(_openingBalance.text),
-      });
-
-      for (final category in categories) {
-        final id = category['id'] as String;
-        final amount = _number(_drafts[id]?.text);
-        final existingId = _budgetIds[id];
-        if (amount > 0) {
-          await api.upsertBudget({
-            'category_id': id,
-            'month': month,
-            'amount': amount,
-          });
-        } else if (existingId != null) {
-          await api.deleteBudget(existingId);
-        }
+    final upserts = <Map<String, dynamic>>[];
+    final deleteIds = <String>[];
+    for (final category in categories) {
+      final id = category['id'] as String;
+      final amount = _number(_drafts[id]?.text);
+      final existingId = _budgetIds[id];
+      if (amount > 0) {
+        upserts.add({'category_id': id, 'amount': amount});
+      } else if (existingId != null) {
+        deleteIds.add(existingId);
       }
-
-      await ref.read(appControllerProvider.notifier).syncNow(silent: true);
+    }
+    try {
+      await ref.read(appControllerProvider.notifier).saveMonthlyBudgets(
+            month: month,
+            income: _number(_income.text),
+            openingBalance: _number(_openingBalance.text),
+            upserts: upserts,
+            deleteIds: deleteIds,
+          );
       await _load();
       if (mounted) {
         ScaffoldMessenger.of(

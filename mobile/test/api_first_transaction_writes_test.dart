@@ -6,8 +6,8 @@ import 'package:mobile/src/core/app_database.dart';
 import 'package:mobile/src/state/app_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// ApiClient stand-in that simulates being offline: every transaction or
-/// transfer write fails with a connection error.
+/// ApiClient stand-in that simulates being offline: every write fails with a
+/// connection error.
 class _OfflineApiClient extends ApiClient {
   _OfflineApiClient(super.sessionStore);
 
@@ -42,23 +42,74 @@ class _OfflineApiClient extends ApiClient {
   ) async {
     throw _offline;
   }
+
+  @override
+  Future<Map<String, dynamic>> createCategory(
+    Map<String, dynamic> payload,
+  ) async {
+    throw _offline;
+  }
+
+  @override
+  Future<Map<String, dynamic>> updateCategory(
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    throw _offline;
+  }
+
+  @override
+  Future<void> deleteCategory(String id) async {
+    throw _offline;
+  }
+
+  @override
+  Future<Map<String, dynamic>> createPortfolioTransaction(
+    Map<String, dynamic> payload,
+  ) async {
+    throw _offline;
+  }
+
+  @override
+  Future<Map<String, dynamic>> updatePortfolioTransaction(
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    throw _offline;
+  }
+
+  @override
+  Future<void> deletePortfolioTransaction(String id) async {
+    throw _offline;
+  }
+
+  @override
+  Future<Map<String, dynamic>> createStock(
+    Map<String, dynamic> payload,
+  ) async {
+    throw _offline;
+  }
+
+  @override
+  Future<Map<String, dynamic>> updateStock(
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    throw _offline;
+  }
 }
 
 /// In-memory AppDatabase that records writes so tests can assert the
-/// API-first paths never touch the local mirror or the sync queue.
+/// API-first paths never touch the local mirror. Enqueueing is impossible by
+/// construction: AppDatabase no longer exposes any sync_queue insert API, so
+/// pendingCount can only ever report legacy leftovers (none in tests).
 class _RecordingDatabase extends AppDatabase {
-  final List<String> queuedPaths = [];
   final List<Map<String, dynamic>> upsertedTransactions = [];
   final List<String> deletedTransactionIds = [];
-
-  @override
-  Future<void> queueMutation(
-    String method,
-    String path,
-    Map<String, dynamic> payload,
-  ) async {
-    queuedPaths.add('$method $path');
-  }
+  final List<Map<String, dynamic>> upsertedCategories = [];
+  final List<Map<String, dynamic>> upsertedPortfolioTransactions = [];
+  final List<String> deletedPortfolioTransactionIds = [];
+  final List<Map<String, dynamic>> upsertedStocks = [];
 
   @override
   Future<void> upsertTransaction(
@@ -71,6 +122,32 @@ class _RecordingDatabase extends AppDatabase {
   @override
   Future<void> deleteTransaction(String id) async {
     deletedTransactionIds.add(id);
+  }
+
+  @override
+  Future<void> upsertCategory(
+    Map<String, dynamic> row, {
+    bool pending = false,
+  }) async {
+    upsertedCategories.add(row);
+  }
+
+  @override
+  Future<void> upsertPortfolioTransaction(
+    Map<String, dynamic> row, {
+    bool pending = false,
+  }) async {
+    upsertedPortfolioTransactions.add(row);
+  }
+
+  @override
+  Future<void> deletePortfolioTransaction(String id) async {
+    deletedPortfolioTransactionIds.add(id);
+  }
+
+  @override
+  Future<void> upsertStock(Map<String, dynamic> row) async {
+    upsertedStocks.add(row);
   }
 
   @override
@@ -104,7 +181,7 @@ class _RecordingDatabase extends AppDatabase {
   Future<Map<String, dynamic>?> dashboardSummary() async => null;
 
   @override
-  Future<int> pendingCount() async => queuedPaths.length;
+  Future<int> pendingCount() async => 0;
 
   @override
   Future<String?> lastSyncAt() async => null;
@@ -154,7 +231,6 @@ void main() {
       ),
     );
 
-    expect(db.queuedPaths, isEmpty);
     expect(db.upsertedTransactions, isEmpty);
   });
 
@@ -172,7 +248,6 @@ void main() {
       throwsA(isA<ApiWriteException>()),
     );
 
-    expect(db.queuedPaths, isEmpty);
     expect(db.upsertedTransactions, isEmpty);
   });
 
@@ -185,7 +260,66 @@ void main() {
       throwsA(isA<ApiWriteException>()),
     );
 
-    expect(db.queuedPaths, isEmpty);
     expect(db.deletedTransactionIds, isEmpty);
+  });
+
+  test('createCategory fails loudly offline with no mirror write', () async {
+    final controller = await pumpController();
+
+    await expectLater(
+      controller.createCategory(name: 'Groceries', type: 'expense'),
+      throwsA(
+        isA<ApiWriteException>().having(
+          (error) => error.message,
+          'message',
+          contains('Could not reach the server'),
+        ),
+      ),
+    );
+
+    expect(db.upsertedCategories, isEmpty);
+    expect(await db.pendingCount(), 0);
+  });
+
+  test('savePortfolioTransaction fails loudly offline with no mirror write',
+      () async {
+    final controller = await pumpController();
+
+    await expectLater(
+      controller.savePortfolioTransaction(
+        txnType: 'buy',
+        newStockName: 'Test Stock',
+        newStockSymbol: 'TST',
+        quantity: 10,
+        price: 25,
+        date: DateTime(2026, 7, 1),
+      ),
+      throwsA(isA<ApiWriteException>()),
+    );
+
+    expect(db.upsertedPortfolioTransactions, isEmpty);
+    expect(db.upsertedStocks, isEmpty);
+  });
+
+  test('deletePortfolioTransaction offline keeps the local row', () async {
+    final controller = await pumpController();
+
+    await expectLater(
+      controller.deletePortfolioTransaction('ptx-1'),
+      throwsA(isA<ApiWriteException>()),
+    );
+
+    expect(db.deletedPortfolioTransactionIds, isEmpty);
+  });
+
+  test('saveStock fails loudly offline with no mirror write', () async {
+    final controller = await pumpController();
+
+    await expectLater(
+      controller.saveStock(name: 'Test Stock', symbol: 'TST', lastPrice: 12.5),
+      throwsA(isA<ApiWriteException>()),
+    );
+
+    expect(db.upsertedStocks, isEmpty);
   });
 }

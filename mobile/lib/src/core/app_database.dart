@@ -645,24 +645,9 @@ class AppDatabase {
     );
   }
 
-  Future<void> queuePost(String path, Map<String, dynamic> payload) async {
-    await queueMutation('POST', path, payload);
-  }
-
-  Future<void> queueMutation(
-    String method,
-    String path,
-    Map<String, dynamic> payload,
-  ) async {
-    final db = await database;
-    await db.insert('sync_queue', {
-      'method': method,
-      'path': path,
-      'payload_json': jsonEncode(payload),
-      'created_at': DateTime.now().toIso8601String(),
-    });
-  }
-
+  // Writes are API-first, so nothing enqueues into sync_queue anymore. The
+  // read/delete below stay only so SyncService can drain legacy queued
+  // mutations left behind by older app versions.
   Future<List<Map<String, dynamic>>> queuedMutations() async {
     final db = await database;
     return db.query('sync_queue', orderBy: 'id ASC');

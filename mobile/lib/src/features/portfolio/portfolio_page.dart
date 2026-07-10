@@ -206,9 +206,16 @@ class _PortfolioPageState extends ConsumerState<PortfolioPage> {
       destructive: true,
     );
     if (!confirmed) return;
-    await ref
-        .read(appControllerProvider.notifier)
-        .deletePortfolioTransaction(transaction['id'] as String);
+    try {
+      await ref
+          .read(appControllerProvider.notifier)
+          .deletePortfolioTransaction(transaction['id'] as String);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
   }
 }
 

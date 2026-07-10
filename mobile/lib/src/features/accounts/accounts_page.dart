@@ -620,17 +620,25 @@ class _CreateAccountSheetState extends ConsumerState<_CreateAccountSheet> {
   Future<void> _save(String currency) async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
-    await ref.read(appControllerProvider.notifier).createAccount(
-          name: _name.text.trim(),
-          type: _backendType,
-          openingBalance: double.parse(_openingBalance.text),
-          currency: currency,
-          color: _color.text,
-          icon: _icon.text,
-          notes: _notes.text,
-          accountSubtype: _accountSubtype,
-        );
-    if (mounted) Navigator.of(context).pop();
+    try {
+      await ref.read(appControllerProvider.notifier).createAccount(
+            name: _name.text.trim(),
+            type: _backendType,
+            openingBalance: double.parse(_openingBalance.text),
+            currency: currency,
+            color: _color.text,
+            icon: _icon.text,
+            notes: _notes.text,
+            accountSubtype: _accountSubtype,
+          );
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
   }
 
   String get _backendType => _typeChoice.split(':').first;
@@ -784,16 +792,24 @@ class _EditAccountSheetState extends ConsumerState<_EditAccountSheet> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
-    await ref.read(appControllerProvider.notifier).updateAccount(
-          id: widget.account['id'] as String,
-          name: _name.text.trim(),
-          type: _type,
-          openingBalance: double.parse(_openingBalance.text),
-          currency: widget.account['currency'] as String? ?? 'BDT',
-          color: _color.text,
-          icon: _icon.text,
-        );
-    if (mounted) Navigator.of(context).pop();
+    try {
+      await ref.read(appControllerProvider.notifier).updateAccount(
+            id: widget.account['id'] as String,
+            name: _name.text.trim(),
+            type: _type,
+            openingBalance: double.parse(_openingBalance.text),
+            currency: widget.account['currency'] as String? ?? 'BDT',
+            color: _color.text,
+            icon: _icon.text,
+          );
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
   }
 }
 
