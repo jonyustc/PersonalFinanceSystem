@@ -8,7 +8,6 @@ from fastapi import HTTPException, status
 
 from app.models.account import Account
 from app.models.transaction import Transaction
-from app.models.category import Category
 
 # Convention: fund member is stored in transaction tags
 # "fund:mine"   → you spent from the fund

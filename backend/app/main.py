@@ -24,7 +24,7 @@ logger = logging.getLogger("app.api")
 async def lifespan(app: FastAPI):
     try:
         configure_logging()
-        print(f"[STARTUP] App initialized successfully", file=sys.stderr)
+        print("[STARTUP] App initialized successfully", file=sys.stderr)
         print(
             f"[STARTUP] Database URL normalized to: {settings.database_url[:50]}...", file=sys.stderr)
         print(

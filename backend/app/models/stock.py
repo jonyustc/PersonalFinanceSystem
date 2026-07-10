@@ -10,6 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
 from app.models.base import TimestampMixin, UUIDMixin
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.models.account import Account
+
 
 
 class Stock(UUIDMixin, TimestampMixin, Base):

@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from sqlalchemy import select, func, and_, case, cast, Date
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timedelta, date
+from datetime import datetime
 from uuid import UUID
 
 from app.services.budget import BudgetService
