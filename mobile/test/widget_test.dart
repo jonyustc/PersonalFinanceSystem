@@ -12,7 +12,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Personal Finance'), findsOneWidget);
+    expect(find.text('Welcome back'), findsOneWidget);
     expect(find.text('Sign in'), findsOneWidget);
   });
 }
