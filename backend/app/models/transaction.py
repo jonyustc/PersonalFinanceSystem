@@ -66,6 +66,8 @@ class Transaction(UUIDMixin, TimestampMixin, Base):
 
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     merchant_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    counterparty_name: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
+    debt_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # lent/borrowed/repaid_by_them/repaid_to_them
     transaction_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     transfer_id: Mapped[UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)

@@ -2,6 +2,7 @@
 
 import {
   BarChart3,
+  HandCoins,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -33,6 +34,7 @@ const navItems = [
   { href: "/dashboard/transactions", label: "Transactions", icon: ReceiptText },
   { href: "/dashboard/accounts", label: "Accounts", icon: Wallet },
   { href: "/dashboard/budgets", label: "Budgets", icon: PieChart },
+  { href: "/dashboard/loans", label: "Loans", icon: HandCoins },
   { href: "/dashboard/categories", label: "Categories", icon: Tags },
   { href: "/dashboard/reports", label: "Reports", icon: BarChart3 },
   { href: "/dashboard/portfolio", label: "Stocks", icon: TrendingUp },
@@ -55,6 +57,7 @@ const pageTitles: Array<[string, string]> = [
   ["/dashboard/reports", "Reports"],
   ["/dashboard/portfolio", "Portfolio"],
   ["/dashboard/funds", "Funds"],
+  ["/dashboard/loans", "Loans"],
   ["/dashboard", "Overview"],
 ];
 

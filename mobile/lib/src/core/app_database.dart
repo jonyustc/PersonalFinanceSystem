@@ -11,7 +11,7 @@ class AppDatabase {
     final path = p.join(await getDatabasesPath(), 'personal_finance.db');
     _db = await openDatabase(
       path,
-      version: 10,
+      version: 11,
       onCreate: _create,
       onUpgrade: _upgrade,
     );
@@ -65,6 +65,8 @@ class AppDatabase {
         tags_json TEXT NOT NULL DEFAULT '[]',
         transaction_status TEXT NOT NULL DEFAULT 'posted',
         include_in_totals INTEGER NOT NULL DEFAULT 1,
+        counterparty_name TEXT,
+        debt_type TEXT,
         is_pending INTEGER NOT NULL DEFAULT 0,
         raw_json TEXT NOT NULL
       )
@@ -146,6 +148,10 @@ class AppDatabase {
         'include_in_totals',
         'INTEGER NOT NULL DEFAULT 1',
       );
+    }
+    if (oldVersion < 11) {
+      await _addColumnSafely(db, 'transactions', 'counterparty_name', 'TEXT');
+      await _addColumnSafely(db, 'transactions', 'debt_type', 'TEXT');
     }
   }
 
@@ -241,6 +247,21 @@ class AppDatabase {
   Future<List<Map<String, dynamic>>> budgets() async {
     final db = await database;
     return db.query('budgets', orderBy: 'year DESC, month DESC');
+  }
+
+  /// Distinct people previously used on loan/IOU transactions, most recent
+  /// first — used as tap-to-fill suggestions in the entry sheet.
+  Future<List<String>> counterpartyNames() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      'SELECT counterparty_name, MAX(txn_date) AS latest FROM transactions '
+      "WHERE counterparty_name IS NOT NULL AND TRIM(counterparty_name) != '' "
+      'GROUP BY counterparty_name ORDER BY latest DESC LIMIT 12',
+    );
+    return rows
+        .map((row) => row['counterparty_name']?.toString() ?? '')
+        .where((name) => name.isNotEmpty)
+        .toList();
   }
 
   Future<List<Map<String, dynamic>>> stocks() async {
@@ -734,6 +755,8 @@ class AppDatabase {
           (row['include_in_totals'] == false || row['include_in_totals'] == 0)
           ? 0
           : 1,
+      'counterparty_name': row['counterparty_name'],
+      'debt_type': row['debt_type'],
       'is_pending': pending ? 1 : 0,
       'raw_json': jsonEncode(row),
     };

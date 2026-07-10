@@ -3,7 +3,7 @@ from decimal import Decimal
 from datetime import UTC, datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ================= TYPES =================
@@ -13,6 +13,14 @@ TransactionKind = Literal["expense", "income", "transfer", "CARD_PAYMENT", "CARD
 PaymentMethod = Literal["cash", "bank", "card"]
 TransactionStatus = Literal["posted", "pending", "void"]
 RecurringRule = Literal["daily", "weekly", "monthly", "yearly"]
+DebtType = Literal["lent", "borrowed", "repaid_by_them", "repaid_to_them"]
+
+
+def _normalize_counterparty(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = " ".join(value.split())
+    return normalized or None
 
 
 # ================= CREATE =================
@@ -33,6 +41,8 @@ class TransactionCreate(BaseModel):
     include_in_totals: bool = True
     description: Optional[str] = None
     merchant_name: Optional[str] = Field(default=None, max_length=160)
+    counterparty_name: Optional[str] = Field(default=None, max_length=120)
+    debt_type: Optional[DebtType] = None
     tags: list[str] = Field(default_factory=list)
     location: Optional[str] = Field(default=None, max_length=160)
     attachment_url: Optional[str] = None
@@ -40,6 +50,17 @@ class TransactionCreate(BaseModel):
     is_recurring: bool = False
     transaction_status: TransactionStatus = "posted"
     reference_number: Optional[str] = Field(default=None, max_length=80)
+
+    @field_validator("counterparty_name")
+    @classmethod
+    def _trim_counterparty(cls, value: Optional[str]) -> Optional[str]:
+        return _normalize_counterparty(value)
+
+    @model_validator(mode="after")
+    def _require_counterparty_for_debt(self) -> "TransactionCreate":
+        if self.debt_type is not None and self.counterparty_name is None:
+            raise ValueError("counterparty_name is required when debt_type is set")
+        return self
 
 
 # ================= UPDATE =================
@@ -60,6 +81,8 @@ class TransactionUpdate(BaseModel):
     include_in_totals: Optional[bool] = None
     description: Optional[str] = None
     merchant_name: Optional[str] = Field(default=None, max_length=160)
+    counterparty_name: Optional[str] = Field(default=None, max_length=120)
+    debt_type: Optional[DebtType] = None
     tags: Optional[list[str]] = None
     location: Optional[str] = Field(default=None, max_length=160)
     attachment_url: Optional[str] = None
@@ -67,6 +90,17 @@ class TransactionUpdate(BaseModel):
     is_recurring: Optional[bool] = None
     transaction_status: Optional[TransactionStatus] = None
     reference_number: Optional[str] = Field(default=None, max_length=80)
+
+    @field_validator("counterparty_name")
+    @classmethod
+    def _trim_counterparty(cls, value: Optional[str]) -> Optional[str]:
+        return _normalize_counterparty(value)
+
+    @model_validator(mode="after")
+    def _require_counterparty_for_debt(self) -> "TransactionUpdate":
+        if self.debt_type is not None and self.counterparty_name is None:
+            raise ValueError("counterparty_name is required when debt_type is set")
+        return self
 
 
 # ================= RESPONSE =================
@@ -88,6 +122,8 @@ class TransactionResponse(BaseModel):
     include_in_totals: bool = True
     description: Optional[str]
     merchant_name: Optional[str] = None
+    counterparty_name: Optional[str] = None
+    debt_type: Optional[str] = None
     transaction_type: Optional[str] = None
     transfer_id: Optional[UUID] = None
     tags: list[str] = Field(default_factory=list)

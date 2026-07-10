@@ -158,6 +158,77 @@ bool countsInTotals(Map<String, dynamic> row) {
   return true;
 }
 
+/// User-facing labels for the loan/IOU debt types the API accepts.
+const debtTypeLabels = <String, String>{
+  'lent': 'I lent',
+  'borrowed': 'I borrowed',
+  'repaid_by_them': 'They repaid me',
+  'repaid_to_them': 'I repaid them',
+};
+
+/// Debt types where money flows OUT of my accounts (expense-shaped).
+bool isDebtMoneyOut(String debtType) =>
+    debtType == 'lent' || debtType == 'repaid_to_them';
+
+/// Sign of a debt type in the per-person net, where positive = they owe me:
+/// +lent +repaid_to_them −borrowed −repaid_by_them. Unknown types count 0.
+double debtSign(String? debtType) {
+  return switch (debtType) {
+    'lent' || 'repaid_to_them' => 1,
+    'borrowed' || 'repaid_by_them' => -1,
+    _ => 0,
+  };
+}
+
+/// Per-person loan/IOU rollup computed locally from mirrored transactions.
+class DebtPersonSummary {
+  const DebtPersonSummary({
+    required this.name,
+    required this.net,
+    required this.transactionCount,
+  });
+
+  final String name;
+
+  /// Positive = they owe me, negative = I owe them, 0 = settled.
+  final double net;
+  final int transactionCount;
+}
+
+/// Builds per-person balances from every mirrored transaction carrying a
+/// `debt_type`. Runs entirely on the local SQLite mirror so it works offline;
+/// intentionally ignores `include_in_totals` (loans default to excluded but
+/// must still count here).
+List<DebtPersonSummary> buildDebtSummaries(
+  List<Map<String, dynamic>> transactions,
+) {
+  final nets = <String, double>{};
+  final counts = <String, int>{};
+  for (final row in transactions) {
+    final debtType = row['debt_type'] as String?;
+    if (debtType == null || debtType.isEmpty) continue;
+    final name = (row['counterparty_name'] as String?)?.trim() ?? '';
+    if (name.isEmpty) continue;
+    nets[name] = (nets[name] ?? 0) + debtSign(debtType) * asDouble(row['amount']);
+    counts[name] = (counts[name] ?? 0) + 1;
+  }
+  return nets.entries
+      .map(
+        (entry) => DebtPersonSummary(
+          name: entry.key,
+          net: entry.value,
+          transactionCount: counts[entry.key] ?? 0,
+        ),
+      )
+      .toList()
+    ..sort((a, b) {
+      final byMagnitude = b.net.abs().compareTo(a.net.abs());
+      return byMagnitude != 0
+          ? byMagnitude
+          : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+}
+
 FinanceSummary buildFinanceSummary({
   required List<Map<String, dynamic>> accounts,
   required List<Map<String, dynamic>> categories,

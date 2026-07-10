@@ -6,6 +6,7 @@ import '../accounts/accounts_page.dart';
 import '../budgets/budgets_page.dart';
 import '../categories/categories_page.dart';
 import '../dashboard/dashboard_page.dart';
+import '../debts/debts_page.dart';
 import '../portfolio/portfolio_page.dart';
 import '../reports/reports_page.dart';
 import '../settings/settings_page.dart';
@@ -32,6 +33,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       const TransactionsPage(),
       const AccountsPage(),
       const BudgetsPage(),
+      const DebtsPage(),
       const CategoriesPage(),
       const ReportsPage(),
       const PortfolioPage(),
@@ -128,6 +130,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             label: Text('Budgets'),
           ),
           NavigationDrawerDestination(
+            icon: Icon(Icons.handshake_outlined),
+            selectedIcon: Icon(Icons.handshake),
+            label: Text('Loans'),
+          ),
+          NavigationDrawerDestination(
             icon: Icon(Icons.category_outlined),
             selectedIcon: Icon(Icons.category),
             label: Text('Categories'),
@@ -191,13 +198,16 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     );
   }
 
+  // Page indices (DebtsPage sits at 4, shifting Categories/Reports/Portfolio/
+  // Settings to 5/6/7/8). The bottom bar still maps to the same five pages:
+  // Home, Transactions, Accounts, Reports, Stocks.
   int get _bottomIndex {
     return switch (_index) {
       0 => 0,
       1 => 1,
       2 => 2,
-      5 => 3,
-      6 => 4,
+      6 => 3,
+      7 => 4,
       _ => 0,
     };
   }
@@ -207,8 +217,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       0 => 0,
       1 => 1,
       2 => 2,
-      3 => 5,
-      4 => 6,
+      3 => 6,
+      4 => 7,
       _ => 0,
     };
   }
@@ -219,9 +229,10 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       1 => 'Transactions',
       2 => 'Accounts',
       3 => 'Budgets',
-      4 => 'Categories',
-      5 => 'Reports',
-      6 => 'Portfolio',
+      4 => 'Loans',
+      5 => 'Categories',
+      6 => 'Reports',
+      7 => 'Portfolio',
       _ => 'Settings',
     };
   }

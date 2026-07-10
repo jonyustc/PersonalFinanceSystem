@@ -59,6 +59,7 @@ class TransactionService:
         from_date: Optional[date] = None,
         to_date: Optional[date] = None,
         merchant: Optional[str] = None,
+        counterparty: Optional[str] = None,
         tags: Optional[list[str]] = None,
         recurring_only: bool = False,
         transfer_only: bool = False,
@@ -107,6 +108,8 @@ class TransactionService:
             filters.append(Transaction.txn_date < to_date + timedelta(days=1))
         if merchant:
             filters.append(Transaction.merchant_name.ilike(f"%{merchant}%"))
+        if counterparty:
+            filters.append(func.lower(Transaction.counterparty_name) == counterparty.lower())
         if tags:
             filters.append(Transaction.tags.overlap(tags))
         if recurring_only:
@@ -205,6 +208,8 @@ class TransactionService:
                     transaction_date=payload.parent.txn_date,
                     description=item.description,
                     merchant_name=item.merchant_name or payload.parent.merchant_name,
+                    counterparty_name=payload.parent.counterparty_name,
+                    debt_type=payload.parent.debt_type,
                     tags=item.tags,
                     include_in_totals=payload.parent.include_in_totals,
                     parent_transaction_id=parent.id,
@@ -371,6 +376,8 @@ class TransactionService:
             include_in_totals=payload.include_in_totals,
             description=payload.description,
             merchant_name=payload.merchant_name,
+            counterparty_name=payload.counterparty_name,
+            debt_type=payload.debt_type,
             tags=payload.tags,
             location=payload.location,
             attachment_url=payload.attachment_url,

@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/finance_summary.dart' show countsInTotals;
+import '../../core/finance_summary.dart'
+    show countsInTotals, debtTypeLabels, isDebtMoneyOut;
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
@@ -54,6 +55,8 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
   bool _calculatorOpen = true;
   bool _noteOpen = false;
   bool _includeInTotals = true;
+  String? _debtType;
+  String _counterpartyName = '';
 
   @override
   void dispose() {
@@ -88,6 +91,15 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
             setState(() {
               _type = value;
               _categoryId = null;
+              // A debt type implies the money direction; drop it when the
+              // user manually picks a mismatching type (or a transfer) and
+              // restore the default include-in-totals behavior.
+              if (_debtType != null &&
+                  value != (isDebtMoneyOut(_debtType!) ? 'expense' : 'income')) {
+                _debtType = null;
+                _counterpartyName = '';
+                _includeInTotals = true;
+              }
             });
           },
         ),
@@ -152,6 +164,16 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
                       icon: Icons.move_down_outlined,
                       highlight: transferAccount != null,
                       onTap: () => _pickAccount(accounts, destination: true),
+                    ),
+                  if (_type != 'transfer')
+                    _EntryRow(
+                      label: 'Loan / IOU:',
+                      value: _debtType == null
+                          ? 'None'
+                          : '${debtTypeLabels[_debtType] ?? _debtType} · $_counterpartyName',
+                      icon: Icons.handshake_outlined,
+                      highlight: _debtType != null,
+                      onTap: _openDebtSheet,
                     ),
                   _NoteSection(
                     controller: _note,
@@ -234,6 +256,43 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
       setState(() => _categoryId = null);
     }
     unawaited(ref.read(appControllerProvider.notifier).syncNow(silent: true));
+  }
+
+  Future<void> _openDebtSheet() async {
+    final suggestions = await ref
+        .read(databaseProvider)
+        .counterpartyNames();
+    if (!mounted) return;
+    final result = await showModalBottomSheet<_DebtSelection>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _DebtSheet(
+        initialType: _debtType,
+        initialName: _counterpartyName,
+        suggestions: suggestions,
+      ),
+    );
+    if (result == null) return;
+    setState(() {
+      final previous = _debtType;
+      _debtType = result.debtType;
+      _counterpartyName = result.debtType == null ? '' : result.name;
+      if (result.debtType != null) {
+        // A loan implies the money direction: lending / repaying them is
+        // money OUT (expense); borrowing / being repaid is money IN (income).
+        final forcedType = isDebtMoneyOut(result.debtType!)
+            ? 'expense'
+            : 'income';
+        if (_type != forcedType) {
+          _type = forcedType;
+          _categoryId = null;
+        }
+        // Loans default to excluded from totals (the user may flip it back).
+        if (result.debtType != previous) _includeInTotals = false;
+      } else if (previous != null) {
+        _includeInTotals = true;
+      }
+    });
   }
 
   Future<void> _pickAccount(
@@ -319,6 +378,8 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
       _categoryId = null;
       _note.clear();
       _payee.clear();
+      _debtType = null;
+      _counterpartyName = '';
     });
   }
 
@@ -349,6 +410,12 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
       _showError('Select two different accounts');
       return;
     }
+    if (_type != 'transfer' &&
+        _debtType != null &&
+        _counterpartyName.trim().isEmpty) {
+      _showError('Enter the person for the loan / IOU');
+      return;
+    }
 
     setState(() => _busy = true);
     final notifier = ref.read(appControllerProvider.notifier);
@@ -373,6 +440,8 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
           merchantName: _payee.text,
           description: _note.text,
           includeInTotals: _includeInTotals,
+          counterpartyName: _debtType == null ? null : _counterpartyName,
+          debtType: _debtType,
         );
       } else {
         await notifier.updateTransaction(
@@ -386,6 +455,10 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
           merchantName: _payee.text,
           description: _note.text,
           includeInTotals: _includeInTotals,
+          counterpartyName: _type == 'transfer' || _debtType == null
+              ? null
+              : _counterpartyName,
+          debtType: _type == 'transfer' ? null : _debtType,
         );
       }
       HapticFeedback.lightImpact();
@@ -441,6 +514,8 @@ class _TransactionEntryPageState extends ConsumerState<TransactionEntryPage> {
     _note.text = initial['description'] as String? ?? '';
     _noteOpen = _note.text.trim().isNotEmpty;
     _includeInTotals = countsInTotals(initial);
+    _debtType = initial['debt_type'] as String?;
+    _counterpartyName = initial['counterparty_name'] as String? ?? '';
     _date =
         DateTime.tryParse(initial['txn_date'] as String? ?? '') ??
         DateTime.now();
@@ -962,6 +1037,154 @@ class _Keypad extends StatelessWidget {
           onTap: () => onKey(label),
         );
       }).toList(),
+    );
+  }
+}
+
+/// Result of the loan/IOU picker sheet: a debt type (or null for "None")
+/// plus the counterparty name. Popping the sheet without Done returns null,
+/// meaning "no change".
+class _DebtSelection {
+  const _DebtSelection(this.debtType, this.name);
+
+  final String? debtType;
+  final String name;
+}
+
+class _DebtSheet extends StatefulWidget {
+  const _DebtSheet({
+    required this.initialType,
+    required this.initialName,
+    required this.suggestions,
+  });
+
+  final String? initialType;
+  final String initialName;
+  final List<String> suggestions;
+
+  @override
+  State<_DebtSheet> createState() => _DebtSheetState();
+}
+
+class _DebtSheetState extends State<_DebtSheet> {
+  late String? _debtType = widget.initialType;
+  late final TextEditingController _name = TextEditingController(
+    text: widget.initialName,
+  );
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.handshake_outlined,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Loan / IOU',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  _typeChip(null, 'None'),
+                  for (final entry in debtTypeLabels.entries)
+                    _typeChip(entry.key, entry.value),
+                ],
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _name,
+                enabled: _debtType != null,
+                textCapitalization: TextCapitalization.words,
+                decoration: InputDecoration(
+                  labelText: 'Person',
+                  hintText: 'Who is this with?',
+                  prefixIcon: const Icon(Icons.person_outline),
+                  errorText: _error,
+                ),
+                onChanged: (_) {
+                  if (_error != null) setState(() => _error = null);
+                },
+              ),
+              if (widget.suggestions.isNotEmpty && _debtType != null) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    for (final name in widget.suggestions)
+                      ActionChip(
+                        avatar: const Icon(Icons.person_outline, size: 16),
+                        label: Text(name),
+                        onPressed: () => setState(() {
+                          _name.text = name;
+                          _error = null;
+                        }),
+                      ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _done,
+                  icon: const Icon(Icons.check),
+                  label: const Text('Done'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _typeChip(String? value, String label) {
+    return ChoiceChip(
+      label: Text(label),
+      selected: _debtType == value,
+      onSelected: (_) => setState(() {
+        _debtType = value;
+        _error = null;
+      }),
+    );
+  }
+
+  void _done() {
+    if (_debtType != null && _name.text.trim().isEmpty) {
+      setState(() => _error = 'Name is required for a loan / IOU');
+      return;
+    }
+    Navigator.of(context).pop(
+      _DebtSelection(_debtType, _debtType == null ? '' : _name.text.trim()),
     );
   }
 }

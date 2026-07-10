@@ -167,6 +167,8 @@ export type CategoryCreatePayload = {
 
 export type CategoryUpdatePayload = Partial<CategoryCreatePayload>;
 
+export type DebtType = "lent" | "borrowed" | "repaid_by_them" | "repaid_to_them";
+
 export type Transaction = {
   id: string;
   account_id: string;
@@ -191,6 +193,8 @@ export type Transaction = {
   include_in_totals?: boolean;
   transaction_status?: string;
   reference_number?: string | null;
+  counterparty_name?: string | null;
+  debt_type?: DebtType | null;
 };
 
 export type TransactionType = Transaction["type"];
@@ -218,6 +222,8 @@ export type TransactionCreatePayload = {
   include_in_totals?: boolean;
   transaction_status?: "posted" | "pending" | "void";
   reference_number?: string | null;
+  counterparty_name?: string | null;
+  debt_type?: DebtType | null;
 };
 
 export type TransactionUpdatePayload = Partial<TransactionCreatePayload>;
@@ -232,6 +238,7 @@ export type TransactionFilters = {
   account_source?: "cash" | "bank" | "card";
   account_id?: string;
   category_id?: string;
+  counterparty?: string;
   merchant?: string;
   tags?: string;
   recurring_only?: boolean;
@@ -240,6 +247,26 @@ export type TransactionFilters = {
   max_amount?: number;
   limit?: number;
   offset?: number;
+};
+
+export type DebtDirection = "they_owe_me" | "i_owe_them" | "settled";
+
+export type DebtParty = {
+  counterparty: string;
+  net_amount: number;
+  direction: DebtDirection;
+  total_lent: number;
+  total_borrowed: number;
+  total_repaid_by_them: number;
+  total_repaid_to_them: number;
+  txn_count: number;
+  last_txn_date: string | null;
+};
+
+export type DebtSummary = {
+  total_receivable: number;
+  total_payable: number;
+  parties: DebtParty[];
 };
 
 export type TransactionAnalytics = {

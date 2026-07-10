@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../core/finance_summary.dart' show countsInTotals;
+import '../../core/finance_summary.dart' show countsInTotals, isDebtMoneyOut;
 import '../../core/formatters.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/category_visuals.dart';
@@ -61,8 +61,20 @@ class TransactionTile extends StatelessWidget {
             ? Icons.south_west
             : Icons.north_east);
     final categoryName = category?['name'] as String?;
+    // Loan/IOU indicator: "→ Rahim" when money went out to the person
+    // (lent / repaid them), "← Rahim" when it came in (borrowed / they repaid).
+    final debtType = row['debt_type'] as String?;
+    final counterparty = (row['counterparty_name'] as String?)?.trim();
+    final debtLabel =
+        debtType != null &&
+            debtType.isNotEmpty &&
+            counterparty != null &&
+            counterparty.isNotEmpty
+        ? '${isDebtMoneyOut(debtType) ? '→' : '←'} $counterparty'
+        : null;
     final subtitle = [
       if (categoryName != null && categoryName.isNotEmpty) categoryName,
+      ?debtLabel,
       compactDate(row['txn_date'] as String? ?? ''),
     ].join(' · ');
 

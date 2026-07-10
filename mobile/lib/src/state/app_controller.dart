@@ -256,6 +256,8 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? merchantName,
     String? description,
     bool includeInTotals = true,
+    String? counterpartyName,
+    String? debtType,
   }) async {
     final payload = {
       'account_id': accountId,
@@ -268,6 +270,8 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'tags': <String>[],
       'transaction_status': 'posted',
       'include_in_totals': includeInTotals,
+      'counterparty_name': _blankToNull(counterpartyName),
+      'debt_type': _blankToNull(debtType),
     };
 
     final created = await _writeToServer(
@@ -292,6 +296,8 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? merchantName,
     String? description,
     bool includeInTotals = true,
+    String? counterpartyName,
+    String? debtType,
   }) async {
     final payload = {
       'account_id': accountId,
@@ -305,6 +311,10 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'tags': <String>[],
       'transaction_status': 'posted',
       'include_in_totals': includeInTotals,
+      // Explicit nulls so the server clears a loan tag when the user
+      // removes it while editing.
+      'counterparty_name': _blankToNull(counterpartyName),
+      'debt_type': _blankToNull(debtType),
     };
 
     final updated = await _writeToServer(

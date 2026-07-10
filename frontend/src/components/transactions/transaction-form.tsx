@@ -1,6 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeftRight,
   CalendarDays,
@@ -14,10 +15,16 @@ import { z } from "zod";
 
 import { cn, formatCurrency } from "@/lib/utils";
 import { formatMoney } from "@/lib/money";
-import { fetchTransactions } from "@/services/finance-service";
+import { fetchDebtSummary, fetchTransactions } from "@/services/finance-service";
 import { CategoryTreeSelect } from "./category-tree-select";
 
-import type { Account, Category, Transaction, TransactionCreatePayload } from "@/types/api";
+import type {
+  Account,
+  Category,
+  DebtType,
+  Transaction,
+  TransactionCreatePayload,
+} from "@/types/api";
 
 function normalizedAccountType(account?: Account) {
   return account?.type?.toLowerCase() ?? "";
@@ -94,6 +101,10 @@ const schema = z
     is_emergency: z.boolean().optional(),
     include_in_totals: z.boolean().optional(),
     description: z.string().optional(),
+    counterparty_name: z.string().optional(),
+    debt_type: z
+      .enum(["lent", "borrowed", "repaid_by_them", "repaid_to_them"])
+      .optional(),
   })
   .refine(
     (data) =>
@@ -105,7 +116,11 @@ const schema = z
       message: "From & To account must be different",
       path: ["transfer_account_id"],
     },
-  );
+  )
+  .refine((data) => !data.debt_type || Boolean(data.counterparty_name?.trim()), {
+    message: "Add who this loan is with",
+    path: ["counterparty_name"],
+  });
 
 type FormInput = z.input<typeof schema>;
 type FormValues = z.output<typeof schema>;
@@ -130,6 +145,22 @@ const KEYPAD_ROWS: string[][] = [
   ["0", "00", ".", "+"],
 ];
 
+// Loan / IOU semantics: lent & repaid_to_them are money OUT (expense);
+// borrowed & repaid_by_them are money IN (income).
+const DEBT_OPTIONS: Array<{ value: DebtType; label: string; formType: "expense" | "income" }> = [
+  { value: "lent", label: "I lent", formType: "expense" },
+  { value: "borrowed", label: "I borrowed", formType: "income" },
+  { value: "repaid_by_them", label: "They repaid me", formType: "income" },
+  { value: "repaid_to_them", label: "I repaid them", formType: "expense" },
+];
+
+const DEBT_LABELS: Record<DebtType, string> = {
+  lent: "I lent",
+  borrowed: "I borrowed",
+  repaid_by_them: "They repaid me",
+  repaid_to_them: "I repaid them",
+};
+
 export function TransactionForm({
   accounts,
   categories,
@@ -144,6 +175,9 @@ export function TransactionForm({
   const [amountExpression, setAmountExpression] = useState(String(transaction?.amount ?? ""));
   const [keypadOpen, setKeypadOpen] = useState(autoFocusAmount);
   const [noteOpen, setNoteOpen] = useState(Boolean(transaction?.description));
+  const [loanOpen, setLoanOpen] = useState(
+    Boolean(transaction?.debt_type || transaction?.counterparty_name),
+  );
   const [noteSuggestions, setNoteSuggestions] = useState<string[]>([]);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [touchDevice, setTouchDevice] = useState(false);
@@ -180,6 +214,8 @@ export function TransactionForm({
       is_emergency: transaction?.is_emergency ?? false,
       include_in_totals: transaction?.include_in_totals ?? true,
       description: transaction?.description ?? "",
+      counterparty_name: transaction?.counterparty_name ?? "",
+      debt_type: transaction?.debt_type ?? undefined,
     },
   });
 
@@ -191,6 +227,8 @@ export function TransactionForm({
   const fromId = useWatch({ control, name: "account_id" });
   const toId = useWatch({ control, name: "transfer_account_id" });
   const txnDate = useWatch({ control, name: "txn_date" });
+  const debtType = useWatch({ control, name: "debt_type" });
+  const counterpartyName = useWatch({ control, name: "counterparty_name" });
   const dateParts = localDateTimeParts(txnDate);
 
   const isTransfer = type === "transfer";
@@ -345,6 +383,40 @@ export function TransactionForm({
     amountNumber > 0 &&
     fromBalance < amountNumber;
 
+  // Known counterparties for the "Who?" datalist — fetched only when the
+  // Loan / IOU section is open.
+  const debtSummaryQuery = useQuery({
+    queryKey: ["debts", "summary"],
+    queryFn: fetchDebtSummary,
+    enabled: loanOpen && !isTransfer,
+    staleTime: 60_000,
+  });
+  const counterpartySuggestions = useMemo(
+    () => (debtSummaryQuery.data?.parties ?? []).map((party) => party.counterparty),
+    [debtSummaryQuery.data],
+  );
+
+  function selectDebtType(option: (typeof DEBT_OPTIONS)[number]) {
+    const previous = watch("debt_type");
+    setValue("debt_type", option.value, { shouldDirty: true, shouldValidate: true });
+    // Loan direction dictates the money direction.
+    if (watch("type") !== option.formType) {
+      setValue("type", option.formType, { shouldDirty: true });
+    }
+    // Loans aren't spending — default them out of totals, but only on the
+    // first selection so the user can re-check the box afterwards.
+    if (!previous) {
+      setValue("include_in_totals", false, { shouldDirty: true });
+    }
+  }
+
+  function clearDebtType() {
+    if (watch("debt_type")) {
+      setValue("include_in_totals", true, { shouldDirty: true });
+    }
+    setValue("debt_type", undefined, { shouldDirty: true, shouldValidate: true });
+  }
+
   function handleSwap() {
     const from = watch("account_id");
     const to = watch("transfer_account_id");
@@ -420,6 +492,9 @@ export function TransactionForm({
       is_emergency: values.is_emergency || false,
       include_in_totals: values.include_in_totals ?? true,
       description: values.description || null,
+      debt_type: values.type !== "transfer" ? values.debt_type ?? null : null,
+      counterparty_name:
+        values.type !== "transfer" ? values.counterparty_name?.trim() || null : null,
     });
   }
 
@@ -689,6 +764,75 @@ export function TransactionForm({
           }
         />
       )}
+
+      {/* LOAN / IOU — hidden for transfers */}
+      {!isTransfer &&
+        (loanOpen ? (
+          <div className="space-y-2 rounded-xl border border-line bg-card p-3">
+            <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Loan / IOU
+            </span>
+
+            <div className="flex flex-wrap gap-2">
+              {DEBT_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => selectDebtType(option)}
+                  className={cn(
+                    "rounded-full border px-3.5 py-1.5 text-xs font-semibold transition",
+                    debtType === option.value
+                      ? "border-brand-600 bg-brand-600/15 text-brand-700"
+                      : "border-line bg-card text-muted hover:text-ink",
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={clearDebtType}
+                className={cn(
+                  "rounded-full border px-3.5 py-1.5 text-xs font-semibold transition",
+                  !debtType
+                    ? "border-brand-600 bg-brand-600/15 text-brand-700"
+                    : "border-line bg-card text-muted hover:text-ink",
+                )}
+              >
+                None
+              </button>
+            </div>
+
+            <input
+              className="input h-11"
+              placeholder="Who?"
+              list="loan-counterparty-options"
+              autoComplete="off"
+              {...register("counterparty_name")}
+            />
+            <datalist id="loan-counterparty-options">
+              {counterpartySuggestions.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+
+            {errors.counterparty_name && (
+              <p className="text-xs font-medium text-expense">
+                {errors.counterparty_name.message}
+              </p>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setLoanOpen(true)}
+            className="h-11 rounded-xl border border-dashed border-line bg-card text-sm font-semibold text-muted hover:text-ink"
+          >
+            {debtType
+              ? `Loan: ${DEBT_LABELS[debtType]}${counterpartyName?.trim() ? ` · ${counterpartyName.trim()}` : ""}`
+              : "Loan / IOU"}
+          </button>
+        ))}
 
       {/* NOTE */}
       {noteOpen ? (

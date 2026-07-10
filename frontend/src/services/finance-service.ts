@@ -12,6 +12,7 @@ import type {
   CategoryCreatePayload,
   CategoryUpdatePayload,
   DashboardResponse,
+  DebtSummary,
   MonthlyExpenseReport,
   AnnualPerformanceResponse,
   PerformanceSeriesResponse,
@@ -204,6 +205,7 @@ export const fetchTransactions = (filters: TransactionFilters = {}) => {
     account_source: filters.account_source,
     account_id: filters.account_id,
     category_id: filters.category_id,
+    counterparty: filters.counterparty,
     merchant: filters.merchant,
     tags: filters.tags,
     recurring_only: filters.recurring_only,
@@ -246,6 +248,13 @@ export const deleteTransaction = (id: string) =>
   apiRequest<void>(`/transactions/${id}`, {
     method: "DELETE",
   });
+
+/* =========================
+   DEBTS (LOANS / IOU)
+========================= */
+
+export const fetchDebtSummary = () =>
+  apiRequest<DebtSummary>("/debts/summary");
 
 /* =========================
    REPORTS
