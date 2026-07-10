@@ -14,12 +14,16 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.14
+      # sync: false vars are set once in the Render dashboard. They must be
+      # available at RUNTIME (uvicorn reads them), not only at build.
       - key: DATABASE_URL
-        scope: build
         sync: false
       - key: JWT_SECRET_KEY
-        scope: build
         sync: false
       - key: BACKEND_CORS_ORIGINS
-        scope: build
+        sync: false
+      # Comma-separated OAuth client IDs accepted as the Google ID-token
+      # audience (web client ID; add Android/iOS client IDs if they ever
+      # appear as `aud`). Google login returns 503 until this is set.
+      - key: GOOGLE_CLIENT_IDS
         sync: false

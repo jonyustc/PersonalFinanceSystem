@@ -1,3 +1,4 @@
+import logging
 import secrets
 
 from fastapi import HTTPException, status
@@ -9,6 +10,8 @@ from app.core.security import create_access_token, create_refresh_token, decode_
 from app.repositories.user import UserRepository
 from app.schemas.auth import AuthResponse, TokenResponse
 from app.schemas.user import UserCreate
+
+logger = logging.getLogger(__name__)
 
 
 class AuthService:
@@ -56,6 +59,10 @@ class AuthService:
         try:
             claims = await verify_google_id_token(id_token, settings.google_client_ids)
         except GoogleTokenError as exc:
+            # The client only sees a generic 401; log the real reason (audience
+            # mismatch, expired token, unverified email, ...) so misconfigured
+            # client IDs are diagnosable from the server logs.
+            logger.warning("Google login rejected: %s", exc)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google credential") from exc
 
         email = claims["email"].lower()

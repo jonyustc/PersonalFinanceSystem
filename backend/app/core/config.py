@@ -17,9 +17,11 @@ class Settings(BaseSettings):
         default="change-me-in-production", min_length=16)
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
-    # Long refresh window so "keep me signed in" survives weeks of inactivity;
-    # clients silently refresh the access token whenever it expires.
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 60
+    # Long refresh window so "keep me signed in" survives months of inactivity;
+    # clients silently refresh the access token whenever it expires, and each
+    # refresh issues a new refresh token (rolling), so active users never
+    # hit this limit at all.
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 180
 
     # Google "Sign in with Google" OAuth client IDs accepted as the ID-token
     # audience. Comma-separated to allow web + Android (+ iOS) clients at once.
@@ -49,17 +51,17 @@ class Settings(BaseSettings):
             if raw_url.startswith("postgres://"):
                 normalized = raw_url.replace(
                     "postgres://", "postgresql+asyncpg://", 1)
-                print(f"[CONFIG] Normalized postgres:// to asyncpg",
+                print("[CONFIG] Normalized postgres:// to asyncpg",
                       file=sys.stderr)
                 return normalized
             if raw_url.startswith("postgresql://"):
                 normalized = raw_url.replace(
                     "postgresql://", "postgresql+asyncpg://", 1)
-                print(f"[CONFIG] Normalized postgresql:// to asyncpg",
+                print("[CONFIG] Normalized postgresql:// to asyncpg",
                       file=sys.stderr)
                 return normalized
 
-            print(f"[CONFIG] DATABASE_URL already normalized", file=sys.stderr)
+            print("[CONFIG] DATABASE_URL already normalized", file=sys.stderr)
             return raw_url
         except Exception as e:
             print(

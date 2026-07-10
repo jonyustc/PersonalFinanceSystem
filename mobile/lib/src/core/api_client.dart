@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
@@ -5,6 +7,11 @@ import 'session_store.dart';
 
 const productionApiBaseUrl =
     'https://personalfinancesystem.onrender.com/api/v1';
+
+/// Outcome of a token-refresh attempt. Only [rejected] (the server explicitly
+/// refused the refresh token) may end the session; [transient] failures
+/// (timeouts, 5xx, offline, cold-starting server) must never log the user out.
+enum _RefreshOutcome { success, rejected, transient }
 
 class ApiClient {
   ApiClient(this._sessionStore, {Future<void> Function()? onSessionExpired})
@@ -25,9 +32,19 @@ class ApiClient {
           if (kDebugMode) {
             debugPrint('API ${options.method} ${options.uri}');
           }
-          final session = await _sessionStore.load();
-          if (session != null && options.extra['auth'] != false) {
-            options.headers['Authorization'] = 'Bearer ${session.accessToken}';
+          if (options.extra['auth'] != false) {
+            var session = await _sessionStore.load();
+            if (session != null && _expiresSoon(session.accessToken)) {
+              // Proactive refresh: avoids a guaranteed 401 round-trip against
+              // a cold-starting server. Best-effort — a transient failure
+              // just lets the request proceed with the current token.
+              await _refreshSession();
+              session = await _sessionStore.load();
+            }
+            if (session != null) {
+              options.headers['Authorization'] =
+                  'Bearer ${session.accessToken}';
+            }
           }
           handler.next(options);
         },
@@ -37,8 +54,8 @@ class ApiClient {
           final alreadyRetried = error.requestOptions.extra['retried'] == true;
 
           if (!isAuthRequest && status == 401 && !alreadyRetried) {
-            final refreshed = await _refreshSession();
-            if (refreshed) {
+            final outcome = await _refreshSession();
+            if (outcome == _RefreshOutcome.success) {
               final session = await _sessionStore.load();
               final retryOptions = error.requestOptions;
               retryOptions.extra['retried'] = true;
@@ -52,13 +69,15 @@ class ApiClient {
                 handler.resolve(response);
                 return;
               } on DioException {
-                // Fall through to the original auth-expiry handling below.
+                // Retry failed after a successful refresh — surface the
+                // error but keep the session; the refresh token is valid.
               }
+            } else if (outcome == _RefreshOutcome.rejected) {
+              // The server explicitly refused the refresh token — the
+              // session is truly dead.
+              await onSessionExpired?.call();
             }
-          }
-
-          if (!isAuthRequest && (status == 401 || status == 403)) {
-            await onSessionExpired?.call();
+            // Transient refresh failure: keep the session, fail the request.
           }
           handler.next(error);
         },
@@ -68,7 +87,7 @@ class ApiClient {
 
   final Dio _dio;
   final SessionStore _sessionStore;
-  Future<bool>? _refreshFuture;
+  Future<_RefreshOutcome>? _refreshFuture;
 
   Future<Map<String, dynamic>> login(String email, String password) async {
     final response = await _dio.post<Map<String, dynamic>>(
@@ -98,7 +117,7 @@ class ApiClient {
     return response.data ?? {};
   }
 
-  Future<bool> _refreshSession() {
+  Future<_RefreshOutcome> _refreshSession() {
     final existing = _refreshFuture;
     if (existing != null) return existing;
 
@@ -109,9 +128,9 @@ class ApiClient {
     return future;
   }
 
-  Future<bool> _performRefresh() async {
+  Future<_RefreshOutcome> _performRefresh() async {
     final session = await _sessionStore.load();
-    if (session == null) return false;
+    if (session == null) return _RefreshOutcome.rejected;
 
     try {
       final response = await _dio.post<Map<String, dynamic>>(
@@ -122,14 +141,49 @@ class ApiClient {
       final body = response.data ?? {};
       final accessToken = body['access_token'] as String?;
       final refreshToken = body['refresh_token'] as String?;
-      if (accessToken == null || refreshToken == null) return false;
+      // A malformed success body is a server hiccup, not a dead session.
+      if (accessToken == null || refreshToken == null) {
+        return _RefreshOutcome.transient;
+      }
 
       await _sessionStore.saveTokens(
         accessToken: accessToken,
         refreshToken: refreshToken,
       );
-      return true;
-    } on DioException {
+      return _RefreshOutcome.success;
+    } on DioException catch (error) {
+      final status = error.response?.statusCode;
+      // Only an explicit 4xx verdict from the server (401 invalid token,
+      // 422 bad request, ...) kills the session. 408/429 and everything
+      // else (5xx, timeout, offline) is transient — the refresh token is
+      // still good, retry on a later request.
+      if (status != null &&
+          status >= 400 &&
+          status < 500 &&
+          status != 408 &&
+          status != 429) {
+        return _RefreshOutcome.rejected;
+      }
+      return _RefreshOutcome.transient;
+    }
+  }
+
+  /// True when the JWT's `exp` is within 2 minutes (or already past),
+  /// so the token should be refreshed before use.
+  static bool _expiresSoon(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return false;
+      final payload =
+          jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))))
+              as Map<String, dynamic>;
+      final exp = payload['exp'];
+      if (exp is! num) return false;
+      final expiry =
+          DateTime.fromMillisecondsSinceEpoch(exp.toInt() * 1000, isUtc: true);
+      return expiry.difference(DateTime.now().toUtc()) <
+          const Duration(minutes: 2);
+    } catch (_) {
       return false;
     }
   }

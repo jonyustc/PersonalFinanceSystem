@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -235,12 +236,39 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       if (!mounted) return;
       // The user dismissing the Google sheet is not an error worth surfacing.
       if (error.toString().toLowerCase().contains('cancel')) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Google sign-in failed: $error')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_googleErrorMessage(error))),
+      );
     } finally {
       if (mounted) setState(() => _googleBusy = false);
     }
+  }
+
+  // Translate the common Google sign-in failure modes into actionable
+  // messages instead of a generic "sign-in failed".
+  String _googleErrorMessage(Object error) {
+    if (error is DioException) {
+      final status = error.response?.statusCode;
+      if (status == 503) {
+        return 'Google login is not enabled on the server '
+            '(GOOGLE_CLIENT_IDS is not configured).';
+      }
+      if (status == 401) {
+        return 'The server rejected the Google credential — the backend '
+            'GOOGLE_CLIENT_IDS must include this app\'s web client ID.';
+      }
+      if (status != null) {
+        return 'Google sign-in failed: HTTP $status';
+      }
+      return 'Google sign-in failed: could not reach the server.';
+    }
+    final text = error.toString();
+    if (text.contains('10:') || text.toUpperCase().contains('DEVELOPER_ERROR')) {
+      return 'Google sign-in is misconfigured for this build — register the '
+          'app\'s package name and signing SHA-1 as an Android OAuth client '
+          'in Google Cloud Console.';
+    }
+    return 'Google sign-in failed: $text';
   }
 }
 

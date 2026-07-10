@@ -24,7 +24,12 @@ export class ApiError extends Error {
   }
 }
 
-let refreshPromise: Promise<string | null> | null = null;
+// Refresh outcome: `token` on success; `sessionDead` only when the server
+// EXPLICITLY rejected the refresh token. Transient failures (network error,
+// 5xx, cold-starting server) must never end the session.
+type RefreshResult = { token: string | null; sessionDead: boolean };
+
+let refreshPromise: Promise<RefreshResult> | null = null;
 
 function redirectToLogin() {
   if (typeof window !== "undefined" && window.location.pathname !== "/auth/login") {
@@ -32,9 +37,9 @@ function redirectToLogin() {
   }
 }
 
-async function refreshAccessToken() {
+async function refreshAccessToken(): Promise<RefreshResult> {
   const refreshToken = getRefreshToken();
-  if (!refreshToken) return null;
+  if (!refreshToken) return { token: null, sessionDead: true };
 
   if (!refreshPromise) {
     refreshPromise = fetch(`${API_BASE_URL}/auth/refresh`, {
@@ -43,15 +48,22 @@ async function refreshAccessToken() {
       body: JSON.stringify({ refresh_token: refreshToken }),
     })
       .then(async (response) => {
-        if (!response.ok) return null;
+        if (!response.ok) {
+          const dead =
+            response.status >= 400 &&
+            response.status < 500 &&
+            response.status !== 408 &&
+            response.status !== 429;
+          return { token: null, sessionDead: dead };
+        }
         const tokens = (await response.json()) as {
           access_token: string;
           refresh_token: string;
         };
         saveAuthTokens(tokens);
-        return tokens.access_token;
+        return { token: tokens.access_token, sessionDead: false };
       })
-      .catch(() => null)
+      .catch(() => ({ token: null, sessionDead: false }))
       .finally(() => {
         refreshPromise = null;
       });
@@ -80,14 +92,16 @@ export async function apiRequest<T>(
 
   const token = options.auth !== false ? getAccessToken() : null;
   let response = await request(token);
+  let sessionDead = false;
 
   if (response.status === 401 && options.auth !== false && !path.startsWith("/auth/refresh")) {
-    const nextToken = await refreshAccessToken();
-    if (nextToken) {
-      response = await request(nextToken);
+    const refresh = await refreshAccessToken();
+    if (refresh.token) {
+      response = await request(refresh.token);
     } else {
-      clearAuthSession();
-      redirectToLogin();
+      // Only a definitive server rejection of the refresh token ends the
+      // session; a transient refresh failure just fails this request.
+      sessionDead = refresh.sessionDead;
     }
   }
 
@@ -103,7 +117,7 @@ export async function apiRequest<T>(
         ? String(body.detail)
         : "Request failed";
 
-    if (response.status === 401 && options.auth !== false) {
+    if (sessionDead) {
       clearAuthSession();
       redirectToLogin();
     }

@@ -132,9 +132,10 @@ class SyncService {
   String _syncError(String name, Object error) {
     if (error is DioException) {
       final status = error.response?.statusCode;
-      if (status == 401 || status == 403) {
-        return 'Session expired. Please log in again.';
-      }
+      // Note: 401/403 are NOT mapped to a session-expiry message here.
+      // ApiClient's interceptor owns session expiry (it refreshes and only
+      // logs out when the server rejects the refresh token); a single
+      // unauthorized resource must not end the session.
       if (status != null) {
         return '$name sync failed: HTTP $status';
       }

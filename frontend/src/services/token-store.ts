@@ -16,7 +16,11 @@ export function saveAuthSession(auth: AuthResponse) {
 export function saveAuthTokens(tokens: Pick<AuthResponse, "access_token" | "refresh_token">) {
   if (typeof window === "undefined") return;
   localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token);
-  localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token);
+  // Never overwrite a working refresh token with a missing one — the old
+  // token stays valid server-side, so keeping it preserves the session.
+  if (tokens.refresh_token) {
+    localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token);
+  }
 }
 
 export function getAccessToken() {
