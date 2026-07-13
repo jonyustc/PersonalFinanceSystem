@@ -68,6 +68,24 @@ class BackupService {
     return true;
   }
 
+  /// Writes a single rolling backup file (`personal_finance_backup.json`) to the
+  /// given directory, or app storage when [dir] is null. Used by the scheduled
+  /// and manual "Back up now" flows. Throws if the directory can't be written
+  /// (e.g. a picked folder the OS won't grant direct file access to).
+  Future<File> writeBackup({String? dir}) async {
+    final targetDir = dir ?? (await getApplicationDocumentsDirectory()).path;
+    final data = await _db.exportData();
+    final json = const JsonEncoder.withIndent('  ').convert(data);
+    final file = File('$targetDir/personal_finance_backup.json');
+    await file.writeAsString(json);
+    return file;
+  }
+
+  /// Lets the user pick a folder to also keep backups in. Returns the chosen
+  /// path, or null if cancelled. On some Android versions the OS returns a
+  /// location the app can't write to directly — the caller verifies by writing.
+  Future<String?> pickBackupFolder() => FilePicker.platform.getDirectoryPath();
+
   Future<File> _writeSnapshot(Directory dir) async {
     final data = await _db.exportData();
     final json = const JsonEncoder.withIndent('  ').convert(data);

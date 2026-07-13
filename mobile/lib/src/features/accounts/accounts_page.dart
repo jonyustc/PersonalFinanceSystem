@@ -13,6 +13,8 @@ import '../../widgets/money_text.dart';
 import '../../widgets/section_header.dart';
 import '../../widgets/stat_card.dart';
 import '../dashboard/dashboard_page.dart';
+import '../transactions/transaction_details_page.dart';
+import '../transactions/transaction_tile.dart';
 
 class AccountsPage extends ConsumerWidget {
   const AccountsPage({super.key});
@@ -74,7 +76,12 @@ class AccountsPage extends ConsumerWidget {
                 child: _AccountRow(
                   account: account,
                   currency: currency,
-                  onTap: () => _showEditAccountSheet(context, ref, account),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          AccountDetailsPage(accountId: account['id'] as String),
+                    ),
+                  ),
                   onLongPress: () => _archiveAccount(context, ref, account),
                 ),
               ),
@@ -149,18 +156,6 @@ class AccountsPage extends ConsumerWidget {
     }
   }
 
-  void _showEditAccountSheet(
-    BuildContext context,
-    WidgetRef ref,
-    Map<String, dynamic> account,
-  ) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => _EditAccountSheet(account: account),
-    );
-  }
-
   void _showCreateAccountSheet(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
@@ -174,6 +169,366 @@ class AccountsPage extends ConsumerWidget {
       context: context,
       isScrollControlled: true,
       builder: (_) => const _TransferSheet(),
+    );
+  }
+}
+
+void _showEditAccountSheet(BuildContext context, Map<String, dynamic> account) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (_) => _EditAccountSheet(account: account),
+  );
+}
+
+/// Full-screen view of a single account: a colorful balance header, an in/out
+/// summary and every mirrored transaction that touches it. Opened by tapping an
+/// account row.
+class AccountDetailsPage extends ConsumerWidget {
+  const AccountDetailsPage({super.key, required this.accountId});
+
+  final String accountId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final snapshot = ref.watch(appControllerProvider).asData?.value;
+    final account = snapshot?.accounts.cast<Map<String, dynamic>?>().firstWhere(
+      (a) => a?['id'] == accountId,
+      orElse: () => null,
+    );
+    if (snapshot == null || account == null) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: const EmptyPanel(
+          icon: Icons.account_balance_outlined,
+          title: 'Account unavailable',
+          body: 'This account is no longer in the local data.',
+        ),
+      );
+    }
+
+    final currency =
+        account['currency'] as String? ?? snapshot.session?.currency ?? 'BDT';
+    final categoryById = {
+      for (final c in snapshot.categories) c['id'] as String: c,
+    };
+    final accent = _accountColor(account['type'] as String?);
+
+    final txns =
+        snapshot.transactions
+            .where(
+              (row) =>
+                  row['account_id'] == accountId ||
+                  row['transfer_account_id'] == accountId,
+            )
+            .toList()
+          ..sort((a, b) {
+            final left = DateTime.tryParse(a['txn_date'] as String? ?? '');
+            final right = DateTime.tryParse(b['txn_date'] as String? ?? '');
+            if (left == null && right == null) return 0;
+            if (left == null) return 1;
+            if (right == null) return -1;
+            return right.compareTo(left);
+          });
+
+    var moneyIn = 0.0;
+    var moneyOut = 0.0;
+    for (final row in txns) {
+      final amount = asDouble(row['amount']);
+      final fromThis = row['account_id'] == accountId;
+      switch (row['type']) {
+        case 'income':
+          moneyIn += amount;
+        case 'expense':
+          moneyOut += amount;
+        case 'transfer':
+          if (fromThis) {
+            moneyOut += amount;
+          } else {
+            moneyIn += amount;
+          }
+      }
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(account['name'] as String? ?? 'Account'),
+        actions: [
+          IconButton(
+            tooltip: 'Edit account',
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: () => _showEditAccountSheet(context, account),
+          ),
+          IconButton(
+            tooltip: 'Archive account',
+            icon: const Icon(Icons.archive_outlined),
+            onPressed: () => _archive(context, ref, account),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: () => ref.read(appControllerProvider.notifier).syncNow(),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.lg,
+            AppSpacing.lg,
+            96,
+          ),
+          children: [
+            _AccountHero(account: account, accent: accent, currency: currency),
+            const SizedBox(height: AppSpacing.md),
+            _InOutRow(
+              moneyIn: moneyIn,
+              moneyOut: moneyOut,
+              count: txns.length,
+              currency: currency,
+            ),
+            const SizedBox(height: AppSpacing.xl),
+            SectionHeader(
+              'Transactions',
+              subtitle: txns.isEmpty
+                  ? 'None yet'
+                  : '${txns.length} shown${txns.length >= 250 ? ' (recent)' : ''}',
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (txns.isEmpty)
+              const EmptyPanel(
+                icon: Icons.receipt_long_outlined,
+                title: 'No transactions',
+                body: 'Money you move through this account will appear here.',
+              )
+            else
+              ...txns.map(
+                (row) => Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                  child: TransactionTile(
+                    row: row,
+                    currency: currency,
+                    category: categoryById[row['category_id']],
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => TransactionDetailsPage(
+                          transactionId: row['id'] as String,
+                        ),
+                      ),
+                    ),
+                    onDelete: () => _confirmDelete(context, ref, row),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _archive(
+    BuildContext context,
+    WidgetRef ref,
+    Map<String, dynamic> account,
+  ) async {
+    final name = account['name'] as String? ?? 'Account';
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Archive account?',
+      message: '"$name" will be removed from your active account lists.',
+      confirmLabel: 'Archive',
+      icon: Icons.archive_outlined,
+      destructive: true,
+    );
+    if (!confirmed) return;
+    try {
+      await ref
+          .read(appControllerProvider.notifier)
+          .archiveAccount(account['id'] as String);
+      if (context.mounted) Navigator.of(context).pop();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  Future<void> _confirmDelete(
+    BuildContext context,
+    WidgetRef ref,
+    Map<String, dynamic> row,
+  ) async {
+    final title =
+        (row['merchant_name'] ?? row['description'] ?? 'transaction') as String;
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Delete transaction?',
+      message: 'Delete "$title" and refresh balances? This cannot be undone.',
+      confirmLabel: 'Delete',
+      icon: Icons.delete_outline,
+      destructive: true,
+    );
+    if (!confirmed) return;
+    try {
+      await ref
+          .read(appControllerProvider.notifier)
+          .deleteTransaction(row['id'] as String);
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+}
+
+/// Colorful balance header for the account details page — mirrors the account's
+/// accent color and shows the running balance (or card outstanding + credit
+/// utilization).
+class _AccountHero extends StatelessWidget {
+  const _AccountHero({
+    required this.account,
+    required this.accent,
+    required this.currency,
+  });
+
+  final Map<String, dynamic> account;
+  final Color accent;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isCard = isCreditCardAccount(account);
+    final typeLabel = (account['type'] as String? ?? '')
+        .replaceAll('_', ' ')
+        .toUpperCase();
+    final primaryAmount = isCard
+        ? asDouble(account['current_outstanding'])
+        : asDouble(account['balance']);
+    final limit = asDouble(account['credit_limit']);
+    final available = (limit - primaryAmount) > 0 ? limit - primaryAmount : 0.0;
+    final utilization = limit > 0 ? primaryAmount / limit * 100 : 0.0;
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [accent, Color.alphaBlend(Colors.black26, accent)],
+        ),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        boxShadow: [
+          BoxShadow(
+            color: accent.withValues(alpha: 0.3),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                _accountIcon(account['type'] as String?),
+                color: Colors.white,
+                size: 22,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                typeLabel,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: Colors.white.withValues(alpha: 0.9),
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          Text(
+            isCard ? 'OUTSTANDING' : 'BALANCE',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: Colors.white.withValues(alpha: 0.85),
+              letterSpacing: 0.6,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          MoneyText(
+            primaryAmount,
+            currency: currency,
+            autoFit: true,
+            style: theme.textTheme.headlineMedium?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.6,
+            ),
+          ),
+          if (isCard && limit > 0) ...[
+            const SizedBox(height: AppSpacing.md),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.pill),
+              child: LinearProgressIndicator(
+                value: (utilization / 100).clamp(0, 1).toDouble(),
+                minHeight: 6,
+                backgroundColor: Colors.white.withValues(alpha: 0.25),
+                valueColor: const AlwaysStoppedAnimation(Colors.white),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              '${money(available, currency: currency)} available · '
+              '${utilization.round()}% used',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.white.withValues(alpha: 0.9),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Money-in / money-out / count summary for the account details page.
+class _InOutRow extends StatelessWidget {
+  const _InOutRow({
+    required this.moneyIn,
+    required this.moneyOut,
+    required this.count,
+    required this.currency,
+  });
+
+  final double moneyIn;
+  final double moneyOut;
+  final int count;
+  final String currency;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: StatCard(
+            label: 'Money in',
+            amount: moneyIn,
+            currency: currency,
+            icon: Icons.south_west,
+            amountColor: AppColors.amount(context, positive: true),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: StatCard(
+            label: 'Money out',
+            amount: moneyOut,
+            currency: currency,
+            icon: Icons.north_east,
+            amountColor: AppColors.amount(context, positive: false),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../core/api_client.dart';
 import '../core/app_database.dart';
 import '../core/backup_service.dart';
+import '../core/backup_settings.dart';
 import '../core/google_auth.dart';
 import '../core/local_ledger.dart';
 import '../core/session_store.dart';
@@ -20,6 +21,7 @@ final googleAuthServiceProvider = Provider((ref) => GoogleAuthService());
 final backupServiceProvider = Provider(
   (ref) => BackupService(ref.watch(databaseProvider)),
 );
+final backupSettingsStoreProvider = Provider((ref) => BackupSettingsStore());
 final apiClientProvider = Provider(
   (ref) => ApiClient(
     ref.watch(sessionStoreProvider),
@@ -155,6 +157,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
       // recurring entries (a local operation) but never auto-syncs. The user
       // pulls fresh data with the Sync button.
       unawaited(materializeDueRecurring());
+      unawaited(maybeRunScheduledBackup());
     }
     return snapshot;
   }
@@ -249,6 +252,68 @@ class AppController extends AsyncNotifier<AppSnapshot>
   /// Shares the latest auto-backup so the user can push it to Drive/Files.
   Future<bool> exportLatestAutoBackup() =>
       ref.read(backupServiceProvider).shareLatestAutoBackup();
+
+  // ------------------------- Scheduled backups -------------------------
+
+  Future<BackupSettings> loadBackupSettings() =>
+      ref.read(backupSettingsStoreProvider).load();
+
+  Future<void> setBackupFrequency(BackupFrequency frequency) =>
+      ref.read(backupSettingsStoreProvider).setFrequency(frequency);
+
+  /// Picks a folder, verifies it is actually writable by backing up into it,
+  /// then remembers it. Returns a user-facing status message.
+  Future<String> chooseBackupFolder() async {
+    final path = await ref.read(backupServiceProvider).pickBackupFolder();
+    if (path == null) return 'No folder selected.';
+    try {
+      await ref.read(backupServiceProvider).writeBackup(dir: path);
+    } catch (_) {
+      return "That folder can't be written to on this device. Backups will use "
+          'app storage — use Export to save a copy elsewhere.';
+    }
+    await ref.read(backupSettingsStoreProvider).setCustomDir(path);
+    await ref.read(backupSettingsStoreProvider).markBackedUp(path);
+    return 'Backup folder set. A copy was saved there.';
+  }
+
+  Future<void> clearBackupFolder() =>
+      ref.read(backupSettingsStoreProvider).setCustomDir(null);
+
+  /// Manual "Back up now": writes to the configured destination and records it.
+  /// Returns the destination label. Throws on write failure (surfaced to UI).
+  Future<String> runManualBackup() async {
+    final store = ref.read(backupSettingsStoreProvider);
+    final settings = await store.load();
+    final file =
+        await ref.read(backupServiceProvider).writeBackup(dir: settings.customDir);
+    final where = settings.customDir == null ? 'App storage' : file.parent.path;
+    await store.markBackedUp(where);
+    return where;
+  }
+
+  /// Runs a scheduled backup if the chosen frequency says one is due. Called on
+  /// app open/resume — a reliable "run if due" that needs no background worker.
+  Future<void> maybeRunScheduledBackup() async {
+    if (state.asData?.value.session == null) return;
+    final store = ref.read(backupSettingsStoreProvider);
+    final settings = await store.load();
+    if (!settings.isDue) return;
+    try {
+      final file = await ref
+          .read(backupServiceProvider)
+          .writeBackup(dir: settings.customDir);
+      await store.markBackedUp(
+        settings.customDir == null ? 'App storage' : file.parent.path,
+      );
+    } catch (_) {
+      // A custom folder may have become unwritable; fall back to app storage.
+      try {
+        await ref.read(backupServiceProvider).writeBackup();
+        await store.markBackedUp('App storage');
+      } catch (_) {}
+    }
+  }
 
   /// Restores a picked backup file into the local database, then refreshes
   /// state. Returns false if the user cancelled the file picker.
@@ -1020,6 +1085,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
     // never auto-sync — the user syncs manually.
     if (state == AppLifecycleState.resumed) {
       unawaited(materializeDueRecurring());
+      unawaited(maybeRunScheduledBackup());
     }
     // Refresh the local recovery copy when the app goes to the background.
     if (state == AppLifecycleState.paused) {
