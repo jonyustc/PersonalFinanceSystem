@@ -16,19 +16,68 @@ class BackupService {
   /// Writes all local data to a JSON file and opens the system share sheet so
   /// the user can save it to Drive, Files, email, etc.
   Future<void> exportBackup() async {
-    final data = await _db.exportData();
-    final json = const JsonEncoder.withIndent('  ').convert(data);
-    final dir = await getTemporaryDirectory();
-    final stamp = DateTime.now()
-        .toIso8601String()
-        .replaceAll(RegExp(r'[:.]'), '-');
-    final file = File('${dir.path}/personal_finance_backup_$stamp.json');
-    await file.writeAsString(json);
+    final file = await _writeSnapshot(await getTemporaryDirectory());
     await Share.shareXFiles(
       [XFile(file.path, mimeType: 'application/json')],
       subject: 'Personal Finance backup',
-      text: 'Personal Finance data backup ($stamp)',
+      text: 'Personal Finance data backup',
     );
+  }
+
+  /// Fixed filename for the silent rolling auto-backup kept in app storage.
+  static const _autoBackupName = 'personal_finance_autobackup.json';
+
+  /// Silently writes a fresh full backup to app storage (best effort). This is
+  /// a recovery copy against in-app data loss; it does NOT survive an uninstall,
+  /// so the user should still export to Drive occasionally. Returns the file, or
+  /// null on failure (never throws — auto-backup must not disrupt the app).
+  Future<File?> autoBackup() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final data = await _db.exportData();
+      final json = jsonEncode(data);
+      final file = File('${dir.path}/$_autoBackupName');
+      await file.writeAsString(json);
+      return file;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Path of the latest auto-backup if one exists (for a one-tap export).
+  Future<File?> latestAutoBackup() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File('${dir.path}/$_autoBackupName');
+      return await file.exists() ? file : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Shares the latest auto-backup via the system sheet so the user can push it
+  /// to Drive/Files. Returns false when there is no auto-backup yet.
+  Future<bool> shareLatestAutoBackup() async {
+    final file = await latestAutoBackup();
+    if (file == null) return false;
+    await Share.shareXFiles(
+      [XFile(file.path, mimeType: 'application/json')],
+      subject: 'Personal Finance backup',
+      text: 'Personal Finance data backup',
+    );
+    return true;
+  }
+
+  Future<File> _writeSnapshot(Directory dir) async {
+    final data = await _db.exportData();
+    final json = const JsonEncoder.withIndent('  ').convert(data);
+    final stamp = DateTime.now().toIso8601String().replaceAll(
+      RegExp(r'[:.]'),
+      '-',
+    );
+    final file = File('${dir.path}/personal_finance_backup_$stamp.json');
+    await file.writeAsString(json);
+    return file;
   }
 
   /// Lets the user pick a backup file and restores it into the local database,

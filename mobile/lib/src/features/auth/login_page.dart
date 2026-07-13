@@ -18,6 +18,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _password = TextEditingController();
   bool _busy = false;
   bool _googleBusy = false;
+  bool _restoring = false;
   bool _obscure = true;
 
   @override
@@ -199,6 +200,48 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                             label: const Text('Continue with Google'),
                           ),
                         ],
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            const Expanded(child: Divider()),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              child: Text(
+                                'no connection?',
+                                style: textTheme.bodySmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                            const Expanded(child: Divider()),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        TextButton.icon(
+                          onPressed: _restoring ? null : _restoreOffline,
+                          icon: _restoring
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.restore_outlined),
+                          label: Text(
+                            _restoring
+                                ? 'Opening backup…'
+                                : 'Use a backup file (offline)',
+                          ),
+                        ),
+                        Text(
+                          'Opens the app from a backup with no sign-in. '
+                          'Sign in later to sync.',
+                          textAlign: TextAlign.center,
+                          style: textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -218,6 +261,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       await ref
           .read(appControllerProvider.notifier)
           .login(_email.text.trim(), _password.text);
+      _dismissIfModal();
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -228,10 +272,40 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     }
   }
 
+  /// Restores a backup and enters the app offline (no server needed). On the
+  /// root login screen the app switches to the home shell automatically once a
+  /// session exists; when shown as a re-login sheet, close it.
+  Future<void> _restoreOffline() async {
+    setState(() => _restoring = true);
+    try {
+      final ok = await ref
+          .read(appControllerProvider.notifier)
+          .restoreBackupOffline();
+      if (ok) _dismissIfModal();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open backup: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _restoring = false);
+    }
+  }
+
+  /// When this page was pushed as a modal (e.g. "Sign in to sync" from offline
+  /// mode), pop it on success. As the root page it can't pop — the app rebuilds
+  /// to the home shell from the new session instead.
+  void _dismissIfModal() {
+    if (mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
   Future<void> _googleSubmit() async {
     setState(() => _googleBusy = true);
     try {
       await ref.read(appControllerProvider.notifier).loginWithGoogle();
+      _dismissIfModal();
     } catch (error) {
       if (!mounted) return;
       // The user dismissing the Google sheet is not an error worth surfacing.

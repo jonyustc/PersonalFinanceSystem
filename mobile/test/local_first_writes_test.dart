@@ -162,8 +162,10 @@ void main() {
   late _RecordingDatabase db;
   late ProviderContainer container;
 
-  Future<AppController> pumpController() async {
-    SharedPreferences.setMockInitialValues({});
+  Future<AppController> pumpController({
+    Map<String, Object> prefs = const {},
+  }) async {
+    SharedPreferences.setMockInitialValues(prefs);
     db = _RecordingDatabase();
     container = ProviderContainer(
       overrides: [
@@ -268,6 +270,26 @@ void main() {
       );
 
       expect(db.queuedDeletes, contains('budgets:bud-1'));
+    });
+  });
+
+  group('offline session (fresh install, server down)', () {
+    test('enters authenticated from a stored offline session', () async {
+      final controller = await pumpController(prefs: {'offline_session': true});
+      final snap = controller.state.asData!.value;
+      expect(snap.isAuthenticated, isTrue);
+      expect(snap.session!.isOffline, isTrue);
+    });
+
+    test('syncNow is a no-op in offline mode and prompts sign-in', () async {
+      final controller = await pumpController(prefs: {'offline_session': true});
+
+      // Must not throw or hit the network (the api client is offline-only).
+      await controller.syncNow();
+
+      final snap = controller.state.asData!.value;
+      expect(snap.isSyncing, isFalse);
+      expect(snap.notice, contains('Sign in'));
     });
   });
 

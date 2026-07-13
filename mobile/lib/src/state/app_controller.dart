@@ -175,8 +175,20 @@ class AppController extends AsyncNotifier<AppSnapshot>
   /// `isSyncing`, so pre-setting it true here would make the sync a no-op and
   /// leave the spinner stuck forever.
   Future<void> _onAuthenticated(Map<String, dynamic> auth) async {
+    // If we were in an offline session for a DIFFERENT account, drop that data
+    // so two users' rows never mix. Same-user offline edits are kept and pushed
+    // on the sync below.
+    final user = (auth['user'] as Map?)?.cast<String, dynamic>() ?? {};
+    final newEmail = (user['email'] ?? '').toString();
+    final prevProfile = await _db.metaJson('profile');
+    final prevEmail = (prevProfile?['email'] ?? '').toString();
+    if (prevEmail.isNotEmpty && prevEmail != newEmail) {
+      await _db.clearAll();
+      await _db.clearSyncCursor();
+    }
     await _session.saveFromAuth(auth);
     final session = await _session.load();
+    await _persistProfile(session);
     state = AsyncData(
       (await _readLocal(session: session)).copyWith(authNotice: null),
     );
@@ -185,8 +197,58 @@ class AppController extends AsyncNotifier<AppSnapshot>
     await syncNow();
   }
 
+  /// Persists the signed-in identity into the local DB so it rides along in
+  /// backups and can rebuild an offline session on a fresh, server-less install.
+  Future<void> _persistProfile(Session? session) async {
+    if (session == null) return;
+    await _db.saveMetaJson('profile', {
+      'userName': session.userName,
+      'email': session.email,
+      'currency': session.currency,
+    });
+  }
+
+  /// Enters the app from a backup file with NO server login — for a fresh
+  /// install while the backend is unreachable. Imports the backup, recovers the
+  /// identity it carries, and starts an offline session. Returns false if the
+  /// user cancelled the file picker.
+  Future<bool> restoreBackupOffline() async {
+    final imported = await ref.read(backupServiceProvider).importBackup();
+    if (!imported) return false;
+    // The restored data predates the server; force a full pull on first sync.
+    await _db.clearSyncCursor();
+    final profile = await _db.metaJson('profile');
+    await _session.saveOfflineSession(
+      userName: (profile?['userName'] ?? 'Offline user').toString(),
+      email: (profile?['email'] ?? '').toString(),
+      currency: (profile?['currency'] ?? 'BDT').toString(),
+    );
+    state = AsyncData(await _readLocal(session: await _session.load()));
+    return true;
+  }
+
   /// Exports all local data to a shareable JSON backup file.
   Future<void> exportBackup() => ref.read(backupServiceProvider).exportBackup();
+
+  /// Best-effort silent recovery copy of the local DB. Skipped when signed out.
+  /// Never throws — auto-backup must not disrupt normal use.
+  Future<void> _autoBackup() async {
+    if (state.asData?.value.session == null) return;
+    final file = await ref.read(backupServiceProvider).autoBackup();
+    if (file != null) {
+      await _db.saveMetaJson('auto_backup_at', {
+        'at': DateTime.now().toIso8601String(),
+      });
+    }
+  }
+
+  /// Timestamp of the last successful auto-backup, if any (for Settings).
+  Future<String?> lastAutoBackupAt() async =>
+      (await _db.metaJson('auto_backup_at'))?['at'] as String?;
+
+  /// Shares the latest auto-backup so the user can push it to Drive/Files.
+  Future<bool> exportLatestAutoBackup() =>
+      ref.read(backupServiceProvider).shareLatestAutoBackup();
 
   /// Restores a picked backup file into the local database, then refreshes
   /// state. Returns false if the user cancelled the file picker.
@@ -210,6 +272,9 @@ class AppController extends AsyncNotifier<AppSnapshot>
   }
 
   Future<void> expireSession() async {
+    // An offline session has no server token to expire; a stray 401 from a
+    // best-effort API call must not kick the user out of offline mode.
+    if (state.asData?.value.session?.isOffline == true) return;
     await _session.clear(keepTheme: true);
     final current = state.asData?.value;
     if (current == null || current.session == null) return;
@@ -223,6 +288,15 @@ class AppController extends AsyncNotifier<AppSnapshot>
   Future<void> syncNow({bool silent = false}) async {
     final current = state.asData?.value;
     if (current == null || current.session == null || current.isSyncing) return;
+    // Offline sessions carry no token; there is nothing to sync until sign-in.
+    if (current.session!.isOffline) {
+      if (!silent) {
+        state = AsyncData(current.copyWith(
+          notice: 'You\'re offline. Sign in to sync your data.',
+        ));
+      }
+      return;
+    }
     if (!silent) {
       state = AsyncData(current.copyWith(isSyncing: true, notice: null));
     }
@@ -234,6 +308,8 @@ class AppController extends AsyncNotifier<AppSnapshot>
           ? 'Synced. ${synced.pendingWrites} changes still to sync.'
           : 'Synced';
       state = AsyncData(synced.copyWith(notice: notice));
+      // Keep a fresh local recovery copy after a successful sync.
+      unawaited(_autoBackup());
     } catch (error) {
       final message = _syncErrorMessage(error);
       if (message.contains('Session expired')) {
@@ -760,9 +836,9 @@ class AppController extends AsyncNotifier<AppSnapshot>
   Future<void> setCurrency(String currency) async {
     await _session.saveCurrency(currency);
     final current = state.asData?.value;
-    state = AsyncData(
-      await _readLocal(session: await _session.load() ?? current?.session),
-    );
+    final session = await _session.load() ?? current?.session;
+    await _persistProfile(session);
+    state = AsyncData(await _readLocal(session: session));
     // Persist to the backend so the choice survives re-login/sync (otherwise
     // saveFromAuth overwrites it with the stored user currency on next login).
     try {
@@ -944,6 +1020,10 @@ class AppController extends AsyncNotifier<AppSnapshot>
     // never auto-sync — the user syncs manually.
     if (state == AppLifecycleState.resumed) {
       unawaited(materializeDueRecurring());
+    }
+    // Refresh the local recovery copy when the app goes to the background.
+    if (state == AppLifecycleState.paused) {
+      unawaited(_autoBackup());
     }
   }
 

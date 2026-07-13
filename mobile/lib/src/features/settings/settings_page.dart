@@ -7,6 +7,7 @@ import '../../theme/app_spacing.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/section_header.dart';
+import '../auth/login_page.dart';
 import '../recurring/recurring_page.dart';
 
 class SettingsPage extends ConsumerWidget {
@@ -16,6 +17,7 @@ class SettingsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final snapshot = ref.watch(appControllerProvider).asData?.value;
     final session = snapshot?.session;
+    final isOffline = session?.isOffline == true;
     final scheme = Theme.of(context).colorScheme;
     final theme = Theme.of(context);
 
@@ -58,6 +60,43 @@ class SettingsPage extends ConsumerWidget {
             ],
           ),
         ),
+        if (isOffline) ...[
+          const SizedBox(height: AppSpacing.lg),
+          AppCard(
+            child: Row(
+              children: [
+                Icon(Icons.cloud_off_outlined, color: scheme.tertiary),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Offline mode',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Data lives on this device only. Sign in to sync it to '
+                        'the server.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                FilledButton(
+                  onPressed: () => _signInToSync(context),
+                  child: const Text('Sign in'),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: AppSpacing.xl),
         const SectionHeader('Preferences'),
         const SizedBox(height: AppSpacing.md),
@@ -162,6 +201,14 @@ class SettingsPage extends ConsumerWidget {
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _restore(context, ref),
               ),
+              const Divider(height: 1),
+              _SettingRow(
+                icon: Icons.cloud_upload_outlined,
+                label: 'Export latest auto-backup',
+                subtitle: 'Share the most recent automatic backup to Drive',
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _exportAuto(context, ref),
+              ),
             ],
           ),
         ),
@@ -205,6 +252,34 @@ class SettingsPage extends ConsumerWidget {
         ),
       ],
     );
+  }
+
+  Future<void> _signInToSync(BuildContext context) async {
+    // Push the login page as a sheet; it pops itself on a successful sign-in,
+    // which upgrades the offline session to a real one and syncs.
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const LoginPage()),
+    );
+  }
+
+  Future<void> _exportAuto(BuildContext context, WidgetRef ref) async {
+    try {
+      final shared = await ref
+          .read(appControllerProvider.notifier)
+          .exportLatestAutoBackup();
+      if (!shared && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No auto-backup yet — it is created after a sync.'),
+          ),
+        );
+      }
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Export failed: $error')));
+    }
   }
 
   Future<void> _backup(BuildContext context, WidgetRef ref) async {
