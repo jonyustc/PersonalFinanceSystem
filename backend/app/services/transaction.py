@@ -14,6 +14,7 @@ from app.models.account import Account, AccountBalanceHistory
 from app.models.transaction import Transaction
 from app.schemas.transaction import BulkTransactionUpdate, SplitTransactionCreate, TransactionCreate, TransactionUpdate
 from app.services.account import is_credit_card
+from app.services.sync_tombstone import RESOURCE_TRANSACTIONS, record_tombstone
 
 
 ZERO = Decimal("0")
@@ -25,6 +26,15 @@ class TransactionService:
 
     async def create(self, user_id: UUID, payload: TransactionCreate):
         try:
+            # Idempotent create: a client-supplied id that already exists (from a
+            # replayed offline push) returns the stored row untouched, so the
+            # balance is not applied twice.
+            if payload.id is not None:
+                existing = await self.db.get(Transaction, payload.id)
+                if existing is not None:
+                    if existing.user_id != user_id:
+                        raise HTTPException(409, "Transaction id already exists")
+                    return existing
             if payload.reference_number:
                 existing = await self._find_by_reference(user_id, payload.reference_number)
                 if existing:
@@ -165,6 +175,7 @@ class TransactionService:
             to_acc = await self._get_account(user_id, trx.transfer_account_id) if trx.type == "transfer" else None
             await self._reverse_balance(from_acc, to_acc, trx)
             await self.db.delete(trx)
+            await record_tombstone(self.db, user_id, RESOURCE_TRANSACTIONS, transaction_id)
             await self.db.commit()
             return True
         except Exception:
@@ -361,7 +372,9 @@ class TransactionService:
             transaction_type = "CARD_SPENDING"
             payload.transaction_type = transaction_type
         await self._apply_balance(from_acc, to_acc, payload)
+        extra = {"id": payload.id} if getattr(payload, "id", None) is not None else {}
         trx = Transaction(
+            **extra,
             user_id=user_id,
             account_id=payload.account_id,
             transfer_account_id=payload.transfer_account_id,

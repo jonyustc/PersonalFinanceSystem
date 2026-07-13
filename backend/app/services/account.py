@@ -54,7 +54,17 @@ class AccountService:
 
     async def create(self, user_id: UUID, payload: AccountCreate) -> Account:
         try:
+            # Idempotent create for replayed offline pushes: a client-supplied id
+            # that already exists returns the stored account untouched.
+            if payload.id is not None:
+                existing = await self.db.get(Account, payload.id)
+                if existing is not None:
+                    if existing.user_id != user_id:
+                        raise HTTPException(409, "Account id already exists")
+                    return existing
             data = payload.model_dump(exclude={"card_details"})
+            if data.get("id") is None:
+                data.pop("id", None)
             opening_balance = data["opening_balance"]
             data["user_id"] = user_id
             data["type"] = normalize_account_type(data["type"])

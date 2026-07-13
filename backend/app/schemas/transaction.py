@@ -26,6 +26,10 @@ def _normalize_counterparty(value: Optional[str]) -> Optional[str]:
 # ================= CREATE =================
 
 class TransactionCreate(BaseModel):
+    # Optional client-supplied id: offline clients generate the UUID so a
+    # re-pushed create is idempotent (returns the existing row) instead of
+    # duplicating. Omitted by online callers -> server assigns one.
+    id: Optional[UUID] = None
     account_id: UUID
     transfer_account_id: Optional[UUID] = None
     category_id: Optional[UUID] = None

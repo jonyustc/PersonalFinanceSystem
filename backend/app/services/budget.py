@@ -10,11 +10,40 @@ from app.models.budget import Budget
 from app.models.category import Category
 from app.models.monthly_income import MonthlyIncome
 from app.models.transaction import Transaction
+from app.services.sync_tombstone import RESOURCE_BUDGETS, record_tombstone
 
 
 class BudgetService:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def _resolve_new_id(self, budget_id, user_id):
+        """Resolves the id to use for a new budget row.
+
+        Returns the client-supplied id when it is free to use, or ``None`` to
+        let the database assign one. Raises 409 if the id is already owned by
+        another user so a client can never steal an existing primary key.
+        """
+        if budget_id is None:
+            return None
+        existing = await self.db.get(Budget, budget_id)
+        if existing is None:
+            return budget_id
+        if existing.user_id != user_id:
+            raise HTTPException(409, "Budget id already exists")
+        # Same user's id already used for a different row: let the DB assign one.
+        return None
+
+    def _new_budget(self, user_id, data, new_id):
+        kwargs = dict(
+            user_id=user_id,
+            category_id=data.category_id,
+            amount=data.amount,
+            month=data.month,
+        )
+        if new_id is not None:
+            kwargs["id"] = new_id
+        return Budget(**kwargs)
 
     async def create_budget(self, user_id: str, data):
         existing = await self.db.scalar(
@@ -27,12 +56,8 @@ class BudgetService:
         if existing:
             raise HTTPException(400, "Budget already exists")
 
-        budget = Budget(
-            user_id=user_id,
-            category_id=data.category_id,
-            amount=data.amount,
-            month=data.month,
-        )
+        new_id = await self._resolve_new_id(getattr(data, "id", None), user_id)
+        budget = self._new_budget(user_id, data, new_id)
         self.db.add(budget)
         await self.db.commit()
         await self.db.refresh(budget)
@@ -54,6 +79,7 @@ class BudgetService:
             raise HTTPException(404, "Budget not found")
 
         await self.db.delete(budget)
+        await record_tombstone(self.db, budget.user_id, RESOURCE_BUDGETS, budget.id)
         await self.db.commit()
 
     async def upsert_budget(self, user_id: str, data):
@@ -68,12 +94,8 @@ class BudgetService:
         if budget:
             budget.amount = data.amount
         else:
-            budget = Budget(
-                user_id=user_id,
-                category_id=data.category_id,
-                amount=data.amount,
-                month=data.month,
-            )
+            new_id = await self._resolve_new_id(getattr(data, "id", None), user_id)
+            budget = self._new_budget(user_id, data, new_id)
             self.db.add(budget)
 
         await self.db.commit()

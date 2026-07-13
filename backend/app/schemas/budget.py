@@ -2,7 +2,7 @@
 
 from uuid import UUID
 from decimal import Decimal
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
 import re
 
@@ -11,6 +11,10 @@ import re
 # CREATE
 # =========================
 class BudgetCreate(BaseModel):
+    # Optional client-supplied id: an offline client generates the UUID so a
+    # replayed create is idempotent and keeps the same id the mobile mirror
+    # already stored (no duplicate on the next pull).
+    id: Optional[UUID] = None
     category_id: UUID
     amount: Decimal = Field(gt=0)
     month: str  # "YYYY-MM"

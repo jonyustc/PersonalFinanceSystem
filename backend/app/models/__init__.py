@@ -4,6 +4,7 @@ from app.models.category import Category
 from app.models.notification import Notification
 from app.models.portfolio import Portfolio, PortfolioValueSnapshot
 from app.models.stock import Dividend, Holding, PortfolioTransaction, Stock
+from app.models.sync import SyncTombstone
 from app.models.transaction import Transaction
 from app.models.user import User
 
@@ -18,6 +19,7 @@ __all__ = [
     "PortfolioTransaction",
     "Holding",
     "Dividend",
+    "SyncTombstone",
     "Transaction",
     "User",
 ]

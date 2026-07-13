@@ -20,6 +20,11 @@ from app.schemas.stock import (
     StockUpdate,
 )
 from app.services.market_price import MarketPriceService
+from app.services.sync_tombstone import (
+    RESOURCE_PORTFOLIO_TRANSACTIONS,
+    RESOURCE_PORTFOLIOS,
+    record_tombstone,
+)
 
 
 ZERO = Decimal("0")
@@ -130,6 +135,7 @@ class PortfolioService:
                 400, "Move or delete this portfolio's transactions before deleting it"
             )
         await self.db.delete(portfolio)
+        await record_tombstone(self.db, user_id, RESOURCE_PORTFOLIOS, portfolio_id)
         await self.db.commit()
 
     async def _create_default_portfolio(self, user_id: UUID) -> Portfolio:
@@ -366,6 +372,11 @@ class PortfolioService:
         self, user_id: UUID, payload: PortfolioTransactionCreate
     ):
         try:
+            # Idempotent create for replayed offline pushes.
+            if payload.id is not None:
+                existing = await self.repo.get_transaction(user_id, payload.id)
+                if existing is not None:
+                    return await self._response_transaction(existing)
             stock = None
             if payload.stock_id:
                 stock = await self.repo.get_stock(payload.stock_id)
@@ -386,6 +397,7 @@ class PortfolioService:
                 payload.fees if payload.fees is not None else self._default_fee(payload)
             )
             trx = PortfolioTransaction(
+                **({"id": payload.id} if payload.id is not None else {}),
                 user_id=user_id,
                 portfolio_id=portfolio.id,
                 stock_id=stock.id if stock else None,
@@ -479,6 +491,9 @@ class PortfolioService:
             )
             await self._apply_broker_cash(trx, broker_account, reverse=True)
             await self.db.delete(trx)
+            await record_tombstone(
+                self.db, user_id, RESOURCE_PORTFOLIO_TRANSACTIONS, transaction_id
+            )
             await self.db.flush()
             await self._rebuild_derived(user_id)
             await self.db.commit()

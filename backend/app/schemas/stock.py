@@ -67,6 +67,9 @@ class DseDividendEstimateResponse(BaseModel):
 
 
 class PortfolioTransactionCreate(BaseModel):
+    # Optional client-supplied id so an offline-created portfolio transaction
+    # keeps its UUID on push, making the create idempotent.
+    id: UUID | None = None
     portfolio_id: UUID | None = None
     stock_id: UUID | None = None
     stock: StockCreate | None = None

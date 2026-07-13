@@ -44,6 +44,9 @@ class CreditCardDetailsResponse(CreditCardDetailsBase):
 
 
 class AccountCreate(BaseModel):
+    # Optional client-supplied id so an offline-created account keeps the same
+    # UUID when pushed, making the create idempotent. Omit for server-assigned.
+    id: UUID | None = None
     name: str = Field(min_length=1, max_length=120)
     type: AccountType
     opening_balance: Decimal = Decimal("0")

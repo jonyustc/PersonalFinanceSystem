@@ -12,6 +12,7 @@ from app.api.v1.endpoints import (
     notifications,
     portfolio,
     reports,
+    sync,
     transactions,
     transfers,
     users,
@@ -44,6 +45,7 @@ api_router.include_router(budgets.router, prefix="/budgets", tags=["budgets"])
 api_router.include_router(
     dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
+api_router.include_router(sync.router, prefix="/sync", tags=["sync"])
 
 # 🔹 Notifications
 api_router.include_router(notifications.router,

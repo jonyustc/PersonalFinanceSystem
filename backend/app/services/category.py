@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.category import CategoryRepository
 from app.schemas.category import CategoryCreate, CategoryUpdate
+from app.services.sync_tombstone import RESOURCE_CATEGORIES, record_tombstone
 
 
 class CategoryService:
@@ -122,6 +123,7 @@ class CategoryService:
             raise HTTPException(404, "Category not found")
 
         await self.repo.delete(category)
+        await record_tombstone(self.db, user_id, RESOURCE_CATEGORIES, category_id)
         await self.db.commit()
 
     async def _validate_parent(self, user_id: UUID, parent_id: UUID | None, category_type: str):
