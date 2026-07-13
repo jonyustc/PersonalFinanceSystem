@@ -5,6 +5,19 @@ import 'package:dio/dio.dart';
 import 'api_client.dart';
 import 'app_database.dart';
 
+/// Manual two-way merge sync.
+///
+/// Runs only when the user taps Sync (no timers, no post-write triggers). It
+/// **pushes** locally-created/edited/deleted rows to the server first — creates
+/// carry the client UUID so the server treats a replay as idempotent — then
+/// **pulls** `/sync/changes?since=<cursor>` and merges the delta with
+/// last-write-wins: a server row overwrites the local mirror unless that row
+/// still has unpushed local changes. Server tombstones remove local rows.
+///
+/// Transactions, accounts, categories, budgets and monthly income are written
+/// offline (their creates accept a client UUID, or upsert idempotently by a
+/// natural key). Portfolio and stocks are still written online, but are pulled
+/// down here for offline display.
 class SyncService {
   SyncService(this._api, this._db);
 
@@ -12,178 +25,252 @@ class SyncService {
   final AppDatabase _db;
 
   Future<void> syncAll() async {
-    await _replayPendingWrites();
+    // 1) Push local changes so the server is up to date before we pull.
+    final pushError = await _pushLocalChanges();
 
-    final results = await Future.wait<_SyncResult>([
-      _syncResource(
-        name: 'accounts',
-        fetch: _api.getAccounts,
-        replace: _db.replaceAccounts,
-      ),
-      _syncResource(
-        name: 'categories',
-        fetch: _api.getCategories,
-        replace: _db.replaceCategories,
-      ),
-      _syncResource(
-        name: 'transactions',
-        fetch: () => _fetchTransactions(limit: 250),
-        replace: _db.replaceTransactions,
-      ),
-      _syncResource(
-        name: 'budgets',
-        fetch: () => _api.getBudgetSummaryRows(_monthKey(DateTime.now())),
-        replace: _db.replaceBudgets,
-      ),
-      _syncResource(
-        name: 'stocks',
-        fetch: _api.getStocks,
-        replace: _db.replaceStocks,
-      ),
-      _syncResource(
-        name: 'portfolio transactions',
-        fetch: () => _api.getPortfolioTransactions(limit: 250),
-        replace: _db.replacePortfolioTransactions,
-      ),
-    ], eagerError: false);
+    // 2) Pull the delta since our last watermark and merge it in.
+    final cursor = await _db.syncCursor();
+    final body = await _api.getSyncChanges(since: cursor);
+    final changes = (body['changes'] as Map?)?.cast<String, dynamic>() ?? {};
+
+    await _mergeList(changes['accounts'], _db.mergeServerAccount);
+    await _mergeList(changes['categories'], _db.mergeServerCategory);
+    await _mergeList(changes['transactions'], _db.mergeServerTransaction);
+    await _mergeList(changes['budgets'], _db.mergeServerBudget);
+    await _mergeList(changes['stocks'], _db.mergeServerStock);
+    await _mergeList(
+        changes['portfolio_transactions'], _db.mergeServerPortfolioTransaction);
+
+    // Monthly income (per-month cache, keyed by month) so the Budgets screen
+    // has income + opening balance offline.
+    for (final row in (changes['monthly_income'] as List? ?? [])) {
+      if (row is Map) {
+        final month = row['month']?.toString();
+        if (month != null && month.isNotEmpty) {
+          await _db.cacheMonthlyIncome(month, row.cast<String, dynamic>());
+        }
+      }
+    }
+
+    for (final tomb in (body['tombstones'] as List? ?? [])) {
+      if (tomb is Map) {
+        await _db.applyTombstone(
+          tomb['resource']?.toString() ?? '',
+          tomb['entity_id']?.toString() ?? '',
+        );
+      }
+    }
+
+    // 3) A pulled account row carries the server's authoritative balance, which
+    // resets any local drift — but it also drops the optimistic effect of a
+    // local create that failed to push. Re-apply those so the display stays
+    // correct until the next successful push.
+    await _reoverlayUnpushedCreates();
+
+    // 4) Refresh read-only server-computed caches for display (best effort).
+    await _refreshDerivedCaches();
+
+    // 5) Advance the watermark so the next sync only fetches newer changes.
+    final serverTime = body['server_time']?.toString();
+    if (serverTime != null && serverTime.isNotEmpty) {
+      await _db.setSyncCursor(serverTime);
+    }
+    await _db.markSynced();
+
+    if (pushError != null) throw StateError(pushError);
+  }
+
+  // ------------------------------- PUSH -------------------------------
+
+  /// Pushes every dirty row and queued delete through the existing endpoints.
+  /// Returns a user-facing message if anything failed (so the caller can warn),
+  /// but always drains what it can — one bad row must not block the rest.
+  Future<String?> _pushLocalChanges() async {
+    String? firstError;
+
+    void note(Object error) {
+      firstError ??= _writeError(error);
+    }
+
+    // Deletes first: a create+delete done offline should net to nothing.
+    for (final row in await _db.pendingDeletes()) {
+      final resource = row['resource'] as String;
+      final id = row['entity_id'] as String;
+      try {
+        await _deleteOnServer(resource, id);
+        await _db.removePendingDelete(resource, id);
+      } on DioException catch (error) {
+        final status = error.response?.statusCode;
+        // Already gone on the server (404) is success for a delete.
+        if (status == 404) {
+          await _db.removePendingDelete(resource, id);
+        } else {
+          note(error);
+        }
+      }
+    }
+
+    await _pushTable('transactions', 'transactions', note);
+    await _pushTable('categories', 'categories', note);
+    await _pushTable('accounts', 'accounts', note);
+    await _pushTable('budgets', 'budgets', note);
+    await _pushIncome(note);
+
+    return firstError;
+  }
+
+  /// Pushes every locally-edited month of income. The endpoint upserts by
+  /// (user, month), so a replay is idempotent — no client id needed.
+  Future<void> _pushIncome(void Function(Object) note) async {
+    for (final row in await _db.dirtyIncomeRows()) {
+      final month = row['month']?.toString();
+      if (month == null || month.isEmpty) continue;
+      try {
+        await _api.saveMonthlyIncome({
+          'month': month,
+          'amount': row['amount'] ?? 0,
+          'opening_balance': row['opening_balance'] ?? 0,
+        });
+        await _db.clearIncomeDirty(month);
+      } catch (error) {
+        note(error);
+      }
+    }
+  }
+
+  Future<void> _pushTable(
+    String table,
+    String resource,
+    void Function(Object) note,
+  ) async {
+    for (final row in await _db.dirtyRows(table)) {
+      final dirty = (row['dirty'] as int?) ?? 0;
+      final payload = _decodePayload(row['raw_json']);
+      if (payload == null) continue;
+      final id = row['id'].toString();
+      try {
+        if (dirty == 1) {
+          await _createOnServer(resource, payload);
+        } else {
+          await _updateOnServer(resource, id, payload);
+        }
+        await _db.clearDirty(table, id);
+      } catch (error) {
+        note(error);
+      }
+    }
+  }
+
+  Future<void> _createOnServer(String resource, Map<String, dynamic> payload) {
+    switch (resource) {
+      case 'transactions':
+        return _api.createTransaction(payload);
+      case 'categories':
+        return _api.createCategory(payload);
+      case 'accounts':
+        return _api.createAccount(payload);
+      case 'budgets':
+        // Upsert (by category+month, carrying the client id) covers both a
+        // first push and a replay idempotently.
+        return _api.upsertBudget(payload);
+    }
+    return Future.value();
+  }
+
+  Future<void> _updateOnServer(
+    String resource,
+    String id,
+    Map<String, dynamic> payload,
+  ) {
+    switch (resource) {
+      case 'transactions':
+        return _api.updateTransaction(id, payload);
+      case 'categories':
+        return _api.updateCategory(id, payload);
+      case 'accounts':
+        return _api.updateAccount(id, payload);
+      case 'budgets':
+        // A budget edit is the same idempotent upsert as a create.
+        return _api.upsertBudget(payload);
+    }
+    return Future.value();
+  }
+
+  Future<void> _deleteOnServer(String resource, String id) {
+    switch (resource) {
+      case 'transactions':
+        return _api.deleteTransaction(id);
+      case 'categories':
+        return _api.deleteCategory(id);
+      case 'accounts':
+        return _api.archiveAccount(id);
+      case 'budgets':
+        return _api.deleteBudget(id);
+    }
+    return Future.value();
+  }
+
+  // ------------------------------- PULL -------------------------------
+
+  Future<void> _mergeList(
+    dynamic rows,
+    Future<void> Function(Map<String, dynamic>) merge,
+  ) async {
+    for (final row in (rows as List? ?? [])) {
+      if (row is Map) await merge(row.cast<String, dynamic>());
+    }
+  }
+
+  /// Re-applies the balance effect of transactions still marked as un-pushed
+  /// local creates (dirty == 1), on top of the freshly pulled server balances.
+  Future<void> _reoverlayUnpushedCreates() async {
+    final dirty = await _db.dirtyRows('transactions');
+    for (final row in dirty) {
+      if ((row['dirty'] as int?) != 1) continue;
+      final txn = _decodePayload(row['raw_json']);
+      if (txn == null) continue;
+      await _db.applyTransactionToBalances(txn, reverse: false);
+    }
+  }
+
+  Future<void> _refreshDerivedCaches() async {
     try {
       await _db.savePortfolioSummary(await _api.getPortfolioSummary());
-    } catch (_) {
-      // Portfolio summary is an enhancement over local holdings; keep sync
-      // usable when this endpoint is temporarily unavailable.
-    }
+    } catch (_) {}
     try {
       await _db.savePortfolios(await _api.getPortfolios());
-    } catch (_) {
-      // Portfolios list (broker-account portfolios) is an enhancement; keep
-      // sync usable if the endpoint is temporarily unavailable.
-    }
+    } catch (_) {}
     try {
       await _db.saveDashboardSummary(
         await _api.getSimpleDashboard(_monthKey(DateTime.now())),
       );
-    } catch (_) {
-      // Dashboard summary (authoritative card spending/payment) is an
-      // enhancement over local computation; offline falls back to local math.
-    }
-    if (!results.any((result) => result.synced)) {
-      String? firstError;
-      for (final result in results) {
-        if (result.error != null) {
-          firstError = result.error;
-          break;
-        }
-      }
-      throw StateError(firstError ?? 'No sync endpoints completed');
-    }
-    await _db.markSynced();
+    } catch (_) {}
   }
 
-  Future<_SyncResult> _syncResource({
-    required String name,
-    required Future<List<Map<String, dynamic>>> Function() fetch,
-    required Future<void> Function(List<Map<String, dynamic>>) replace,
-  }) async {
+  Map<String, dynamic>? _decodePayload(Object? rawJson) {
+    if (rawJson is! String || rawJson.isEmpty) return null;
     try {
-      await replace(await fetch());
-      return _SyncResult.synced(name);
-    } catch (error) {
-      // Keep other datasets syncing; stale local data is better than blocking
-      // budgets or portfolio because one endpoint timed out.
-      return _SyncResult.failed(name, _syncError(name, error));
+      final decoded = jsonDecode(rawJson);
+      if (decoded is Map) return decoded.cast<String, dynamic>();
+    } catch (_) {
+      return null;
     }
+    return null;
   }
 
-  Future<void> _replayPendingWrites() async {
-    final queued = await _db.queuedMutations();
-    for (final item in queued) {
-      final id = item['id'] as int;
-      final method = item['method'] as String;
-      final path = item['path'] as String;
-      final payload = (jsonDecode(item['payload_json'] as String) as Map)
-          .cast<String, dynamic>();
-
-      try {
-        await _api.replayMutation(
-          method,
-          path,
-          _normalizedReplayPayload(method, path, payload),
-        );
-        await _db.deleteQueuedMutation(id);
-      } on DioException catch (error) {
-        final status = error.response?.statusCode;
-        // A 4xx (except 408 timeout / 429 rate-limit) means the server will
-        // never accept this write — drop it so it does not block the queue
-        // forever ("always shows pending writes"). Network/5xx errors stay
-        // queued for the next sync.
-        if (status != null &&
-            status >= 400 &&
-            status < 500 &&
-            status != 408 &&
-            status != 429) {
-          await _db.deleteQueuedMutation(id);
-        }
-      } catch (_) {
-        // Non-Dio error: keep the write queued and retry on the next sync.
-      }
-    }
-  }
-
-  String _syncError(String name, Object error) {
+  String _writeError(Object error) {
     if (error is DioException) {
-      final status = error.response?.statusCode;
-      // Note: 401/403 are NOT mapped to a session-expiry message here.
-      // ApiClient's interceptor owns session expiry (it refreshes and only
-      // logs out when the server rejects the refresh token); a single
-      // unauthorized resource must not end the session.
-      if (status != null) {
-        return '$name sync failed: HTTP $status';
+      final data = error.response?.data;
+      if (data is Map && data['detail'] is String) {
+        return data['detail'] as String;
       }
-      return '$name sync failed: ${error.type.name}';
+      final status = error.response?.statusCode;
+      if (status != null) return 'Some changes were rejected (HTTP $status).';
+      return 'Could not reach the server — some changes are still pending.';
     }
-    return '$name sync failed';
+    return 'Some changes could not be synced.';
   }
 
-  Map<String, dynamic> _normalizedReplayPayload(
-    String method,
-    String path,
-    Map<String, dynamic> payload,
-  ) {
-    if (method == 'PATCH' && path.startsWith('/portfolio/stocks/')) {
-      final normalized = {...payload};
-      normalized.remove('symbol');
-      return normalized;
-    }
-    return payload;
-  }
-
-  Future<List<Map<String, dynamic>>> _fetchTransactions({
-    int limit = 250,
-  }) async {
-    final page = await _api.getTransactions(limit: limit, offset: 0);
-    return (page['items'] as List? ?? [])
-        .whereType<Map>()
-        .map((row) => row.cast<String, dynamic>())
-        .toList();
-  }
-
-  String _monthKey(DateTime date) {
-    return '${date.year}-${date.month.toString().padLeft(2, '0')}';
-  }
-}
-
-class _SyncResult {
-  const _SyncResult({required this.name, required this.synced, this.error});
-
-  factory _SyncResult.synced(String name) {
-    return _SyncResult(name: name, synced: true);
-  }
-
-  factory _SyncResult.failed(String name, String error) {
-    return _SyncResult(name: name, synced: false, error: error);
-  }
-
-  final String name;
-  final bool synced;
-  final String? error;
+  String _monthKey(DateTime date) =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}';
 }

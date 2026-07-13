@@ -138,7 +138,7 @@ class SettingsPage extends ConsumerWidget {
               _SettingRow(
                 icon: Icons.sync_outlined,
                 label: syncTime(snapshot?.lastSyncAt),
-                subtitle: '${snapshot?.pendingWrites ?? 0} pending writes',
+                subtitle: '${snapshot?.pendingWrites ?? 0} unsynced changes',
                 trailing: IconButton(
                   tooltip: 'Sync now',
                   icon: const Icon(Icons.sync),

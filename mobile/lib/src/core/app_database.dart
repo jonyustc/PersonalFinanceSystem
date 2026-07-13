@@ -3,15 +3,24 @@ import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
+import 'local_ledger.dart';
+
 class AppDatabase {
+  AppDatabase({this.overridePath});
+
+  /// Test hook: when set, opens this path instead of the on-device file (e.g.
+  /// `inMemoryDatabasePath`), avoiding the platform-only `getDatabasesPath()`.
+  final String? overridePath;
+
   Database? _db;
 
   Future<Database> get database async {
     if (_db != null) return _db!;
-    final path = p.join(await getDatabasesPath(), 'personal_finance.db');
+    final path =
+        overridePath ?? p.join(await getDatabasesPath(), 'personal_finance.db');
     _db = await openDatabase(
       path,
-      version: 11,
+      version: 13,
       onCreate: _create,
       onUpgrade: _upgrade,
     );
@@ -89,6 +98,46 @@ class AppDatabase {
     await _createPortfolioTables(db);
     await _createBudgetTables(db);
     await _createRecurringTable(db);
+    await _createIncomeTable(db);
+    await _ensureSyncColumns(db);
+  }
+
+  /// Local-first monthly income mirror: one row per month, dirty-tracked so an
+  /// offline income edit is pushed on the next sync (0 = clean, 1 = unpushed).
+  /// Keyed by the "YYYY-MM" month string the backend upserts by.
+  Future<void> _createIncomeTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS monthly_income (
+        month TEXT PRIMARY KEY,
+        amount REAL NOT NULL DEFAULT 0,
+        opening_balance REAL NOT NULL DEFAULT 0,
+        dirty INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+  }
+
+  /// Adds the offline-first bookkeeping shared by both fresh installs and
+  /// upgrades: a `dirty` flag on every mirrored table (0 = clean/synced,
+  /// 1 = created locally → POST on sync, 2 = edited locally → PATCH on sync)
+  /// and a queue of deletions to replay. Idempotent.
+  Future<void> _ensureSyncColumns(Database db) async {
+    for (final table in const [
+      'accounts',
+      'categories',
+      'transactions',
+      'budgets',
+      'stocks',
+      'portfolio_transactions',
+    ]) {
+      await _addColumnSafely(db, table, 'dirty', 'INTEGER NOT NULL DEFAULT 0');
+    }
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pending_deletes (
+        resource TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        PRIMARY KEY (resource, entity_id)
+      )
+    ''');
   }
 
   Future<void> _upgrade(Database db, int oldVersion, int newVersion) async {
@@ -152,6 +201,12 @@ class AppDatabase {
     if (oldVersion < 11) {
       await _addColumnSafely(db, 'transactions', 'counterparty_name', 'TEXT');
       await _addColumnSafely(db, 'transactions', 'debt_type', 'TEXT');
+    }
+    if (oldVersion < 12) {
+      await _ensureSyncColumns(db);
+    }
+    if (oldVersion < 13) {
+      await _createIncomeTable(db);
     }
   }
 
@@ -291,6 +346,7 @@ class AppDatabase {
         'budgets',
         'stocks',
         'portfolio_transactions',
+        'monthly_income',
         'sync_queue',
         'meta',
       ]) {
@@ -308,6 +364,7 @@ class AppDatabase {
     'budgets',
     'stocks',
     'portfolio_transactions',
+    'monthly_income',
     'recurring_rules',
     'meta',
   ];
@@ -321,7 +378,7 @@ class AppDatabase {
     }
     return {
       'format': 'personal_finance_backup',
-      'schema_version': 7,
+      'schema_version': 8,
       'exported_at': DateTime.now().toIso8601String(),
       'tables': tables,
     };
@@ -584,6 +641,11 @@ class AppDatabase {
     await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<void> deleteCategory(String id) async {
+    final db = await database;
+    await db.delete('categories', where: 'id = ?', whereArgs: [id]);
+  }
+
   Future<void> replaceStocks(List<Map<String, dynamic>> rows) async {
     final db = await database;
     await db.transaction((txn) async {
@@ -686,6 +748,404 @@ class AppDatabase {
   Future<void> deleteQueuedMutation(int id) async {
     final db = await database;
     await db.delete('sync_queue', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // =====================================================================
+  // OFFLINE-FIRST: local writes, dirty tracking, delete queue, sync cursor
+  // =====================================================================
+
+  /// Maps a sync resource name to the local table that mirrors it.
+  static const _resourceTables = <String, String>{
+    'transactions': 'transactions',
+    'categories': 'categories',
+    'accounts': 'accounts',
+    'budgets': 'budgets',
+    'portfolio_transactions': 'portfolio_transactions',
+    'portfolios': 'portfolios',
+  };
+
+  /// Current `dirty` flag for a row, or -1 if it does not exist locally.
+  Future<int> _existingDirty(
+    DatabaseExecutor db,
+    String table,
+    String id,
+  ) async {
+    final rows = await db.query(
+      table,
+      columns: ['dirty'],
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    if (rows.isEmpty) return -1;
+    return (rows.first['dirty'] as int?) ?? 0;
+  }
+
+  /// Resolves the dirty flag for a local write. New rows are marked 1 (POST on
+  /// sync). Edits become 2 (PATCH) unless the row is still an un-pushed create
+  /// (dirty == 1), in which case it stays a create.
+  Future<int> _writeDirty(
+    DatabaseExecutor db,
+    String table,
+    String id, {
+    required bool isNew,
+  }) async {
+    if (isNew) return 1;
+    return (await _existingDirty(db, table, id)) == 1 ? 1 : 2;
+  }
+
+  Future<void> saveLocalTransaction(
+    Map<String, dynamic> row, {
+    required bool isNew,
+  }) async {
+    final db = await database;
+    final data = _transactionRow(row);
+    data['dirty'] =
+        await _writeDirty(db, 'transactions', row['id'].toString(), isNew: isNew);
+    await db.insert('transactions', data,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> saveLocalCategory(
+    Map<String, dynamic> row, {
+    required bool isNew,
+  }) async {
+    final db = await database;
+    final data = _categoryRow(row);
+    data['dirty'] =
+        await _writeDirty(db, 'categories', row['id'].toString(), isNew: isNew);
+    await db.insert('categories', data,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> saveLocalAccount(
+    Map<String, dynamic> row, {
+    required bool isNew,
+  }) async {
+    final db = await database;
+    final data = _accountRow(row);
+    data['dirty'] =
+        await _writeDirty(db, 'accounts', row['id'].toString(), isNew: isNew);
+    await db.insert('accounts', data,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> saveLocalPortfolioTransaction(
+    Map<String, dynamic> row, {
+    required bool isNew,
+  }) async {
+    final db = await database;
+    final data = _portfolioTransactionRow(row);
+    data['dirty'] = await _writeDirty(
+        db, 'portfolio_transactions', row['id'].toString(),
+        isNew: isNew);
+    await db.insert('portfolio_transactions', data,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> saveLocalStock(
+    Map<String, dynamic> row, {
+    required bool isNew,
+  }) async {
+    final db = await database;
+    final data = _stockRow(row);
+    data['dirty'] =
+        await _writeDirty(db, 'stocks', row['id'].toString(), isNew: isNew);
+    await db.insert('stocks', data,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> saveLocalBudget(
+    Map<String, dynamic> row, {
+    required bool isNew,
+  }) async {
+    final db = await database;
+    final data = _budgetRow(row);
+    data['dirty'] =
+        await _writeDirty(db, 'budgets', row['id'].toString(), isNew: isNew);
+    await db.insert('budgets', data,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// The mirrored budget for a "YYYY-MM" month + category, or null. Lets the
+  /// write path decide whether a save is a new budget (POST) or an edit (PATCH)
+  /// and reuse the existing id so it maps to the same server row.
+  Future<Map<String, dynamic>?> budgetForMonthCategory(
+    String month,
+    String categoryId,
+  ) async {
+    final db = await database;
+    final rows = await db.query(
+      'budgets',
+      where: 'year = ? AND month = ? AND category_id = ?',
+      whereArgs: [_budgetYear(month, null), _budgetMonth(month), categoryId],
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<Map<String, dynamic>?> budgetById(String id) async {
+    final db = await database;
+    final rows = await db.query('budgets', where: 'id = ?', whereArgs: [id]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> deleteBudget(String id) async {
+    final db = await database;
+    await db.delete('budgets', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Reads one mirrored transaction row (used to reverse its balance effect
+  /// before an edit or delete).
+  Future<Map<String, dynamic>?> transactionById(String id) async {
+    final db = await database;
+    final rows =
+        await db.query('transactions', where: 'id = ?', whereArgs: [id]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// Applies (or reverses) a transaction's balance effect on its account(s) and
+  /// persists the result. The single source of on-device balance math, shared
+  /// by the write path and the post-pull re-overlay.
+  Future<void> applyTransactionToBalances(
+    Map<String, dynamic> txn, {
+    required bool reverse,
+  }) async {
+    final fromRow = await accountById(txn['account_id']?.toString() ?? '');
+    if (fromRow == null) return;
+    final from = LedgerAccount.fromRow(fromRow);
+    final toId = txn['transfer_account_id']?.toString();
+    final toRow = (toId == null || toId.isEmpty) ? null : await accountById(toId);
+    final to = toRow == null ? null : LedgerAccount.fromRow(toRow);
+    if (reverse) {
+      reverseEffect(from, to, txn);
+    } else {
+      applyEffect(from, to, txn);
+    }
+    await setAccountBalance(fromRow['id'].toString(),
+        balance: from.balance, outstanding: from.outstanding, isCard: from.isCard);
+    if (toRow != null && to != null) {
+      await setAccountBalance(toRow['id'].toString(),
+          balance: to.balance, outstanding: to.outstanding, isCard: to.isCard);
+    }
+  }
+
+  /// Hides an account locally (mirrors a server archive) without deleting its
+  /// row, so it drops out of lists until the archive is pushed and pulled back.
+  Future<void> archiveLocalAccount(String id) async {
+    final db = await database;
+    await db.update('accounts', {'archived': 1, 'is_active': 0},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Reads the mirrored money fields for one account (used to seed the ledger).
+  Future<Map<String, dynamic>?> accountById(String id) async {
+    final db = await database;
+    final rows = await db.query('accounts', where: 'id = ?', whereArgs: [id]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// Persists a locally recomputed balance. Mirrors `_accountRow`'s convention
+  /// that a card's `balance`/`display_balance` columns hold its outstanding.
+  Future<void> setAccountBalance(
+    String id, {
+    required double balance,
+    required double outstanding,
+    required bool isCard,
+  }) async {
+    final db = await database;
+    final display = isCard ? outstanding : balance;
+    await db.update(
+      'accounts',
+      {
+        'balance': display,
+        'current_outstanding': isCard ? outstanding : 0,
+        'display_balance': display,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Rows created/edited locally and not yet pushed, for a mirrored table.
+  Future<List<Map<String, dynamic>>> dirtyRows(String table) async {
+    final db = await database;
+    return db.query(table, where: 'dirty != 0');
+  }
+
+  Future<void> clearDirty(String table, String id) async {
+    final db = await database;
+    await db.update(table, {'dirty': 0}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Queues a deletion of an already-synced row so sync can replay it. A row
+  /// that was only ever local (never pushed) is deleted outright by the caller
+  /// and never queued.
+  Future<void> queueDelete(String resource, String id) async {
+    final db = await database;
+    await db.insert(
+      'pending_deletes',
+      {'resource': resource, 'entity_id': id},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> pendingDeletes() async {
+    final db = await database;
+    return db.query('pending_deletes');
+  }
+
+  Future<void> removePendingDelete(String resource, String id) async {
+    final db = await database;
+    await db.delete(
+      'pending_deletes',
+      where: 'resource = ? AND entity_id = ?',
+      whereArgs: [resource, id],
+    );
+  }
+
+  /// Merges a server row pulled from /sync/changes. Skips it when the local row
+  /// has unpushed changes (dirty != 0) so a not-yet-synced local edit is never
+  /// clobbered by the pull.
+  Future<void> mergeServerRow(
+    String table,
+    Map<String, Object?> Function(Map<String, dynamic>) build,
+    Map<String, dynamic> row,
+  ) async {
+    final db = await database;
+    final id = row['id'].toString();
+    if ((await _existingDirty(db, table, id)) > 0) return;
+    final data = build(row);
+    data['dirty'] = 0;
+    await db.insert(table, data, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> mergeServerBudget(Map<String, dynamic> row) =>
+      mergeServerRow('budgets', _budgetRow, row);
+
+  /// Merges a month's income pulled from the server. Skips a month whose local
+  /// row still has an unpushed edit (dirty != 0) so a pull never clobbers it.
+  Future<void> cacheMonthlyIncome(String month, Map<String, dynamic> row) async {
+    final db = await database;
+    final existing = await db.query('monthly_income',
+        columns: ['dirty'], where: 'month = ?', whereArgs: [month]);
+    if (existing.isNotEmpty && ((existing.first['dirty'] as int?) ?? 0) != 0) {
+      return;
+    }
+    await db.insert(
+      'monthly_income',
+      {
+        'month': month,
+        'amount': _num(row['amount']),
+        'opening_balance': _num(row['opening_balance']),
+        'dirty': 0,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Local-first income edit: stores the month's income + opening balance and
+  /// marks it dirty so the next sync pushes it. No server call here.
+  Future<void> saveLocalMonthlyIncome(
+    String month, {
+    required double amount,
+    required double openingBalance,
+  }) async {
+    final db = await database;
+    await db.insert(
+      'monthly_income',
+      {
+        'month': month,
+        'amount': amount,
+        'opening_balance': openingBalance,
+        'dirty': 1,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Map<String, dynamic>?> monthlyIncomeCache(String month) async {
+    final db = await database;
+    final rows = await db
+        .query('monthly_income', where: 'month = ?', whereArgs: [month]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// Income months edited locally and not yet pushed.
+  Future<List<Map<String, dynamic>>> dirtyIncomeRows() async {
+    final db = await database;
+    return db.query('monthly_income', where: 'dirty != 0');
+  }
+
+  Future<void> clearIncomeDirty(String month) async {
+    final db = await database;
+    await db.update('monthly_income', {'dirty': 0},
+        where: 'month = ?', whereArgs: [month]);
+  }
+
+  Future<void> mergeServerTransaction(Map<String, dynamic> row) =>
+      mergeServerRow('transactions', _transactionRow, row);
+  Future<void> mergeServerCategory(Map<String, dynamic> row) =>
+      mergeServerRow('categories', _categoryRow, row);
+  Future<void> mergeServerAccount(Map<String, dynamic> row) =>
+      mergeServerRow('accounts', _accountRow, row);
+  Future<void> mergeServerStock(Map<String, dynamic> row) =>
+      mergeServerRow('stocks', _stockRow, row);
+  Future<void> mergeServerPortfolioTransaction(Map<String, dynamic> row) =>
+      mergeServerRow('portfolio_transactions', _portfolioTransactionRow, row);
+
+  /// Applies a server tombstone: removes the local row unless it has unpushed
+  /// local changes (in which case the local write wins until the next push).
+  Future<void> applyTombstone(String resource, String entityId) async {
+    final table = _resourceTables[resource];
+    if (table == null) return;
+    final db = await database;
+    if ((await _existingDirty(db, table, entityId)) > 0) return;
+    await db.delete(table, where: 'id = ?', whereArgs: [entityId]);
+  }
+
+  Future<String?> syncCursor() async {
+    final db = await database;
+    final rows = await db.query('meta',
+        where: 'key = ?', whereArgs: ['sync_cursor']);
+    return rows.isEmpty ? null : rows.first['value'] as String;
+  }
+
+  Future<void> setSyncCursor(String serverTime) async {
+    final db = await database;
+    await db.insert('meta', {'key': 'sync_cursor', 'value': serverTime},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// Drops the sync watermark so the next sync performs a full pull. Used after
+  /// a restore, whose data may predate the current server state.
+  Future<void> clearSyncCursor() async {
+    final db = await database;
+    await db.delete('meta', where: 'key = ?', whereArgs: ['sync_cursor']);
+  }
+
+  /// Total unpushed local changes across all mirrored tables plus queued
+  /// deletes — drives the "pending" badge under manual sync.
+  Future<int> dirtyCount() async {
+    final db = await database;
+    var total = 0;
+    for (final table in const [
+      'accounts',
+      'categories',
+      'transactions',
+      'budgets',
+      'stocks',
+      'portfolio_transactions',
+    ]) {
+      final rows =
+          await db.rawQuery('SELECT COUNT(*) AS c FROM $table WHERE dirty != 0');
+      total += (rows.first['c'] as int?) ?? 0;
+    }
+    final del =
+        await db.rawQuery('SELECT COUNT(*) AS c FROM pending_deletes');
+    total += (del.first['c'] as int?) ?? 0;
+    final income = await db
+        .rawQuery('SELECT COUNT(*) AS c FROM monthly_income WHERE dirty != 0');
+    total += (income.first['c'] as int?) ?? 0;
+    return total;
   }
 
   Map<String, Object?> _accountRow(Map<String, dynamic> row) {

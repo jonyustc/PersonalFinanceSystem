@@ -550,6 +550,16 @@ class ApiClient {
     return response.data ?? {};
   }
 
+  /// Delta feed for manual sync. `since` is the previous response's
+  /// `server_time`; omit it (null) on the first sync to pull everything.
+  Future<Map<String, dynamic>> getSyncChanges({String? since}) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/sync/changes',
+      queryParameters: {if (since != null && since.isNotEmpty) 'since': since},
+    );
+    return response.data ?? {};
+  }
+
   Future<void> post(String path, Map<String, dynamic> payload) async {
     await _dio.post(path, data: payload);
   }

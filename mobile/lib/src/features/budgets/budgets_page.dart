@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/finance_summary.dart' show countsInTotals;
 import '../../core/formatters.dart';
 import '../../state/app_controller.dart';
 import '../../theme/app_spacing.dart';
@@ -162,53 +163,12 @@ class _BudgetsPageState extends ConsumerState<BudgetsPage> {
     );
   }
 
+  /// Budgets are local-first: read everything from the on-device mirror so the
+  /// screen works fully offline and reflects unsynced edits immediately. Budget
+  /// amounts + ids come from the mirror, spent is computed on-device from
+  /// mirrored transactions, and income/opening from the local income table.
   Future<void> _load() async {
     setState(() => _loading = true);
-    final api = ref.read(apiClientProvider);
-    final month = _monthKey(_month);
-    try {
-      final results = await Future.wait([
-        api.getBudgets(month),
-        api.getBudgetSummary(month),
-        api.getMonthlyIncome(month),
-      ]);
-      final budgets = (results[0] as List<Map<String, dynamic>>);
-      final summary = results[1] as Map<String, dynamic>;
-      final income = results[2] as Map<String, dynamic>;
-
-      _budgetIds.clear();
-      for (final budget in budgets) {
-        final categoryId = budget['category_id']?.toString();
-        if (categoryId == null) continue;
-        _budgetIds[categoryId] = budget['id'].toString();
-        _setDraft(categoryId, asDouble(budget['amount']).toStringAsFixed(0));
-      }
-
-      _spentByCategory
-        ..clear()
-        ..addEntries(
-          (summary['categories'] as List? ?? []).whereType<Map>().map(
-            (row) =>
-                MapEntry(row['category_id'].toString(), asDouble(row['spent'])),
-          ),
-        );
-      _income.text = asDouble(income['amount']).toStringAsFixed(0);
-      _openingBalance.text = asDouble(
-        income['opening_balance'],
-      ).toStringAsFixed(0);
-    } catch (_) {
-      _loadFallback();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Using cached budget data')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  void _loadFallback() {
     final snapshot = ref.read(appControllerProvider).asData?.value;
     final budgets = (snapshot?.budgets ?? [])
         .where(
@@ -216,14 +176,51 @@ class _BudgetsPageState extends ConsumerState<BudgetsPage> {
         )
         .toList();
     _budgetIds.clear();
-    _spentByCategory.clear();
+    _spentByCategory
+      ..clear()
+      ..addAll(_localSpentByParent(snapshot));
     for (final budget in budgets) {
       final categoryId = budget['category_id']?.toString();
       if (categoryId == null) continue;
       _budgetIds[categoryId] = budget['id'].toString();
       _setDraft(categoryId, asDouble(budget['amount']).toStringAsFixed(0));
-      _spentByCategory[categoryId] = asDouble(budget['spent']);
     }
+    final income =
+        await ref.read(databaseProvider).monthlyIncomeCache(_monthKey(_month));
+    _income.text = asDouble(income?['amount']).toStringAsFixed(0);
+    _openingBalance.text =
+        asDouble(income?['opening_balance']).toStringAsFixed(0);
+    if (mounted) setState(() => _loading = false);
+  }
+
+  /// Per-parent-category expense totals for the selected month, computed from
+  /// the local transaction mirror. Child-category spend rolls up to its parent,
+  /// matching the backend budget summary.
+  Map<String, double> _localSpentByParent(dynamic snapshot) {
+    final spent = <String, double>{};
+    if (snapshot == null) return spent;
+    final parentOf = <String, String?>{
+      for (final c in snapshot.categories as List)
+        c['id'].toString(): c['parent_id']?.toString(),
+    };
+    for (final txn in snapshot.transactions as List) {
+      if ((txn['transaction_status'] as String? ?? 'posted') != 'posted') {
+        continue;
+      }
+      if (!countsInTotals(txn as Map<String, dynamic>)) continue;
+      if ((txn['type'] as String? ?? '') != 'expense') continue;
+      final date = DateTime.tryParse(txn['txn_date'] as String? ?? '');
+      if (date == null ||
+          date.year != _month.year ||
+          date.month != _month.month) {
+        continue;
+      }
+      final rawCat = txn['category_id']?.toString();
+      if (rawCat == null) continue;
+      final parent = parentOf[rawCat] ?? rawCat;
+      spent[parent] = (spent[parent] ?? 0) + asDouble(txn['amount']);
+    }
+    return spent;
   }
 
   Future<void> _save(List<Map<String, dynamic>> categories) async {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/widgets.dart';
@@ -9,6 +10,7 @@ import '../core/api_client.dart';
 import '../core/app_database.dart';
 import '../core/backup_service.dart';
 import '../core/google_auth.dart';
+import '../core/local_ledger.dart';
 import '../core/session_store.dart';
 import '../core/sync_service.dart';
 
@@ -132,7 +134,7 @@ class ApiWriteException implements Exception {
 
 class AppController extends AsyncNotifier<AppSnapshot>
     with WidgetsBindingObserver {
-  Timer? _timer;
+  static const _uuid = Uuid();
 
   SessionStore get _session => ref.read(sessionStoreProvider);
   AppDatabase get _db => ref.read(databaseProvider);
@@ -144,15 +146,15 @@ class AppController extends AsyncNotifier<AppSnapshot>
     WidgetsBinding.instance.addObserver(this);
     ref.onDispose(() {
       WidgetsBinding.instance.removeObserver(this);
-      _timer?.cancel();
     });
 
     final session = await _session.load();
     final snapshot = await _readLocal(session: session);
     if (session != null) {
-      _startPeriodicSync();
+      // Manual sync only: startup reads local data and materializes any due
+      // recurring entries (a local operation) but never auto-syncs. The user
+      // pulls fresh data with the Sync button.
       unawaited(materializeDueRecurring());
-      unawaited(syncNow(silent: true));
     }
     return snapshot;
   }
@@ -178,7 +180,8 @@ class AppController extends AsyncNotifier<AppSnapshot>
     state = AsyncData(
       (await _readLocal(session: session)).copyWith(authNotice: null),
     );
-    _startPeriodicSync();
+    // A one-time pull right after sign-in so a fresh install has data; from
+    // then on syncing is manual (the Sync button).
     await syncNow();
   }
 
@@ -190,6 +193,9 @@ class AppController extends AsyncNotifier<AppSnapshot>
   Future<bool> restoreBackup() async {
     final imported = await ref.read(backupServiceProvider).importBackup();
     if (!imported) return false;
+    // The restored data may predate the server, so force the next sync to do a
+    // full pull-and-reconcile rather than a delta from a stale watermark.
+    await _db.clearSyncCursor();
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
     return true;
@@ -197,16 +203,14 @@ class AppController extends AsyncNotifier<AppSnapshot>
 
   Future<void> logout() async {
     await _session.clear();
-    // Drop all cached data + the pending-write queue so the next account does
-    // not inherit this user's rows or a stuck queue.
+    // Drop all cached data + queued local changes so the next account does not
+    // inherit this user's rows or a stuck queue.
     await _db.clearAll();
-    _timer?.cancel();
     state = AsyncData(await _readLocal(session: null));
   }
 
   Future<void> expireSession() async {
     await _session.clear(keepTheme: true);
-    _timer?.cancel();
     final current = state.asData?.value;
     if (current == null || current.session == null) return;
     state = AsyncData(
@@ -227,7 +231,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
       await _sync.syncAll();
       final synced = await _readLocal(session: await _session.load());
       final notice = synced.pendingWrites > 0
-          ? 'Synced. ${synced.pendingWrites} pending writes remain.'
+          ? 'Synced. ${synced.pendingWrites} changes still to sync.'
           : 'Synced';
       state = AsyncData(synced.copyWith(notice: notice));
     } catch (error) {
@@ -244,9 +248,10 @@ class AppController extends AsyncNotifier<AppSnapshot>
     }
   }
 
-  // All writes are API-first: the write must reach the server (which owns
-  // ids and domain math) or fail loudly with an [ApiWriteException] — no
-  // optimistic local insert and no offline queueing on any write path.
+  // Transactions, transfers, accounts and categories are LOCAL-FIRST: the row
+  // is written to SQLite with a client-generated UUID, marked dirty, and its
+  // balance effect applied on-device — no server call. The Sync button pushes
+  // dirty rows (idempotent by that UUID) and pulls authoritative data back.
   Future<void> createTransaction({
     required String accountId,
     required String type,
@@ -259,7 +264,8 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? counterpartyName,
     String? debtType,
   }) async {
-    final payload = {
+    final payload = <String, dynamic>{
+      'id': _uuid.v4(),
       'account_id': accountId,
       'category_id': categoryId,
       'type': type,
@@ -273,16 +279,9 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'counterparty_name': _blankToNull(counterpartyName),
       'debt_type': _blankToNull(debtType),
     };
-
-    final created = await _writeToServer(
-      () => _api.createTransaction(payload),
-    );
-    if (created['id'] != null) {
-      await _db.upsertTransaction(created);
-    }
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    await _db.saveLocalTransaction(payload, isNew: true);
+    await _db.applyTransactionToBalances(payload, reverse: false);
+    await _publishLocal();
   }
 
   Future<void> updateTransaction({
@@ -299,7 +298,14 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? counterpartyName,
     String? debtType,
   }) async {
-    final payload = {
+    // Reverse the previous version's balance effect before applying the new one.
+    final old = await _db.transactionById(id);
+    if (old != null) {
+      final oldTxn = _decodeRaw(old['raw_json']) ?? old;
+      await _db.applyTransactionToBalances(oldTxn, reverse: true);
+    }
+    final payload = <String, dynamic>{
+      'id': id,
       'account_id': accountId,
       'transfer_account_id': transferAccountId,
       'category_id': categoryId,
@@ -311,29 +317,26 @@ class AppController extends AsyncNotifier<AppSnapshot>
       'tags': <String>[],
       'transaction_status': 'posted',
       'include_in_totals': includeInTotals,
-      // Explicit nulls so the server clears a loan tag when the user
-      // removes it while editing.
       'counterparty_name': _blankToNull(counterpartyName),
       'debt_type': _blankToNull(debtType),
     };
-
-    final updated = await _writeToServer(
-      () => _api.updateTransaction(id, payload),
-    );
-    if (updated['id'] != null) {
-      await _db.upsertTransaction(updated);
-    }
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    await _db.saveLocalTransaction(payload, isNew: false);
+    await _db.applyTransactionToBalances(payload, reverse: false);
+    await _publishLocal();
   }
 
   Future<void> deleteTransaction(String id) async {
-    await _writeToServer(() => _api.deleteTransaction(id));
+    final old = await _db.transactionById(id);
+    if (old != null) {
+      final oldTxn = _decodeRaw(old['raw_json']) ?? old;
+      await _db.applyTransactionToBalances(oldTxn, reverse: true);
+    }
+    final wasNeverPushed = (old?['dirty'] as int?) == 1;
     await _db.deleteTransaction(id);
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    // A row the server already knows about needs its deletion replayed; a
+    // purely local (never-pushed) row just disappears.
+    if (!wasNeverPushed) await _db.queueDelete('transactions', id);
+    await _publishLocal();
   }
 
   Future<void> createTransfer({
@@ -344,20 +347,45 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? notes,
     bool isCardPayment = false,
   }) async {
-    final payload = {
-      'from_account_id': fromAccountId,
-      'to_account_id': toAccountId,
+    // A transfer is stored as a single type=transfer transaction row (the
+    // backend applies both account balances from one row). CARD_PAYMENT /
+    // CARD_SPENDING is derived from the two accounts' types.
+    final fromRow = await _db.accountById(fromAccountId) ?? {'type': 'cash'};
+    final toRow = await _db.accountById(toAccountId);
+    final transferType = normalizeTransferType(fromRow, toRow);
+    final payload = <String, dynamic>{
+      'id': _uuid.v4(),
+      'account_id': fromAccountId,
+      'transfer_account_id': toAccountId,
+      'type': 'transfer',
+      'transaction_type': transferType == 'transfer' ? null : transferType,
       'amount': amount,
-      'transfer_date': date.toUtc().toIso8601String(),
-      'notes': _blankToNull(notes),
-      'is_card_payment': isCardPayment,
+      'txn_date': date.toUtc().toIso8601String(),
+      'description': _blankToNull(notes),
+      'tags': <String>[],
+      'transaction_status': 'posted',
+      'include_in_totals': true,
     };
-    // The response is a transfer record, not a transaction row, so the local
-    // mirror is refreshed by the pull in syncNow rather than an upsert here.
-    await _writeToServer(() => _api.createTransfer(payload));
-    await syncNow(silent: true);
+    await _db.saveLocalTransaction(payload, isNew: true);
+    await _db.applyTransactionToBalances(payload, reverse: false);
+    await _publishLocal();
+  }
+
+  /// Re-reads the local mirror and publishes it as the current snapshot.
+  Future<void> _publishLocal() async {
     final current = state.asData?.value;
     state = AsyncData(await _readLocal(session: current?.session));
+  }
+
+  Map<String, dynamic>? _decodeRaw(Object? rawJson) {
+    if (rawJson is! String || rawJson.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(rawJson);
+      if (decoded is Map) return decoded.cast<String, dynamic>();
+    } catch (_) {
+      return null;
+    }
+    return null;
   }
 
   /// Runs a server write and converts transport/HTTP failures into a clean
@@ -392,19 +420,27 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? color,
     String? icon,
   }) async {
-    await _writeToServer(
-      () => _api.updateAccount(id, {
-        'name': name,
-        'type': type,
-        'opening_balance': openingBalance,
-        'currency': currency,
-        'color': _blankToNull(color),
-        'icon': _blankToNull(icon),
-      }),
-    );
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    final isCard = type == 'card' || type == 'credit_card';
+    final payload = <String, dynamic>{
+      'id': id,
+      'name': name,
+      'type': type,
+      'opening_balance': openingBalance,
+      'currency': currency,
+      'color': _blankToNull(color),
+      'icon': _blankToNull(icon),
+      // Preserve the already-computed running balance; opening-balance edits
+      // are reconciled authoritatively on the next sync.
+      'balance': (await _db.accountById(id))?['balance'],
+      'current_outstanding': (await _db.accountById(id))?['current_outstanding'],
+    };
+    await _db.saveLocalAccount(payload, isNew: false);
+    // Keep display_balance in step with the type in case it changed.
+    if (!isCard) {
+      await _db.setAccountBalance(id,
+          balance: _asDouble(payload['balance']), outstanding: 0, isCard: false);
+    }
+    await _publishLocal();
   }
 
   Future<void> createAccount({
@@ -417,21 +453,27 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? notes,
     String? accountSubtype,
   }) async {
-    await _writeToServer(
-      () => _api.createAccount({
-        'name': name,
-        'type': type,
-        'opening_balance': openingBalance,
-        'currency': currency,
-        'color': _blankToNull(color),
-        'icon': _blankToNull(icon),
-        'notes': _blankToNull(notes),
-        'account_subtype': _blankToNull(accountSubtype),
-      }),
-    );
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    final isCard = type == 'card' || type == 'credit_card';
+    final opening = isCard ? 0.0 : openingBalance;
+    final payload = <String, dynamic>{
+      'id': _uuid.v4(),
+      'name': name,
+      'type': type,
+      'opening_balance': openingBalance,
+      'currency': currency,
+      'color': _blankToNull(color),
+      'icon': _blankToNull(icon),
+      'notes': _blankToNull(notes),
+      'account_subtype': _blankToNull(accountSubtype),
+      // Seed the mirror's running balance so the new account shows immediately.
+      'balance': opening,
+      'current_outstanding': 0,
+      'display_balance': opening,
+      'is_active': true,
+      'archived': false,
+    };
+    await _db.saveLocalAccount(payload, isNew: true);
+    await _publishLocal();
   }
 
   Future<Map<String, dynamic>> createCategory({
@@ -441,21 +483,17 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? color,
     String? icon,
   }) async {
-    final payload = {
+    final payload = <String, dynamic>{
+      'id': _uuid.v4(),
       'name': name,
       'type': type,
       'parent_id': parentId,
       'color': _blankToNull(color),
       'icon': _blankToNull(icon),
     };
-    final created = await _writeToServer(() => _api.createCategory(payload));
-    if (created['id'] != null) {
-      await _db.upsertCategory(created);
-    }
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
-    return created;
+    await _db.saveLocalCategory(payload, isNew: true);
+    await _publishLocal();
+    return payload;
   }
 
   Future<void> updateCategory({
@@ -466,60 +504,33 @@ class AppController extends AsyncNotifier<AppSnapshot>
     String? color,
     String? icon,
   }) async {
-    final updated = await _writeToServer(
-      () => _api.updateCategory(id, {
-        'name': name,
-        'type': type,
-        'parent_id': parentId,
-        'color': _blankToNull(color),
-        'icon': _blankToNull(icon),
-      }),
-    );
-    if (updated['id'] != null) {
-      await _db.upsertCategory(updated);
-    }
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    final payload = <String, dynamic>{
+      'id': id,
+      'name': name,
+      'type': type,
+      'parent_id': parentId,
+      'color': _blankToNull(color),
+      'icon': _blankToNull(icon),
+    };
+    await _db.saveLocalCategory(payload, isNew: false);
+    await _publishLocal();
   }
 
   Future<void> deleteCategory(String id) async {
-    await _writeToServer(() => _api.deleteCategory(id));
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
-  }
-
-  Future<void> upsertBudget({
-    required String categoryId,
-    required String month,
-    required double amount,
-  }) async {
-    await _writeToServer(
-      () => _api.upsertBudget({
-        'category_id': categoryId,
-        'month': month,
-        'amount': amount,
-      }),
+    final existing = await _db.categories();
+    final wasNeverPushed = existing.any(
+      (row) => row['id'] == id && (row['dirty'] as int?) == 1,
     );
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    await _db.deleteCategory(id);
+    if (!wasNeverPushed) await _db.queueDelete('categories', id);
+    await _publishLocal();
   }
 
-  Future<void> updateBudget({
-    required String id,
-    required double amount,
-  }) async {
-    await _writeToServer(() => _api.updateBudget(id, {'amount': amount}));
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
-  }
-
-  /// Saves a whole month's budget in one pass: the monthly income row, every
-  /// per-category budget amount, and deletions for cleared amounts — then a
-  /// single sync. Any failed write aborts with an [ApiWriteException].
+  /// Saves a whole month's budget LOCAL-FIRST: the monthly income row, every
+  /// per-category budget amount, and deletions for cleared amounts are written
+  /// to SQLite and marked dirty. Nothing is sent to the server here — the Sync
+  /// button pushes the dirty rows (idempotently) and pulls authoritative data
+  /// back. Works fully offline.
   Future<void> saveMonthlyBudgets({
     required String month,
     required double income,
@@ -527,22 +538,36 @@ class AppController extends AsyncNotifier<AppSnapshot>
     List<Map<String, dynamic>> upserts = const [],
     List<String> deleteIds = const [],
   }) async {
-    await _writeToServer(
-      () => _api.saveMonthlyIncome({
-        'month': month,
-        'amount': income,
-        'opening_balance': openingBalance,
-      }),
+    await _db.saveLocalMonthlyIncome(
+      month,
+      amount: income,
+      openingBalance: openingBalance,
     );
     for (final entry in upserts) {
-      await _writeToServer(() => _api.upsertBudget({...entry, 'month': month}));
+      final categoryId = entry['category_id'].toString();
+      // Reuse the existing budget's id (an edit) or mint one (a new budget) so
+      // the row maps to a single server budget on push.
+      final existing = await _db.budgetForMonthCategory(month, categoryId);
+      final id = existing?['id']?.toString() ?? _uuid.v4();
+      await _db.saveLocalBudget(
+        {
+          'id': id,
+          'category_id': categoryId,
+          'month': month,
+          'amount': _asDouble(entry['amount']),
+        },
+        isNew: existing == null,
+      );
     }
     for (final id in deleteIds) {
-      await _writeToServer(() => _api.deleteBudget(id));
+      final existing = await _db.budgetById(id);
+      final wasNeverPushed = (existing?['dirty'] as int?) == 1;
+      await _db.deleteBudget(id);
+      // A budget the server already knows about needs its deletion replayed; a
+      // purely local (never-pushed) one just disappears.
+      if (!wasNeverPushed) await _db.queueDelete('budgets', id);
     }
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    await _publishLocal();
   }
 
   Future<void> savePortfolioTransaction({
@@ -596,17 +621,13 @@ class AppController extends AsyncNotifier<AppSnapshot>
     if (saved['id'] != null) {
       await _db.upsertPortfolioTransaction(saved);
     }
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    await _publishLocal();
   }
 
   Future<void> deletePortfolioTransaction(String id) async {
     await _writeToServer(() => _api.deletePortfolioTransaction(id));
     await _db.deletePortfolioTransaction(id);
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    await _publishLocal();
   }
 
   /// Persists the "Advanced Investor Analytics" preference.
@@ -657,7 +678,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
   Future<String> refreshStockPrices() async {
     try {
       final result = await _api.refreshStockPrices();
-      await syncNow(silent: true);
+      // Server prices are updated; portfolio values refresh on the next sync.
       // The backend returns a friendly message when DSE is unreachable.
       final serverMessage = (result['message'] as String?)?.trim();
       if (serverMessage != null && serverMessage.isNotEmpty) {
@@ -733,9 +754,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
     if (saved['id'] != null) {
       await _db.upsertStock(saved);
     }
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    await _publishLocal();
   }
 
   Future<void> setCurrency(String currency) async {
@@ -765,10 +784,13 @@ class AppController extends AsyncNotifier<AppSnapshot>
   }
 
   Future<void> archiveAccount(String accountId) async {
-    await _writeToServer(() => _api.archiveAccount(accountId));
-    await syncNow(silent: true);
-    final current = state.asData?.value;
-    state = AsyncData(await _readLocal(session: current?.session));
+    // Local-first: hide it now, queue the archive to replay on sync (unless the
+    // account was only ever local and never pushed).
+    final row = await _db.accountById(accountId);
+    final wasNeverPushed = (row?['dirty'] as int?) == 1;
+    await _db.archiveLocalAccount(accountId);
+    if (!wasNeverPushed) await _db.queueDelete('accounts', accountId);
+    await _publishLocal();
   }
 
   // ============================ RECURRING =============================
@@ -837,8 +859,8 @@ class AppController extends AsyncNotifier<AppSnapshot>
         try {
           await _createFromRecurring(rule, nextRun);
         } catch (_) {
-          // Transaction writes are API-first, so creation can fail while
-          // offline. Stop without advancing the schedule; the occurrence is
+          // Writes are local-first so this rarely fails, but if a local write
+          // errors, stop without advancing the schedule; the occurrence is
           // retried on the next materialization pass.
           break;
         }
@@ -856,9 +878,7 @@ class AppController extends AsyncNotifier<AppSnapshot>
     }
 
     if (created) {
-      final current = state.asData?.value;
-      state = AsyncData(await _readLocal(session: current?.session));
-      unawaited(syncNow(silent: true));
+      await _publishLocal();
     }
   }
 
@@ -920,9 +940,10 @@ class AppController extends AsyncNotifier<AppSnapshot>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Materialize due recurring entries (a local-only operation) on resume;
+    // never auto-sync — the user syncs manually.
     if (state == AppLifecycleState.resumed) {
       unawaited(materializeDueRecurring());
-      unawaited(syncNow(silent: true));
     }
   }
 
@@ -941,17 +962,9 @@ class AppController extends AsyncNotifier<AppSnapshot>
           (await _db.metaJson('portfolio_advanced'))?['value'] == true,
       dashboardSummary: await _db.dashboardSummary(),
       isSyncing: false,
-      pendingWrites: await _db.pendingCount(),
+      pendingWrites: await _db.dirtyCount(),
       lastSyncAt: await _db.lastSyncAt(),
       themeMode: await _session.loadThemeMode(),
-    );
-  }
-
-  void _startPeriodicSync() {
-    _timer?.cancel();
-    _timer = Timer.periodic(
-      const Duration(minutes: 15),
-      (_) => unawaited(syncNow(silent: true)),
     );
   }
 
@@ -963,15 +976,19 @@ class AppController extends AsyncNotifier<AppSnapshot>
   bool _isBlank(String? value) => _blankToNull(value) == null;
 
   String _syncErrorMessage(Object error) {
-    final raw = error.toString();
-    final marker = RegExp(
-      r'(Session expired\. Please log in again\.|[A-Za-z ]+ sync failed: [^)\n]+)',
-    );
-    final match = marker.firstMatch(raw);
-    if (match != null) {
-      return match.group(0)!;
+    // A partial-push failure surfaces as a StateError carrying a friendly
+    // message from SyncService; show it verbatim.
+    if (error is StateError) return error.message;
+    if (error is DioException) {
+      final status = error.response?.statusCode;
+      if (status != null) return 'Sync failed (HTTP $status).';
+      return 'Could not reach the server. Your changes are saved locally.';
     }
-    return 'Using local data. Sync failed.';
+    final raw = error.toString();
+    if (raw.contains('Session expired')) {
+      return 'Session expired. Please log in again.';
+    }
+    return 'Sync failed. Your changes are saved locally.';
   }
 
   double _asDouble(Object? value) {
