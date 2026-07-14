@@ -20,6 +20,15 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   bool _googleBusy = false;
   bool _restoring = false;
   bool _obscure = true;
+  bool _remember = true;
+
+  @override
+  void initState() {
+    super.initState();
+    ref.read(sessionStoreProvider).loadRememberMe().then((value) {
+      if (mounted) setState(() => _remember = value);
+    });
+  }
 
   @override
   void dispose() {
@@ -149,7 +158,24 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                               ? 'Enter your password'
                               : null,
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Checkbox(
+                              value: _remember,
+                              onChanged: (value) =>
+                                  setState(() => _remember = value ?? true),
+                            ),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () =>
+                                    setState(() => _remember = !_remember),
+                                child: const Text('Keep me signed in'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
                         FilledButton.icon(
                           onPressed: _busy ? null : _submit,
                           icon: _busy
@@ -260,7 +286,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     try {
       await ref
           .read(appControllerProvider.notifier)
-          .login(_email.text.trim(), _password.text);
+          .login(_email.text.trim(), _password.text, rememberMe: _remember);
       _dismissIfModal();
     } catch (error) {
       if (!mounted) return;
@@ -304,7 +330,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Future<void> _googleSubmit() async {
     setState(() => _googleBusy = true);
     try {
-      await ref.read(appControllerProvider.notifier).loginWithGoogle();
+      await ref
+          .read(appControllerProvider.notifier)
+          .loginWithGoogle(rememberMe: _remember);
       _dismissIfModal();
     } catch (error) {
       if (!mounted) return;

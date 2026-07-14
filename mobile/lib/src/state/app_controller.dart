@@ -154,7 +154,14 @@ class AppController extends AsyncNotifier<AppSnapshot>
       WidgetsBinding.instance.removeObserver(this);
     });
 
-    final session = await _session.load();
+    var session = await _session.load();
+    // "Keep me signed in" off → a real (token) session does not survive a cold
+    // start; drop it so the user signs in again. Offline sessions are exempt
+    // (they are a deliberate no-server entry that should persist).
+    if (session != null && !session.isOffline && !await _session.loadRememberMe()) {
+      await _session.clear(keepTheme: true);
+      session = null;
+    }
     final snapshot = await _readLocal(session: session);
     if (session != null) {
       // Manual sync only: startup reads local data and materializes any due
@@ -166,12 +173,18 @@ class AppController extends AsyncNotifier<AppSnapshot>
     return snapshot;
   }
 
-  Future<void> login(String email, String password) async {
+  Future<void> login(
+    String email,
+    String password, {
+    bool rememberMe = true,
+  }) async {
+    await _session.saveRememberMe(rememberMe);
     final auth = await _api.login(email, password);
     await _onAuthenticated(auth);
   }
 
-  Future<void> loginWithGoogle() async {
+  Future<void> loginWithGoogle({bool rememberMe = true}) async {
+    await _session.saveRememberMe(rememberMe);
     final idToken = await ref.read(googleAuthServiceProvider).obtainIdToken();
     final auth = await _api.loginWithGoogle(idToken);
     await _onAuthenticated(auth);

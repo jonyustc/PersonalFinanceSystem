@@ -30,6 +30,7 @@ class SessionStore {
   static const _currency = 'currency';
   static const _themeMode = 'theme_mode';
   static const _offline = 'offline_session';
+  static const _rememberMe = 'remember_me';
 
   Future<Session?> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -70,6 +71,18 @@ class SessionStore {
   Future<String> loadThemeMode() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_themeMode) ?? 'light';
+  }
+
+  /// Whether the session should survive a full app restart. Defaults to true
+  /// (stay signed in); when false, a cold start requires signing in again.
+  Future<bool> loadRememberMe() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_rememberMe) ?? true;
+  }
+
+  Future<void> saveRememberMe(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_rememberMe, value);
   }
 
   Future<void> saveFromAuth(Map<String, dynamic> auth) async {
