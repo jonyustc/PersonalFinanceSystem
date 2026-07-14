@@ -27,6 +27,7 @@ class BackupSettings {
   const BackupSettings({
     required this.frequency,
     this.customDir,
+    this.driveEmail,
     this.lastBackupAt,
     this.lastBackupWhere,
   });
@@ -35,8 +36,13 @@ class BackupSettings {
 
   /// A user-picked folder to also write backups into (null = app storage only).
   final String? customDir;
+
+  /// The connected Google Drive account email, or null when Drive backup is off.
+  final String? driveEmail;
   final String? lastBackupAt; // ISO-8601
   final String? lastBackupWhere; // human label of the last destination
+
+  bool get driveEnabled => driveEmail != null && driveEmail!.isNotEmpty;
 
   /// True when a scheduled backup is overdue given the frequency and the last
   /// backup time.
@@ -55,6 +61,7 @@ class BackupSettings {
 class BackupSettingsStore {
   static const _frequency = 'backup_frequency';
   static const _customDir = 'backup_custom_dir';
+  static const _driveEmail = 'backup_drive_email';
   static const _lastAt = 'backup_last_at';
   static const _lastWhere = 'backup_last_where';
 
@@ -63,9 +70,19 @@ class BackupSettingsStore {
     return BackupSettings(
       frequency: BackupFrequency.fromName(prefs.getString(_frequency)),
       customDir: prefs.getString(_customDir),
+      driveEmail: prefs.getString(_driveEmail),
       lastBackupAt: prefs.getString(_lastAt),
       lastBackupWhere: prefs.getString(_lastWhere),
     );
+  }
+
+  Future<void> setDriveEmail(String? email) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (email == null || email.isEmpty) {
+      await prefs.remove(_driveEmail);
+    } else {
+      await prefs.setString(_driveEmail, email);
+    }
   }
 
   Future<void> setFrequency(BackupFrequency frequency) async {

@@ -74,11 +74,23 @@ class BackupService {
   /// (e.g. a picked folder the OS won't grant direct file access to).
   Future<File> writeBackup({String? dir}) async {
     final targetDir = dir ?? (await getApplicationDocumentsDirectory()).path;
-    final data = await _db.exportData();
-    final json = const JsonEncoder.withIndent('  ').convert(data);
     final file = File('$targetDir/personal_finance_backup.json');
-    await file.writeAsString(json);
+    await file.writeAsString(await exportJson());
     return file;
+  }
+
+  /// The full local backup serialized to a JSON string (for Google Drive etc.).
+  Future<String> exportJson() async =>
+      const JsonEncoder.withIndent('  ').convert(await _db.exportData());
+
+  /// Imports a backup from a JSON string (e.g. downloaded from Drive),
+  /// replacing local data. Throws [FormatException] if it isn't a backup.
+  Future<void> importJson(String content) async {
+    final decoded = jsonDecode(content);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Not a Personal Finance backup file');
+    }
+    await _db.importData(decoded);
   }
 
   /// Lets the user pick a folder to also keep backups in. Returns the chosen

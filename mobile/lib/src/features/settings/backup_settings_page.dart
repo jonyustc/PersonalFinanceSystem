@@ -100,6 +100,88 @@ class _BackupSettingsPageState extends ConsumerState<BackupSettingsPage> {
                     ],
                   ),
                 ),
+                const SizedBox(height: AppSpacing.xl),
+                const SectionHeader('Google Drive'),
+                const SizedBox(height: AppSpacing.md),
+                AppCard(
+                  child: settings.driveEnabled
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.cloud_done_outlined,
+                                  color: scheme.primary,
+                                ),
+                                const SizedBox(width: AppSpacing.md),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Connected',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                      ),
+                                      Text(
+                                        settings.driveEmail!,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              color: scheme.onSurfaceVariant,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: AppSpacing.sm),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: _busy ? null : _restoreFromDrive,
+                                    icon: const Icon(Icons.cloud_download_outlined),
+                                    label: const Text('Restore'),
+                                  ),
+                                ),
+                                const SizedBox(width: AppSpacing.md),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: _busy ? null : _disconnectDrive,
+                                    icon: const Icon(Icons.logout),
+                                    label: const Text('Disconnect'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Back up automatically to a private folder in your '
+                              'Google Drive — restore it on any device.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(height: AppSpacing.md),
+                            FilledButton.tonalIcon(
+                              onPressed: _busy ? null : _connectDrive,
+                              icon: const Icon(Icons.cloud_outlined),
+                              label: const Text('Connect Google Drive'),
+                            ),
+                          ],
+                        ),
+                ),
                 const SizedBox(height: AppSpacing.md),
                 _StatusCard(settings: settings),
                 const SizedBox(height: AppSpacing.xl),
@@ -183,6 +265,66 @@ class _BackupSettingsPageState extends ConsumerState<BackupSettingsPage> {
     } finally {
       if (mounted) setState(() => _busy = false);
       await _load();
+    }
+  }
+
+  Future<void> _connectDrive() async {
+    setState(() => _busy = true);
+    try {
+      final email = await _controller.connectDrive();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Google Drive connected: $email')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not connect Drive: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      await _load();
+    }
+  }
+
+  Future<void> _disconnectDrive() async {
+    await _controller.disconnectDrive();
+    await _load();
+  }
+
+  Future<void> _restoreFromDrive() async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Restore from Google Drive?',
+      message:
+          'This replaces the data on this device with the latest Drive backup.',
+      confirmLabel: 'Restore',
+      icon: Icons.cloud_download_outlined,
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final restored = await _controller.restoreFromDrive();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              restored ? 'Restored from Google Drive' : 'No Drive backup found',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Restore failed: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 

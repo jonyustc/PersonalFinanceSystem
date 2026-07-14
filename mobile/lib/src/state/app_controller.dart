@@ -11,6 +11,7 @@ import '../core/app_database.dart';
 import '../core/backup_service.dart';
 import '../core/backup_settings.dart';
 import '../core/google_auth.dart';
+import '../core/google_drive_backup.dart';
 import '../core/local_ledger.dart';
 import '../core/session_store.dart';
 import '../core/sync_service.dart';
@@ -22,6 +23,9 @@ final backupServiceProvider = Provider(
   (ref) => BackupService(ref.watch(databaseProvider)),
 );
 final backupSettingsStoreProvider = Provider((ref) => BackupSettingsStore());
+final googleDriveBackupProvider = Provider(
+  (ref) => GoogleDriveBackup(ref.watch(googleAuthServiceProvider)),
+);
 final apiClientProvider = Provider(
   (ref) => ApiClient(
     ref.watch(sessionStoreProvider),
@@ -280,14 +284,54 @@ class AppController extends AsyncNotifier<AppSnapshot>
   Future<void> clearBackupFolder() =>
       ref.read(backupSettingsStoreProvider).setCustomDir(null);
 
-  /// Manual "Back up now": writes to the configured destination and records it.
-  /// Returns the destination label. Throws on write failure (surfaced to UI).
+  /// Connects a Google account for Drive backup, uploads immediately, and
+  /// remembers it. Returns the connected email.
+  Future<String> connectDrive() async {
+    final email = await ref.read(googleDriveBackupProvider).connect();
+    await ref.read(backupSettingsStoreProvider).setDriveEmail(email);
+    // Seed Drive with the current data right away.
+    await ref
+        .read(googleDriveBackupProvider)
+        .upload(await ref.read(backupServiceProvider).exportJson(), interactive: true);
+    await ref.read(backupSettingsStoreProvider).markBackedUp('Google Drive');
+    return email;
+  }
+
+  Future<void> disconnectDrive() async {
+    await ref.read(googleDriveBackupProvider).disconnect();
+    await ref.read(backupSettingsStoreProvider).setDriveEmail(null);
+  }
+
+  /// Downloads the Drive backup and restores it locally. Returns false if no
+  /// Drive backup exists yet.
+  Future<bool> restoreFromDrive() async {
+    final content = await ref.read(googleDriveBackupProvider).download();
+    if (content == null) return false;
+    await ref.read(backupServiceProvider).importJson(content);
+    await _db.clearSyncCursor();
+    final current = state.asData?.value;
+    state = AsyncData(await _readLocal(session: current?.session));
+    return true;
+  }
+
+  /// Manual "Back up now": writes to the configured destination(s) and records
+  /// it. Returns the destination label. Throws on local write failure.
   Future<String> runManualBackup() async {
     final store = ref.read(backupSettingsStoreProvider);
     final settings = await store.load();
     final file =
         await ref.read(backupServiceProvider).writeBackup(dir: settings.customDir);
-    final where = settings.customDir == null ? 'App storage' : file.parent.path;
+    var where = settings.customDir == null ? 'App storage' : file.parent.path;
+    if (settings.driveEnabled) {
+      try {
+        await ref
+            .read(googleDriveBackupProvider)
+            .upload(await ref.read(backupServiceProvider).exportJson());
+        where = '$where + Google Drive';
+      } catch (_) {
+        where = '$where (Drive upload failed — reconnect in Backup settings)';
+      }
+    }
     await store.markBackedUp(where);
     return where;
   }
@@ -299,20 +343,29 @@ class AppController extends AsyncNotifier<AppSnapshot>
     final store = ref.read(backupSettingsStoreProvider);
     final settings = await store.load();
     if (!settings.isDue) return;
+    var where = 'App storage';
     try {
       final file = await ref
           .read(backupServiceProvider)
           .writeBackup(dir: settings.customDir);
-      await store.markBackedUp(
-        settings.customDir == null ? 'App storage' : file.parent.path,
-      );
+      where = settings.customDir == null ? 'App storage' : file.parent.path;
     } catch (_) {
       // A custom folder may have become unwritable; fall back to app storage.
       try {
         await ref.read(backupServiceProvider).writeBackup();
-        await store.markBackedUp('App storage');
       } catch (_) {}
     }
+    if (settings.driveEnabled) {
+      try {
+        await ref
+            .read(googleDriveBackupProvider)
+            .upload(await ref.read(backupServiceProvider).exportJson());
+        where = '$where + Google Drive';
+      } catch (_) {
+        // Silent for scheduled runs; the local copy still succeeded.
+      }
+    }
+    await store.markBackedUp(where);
   }
 
   /// Restores a picked backup file into the local database, then refreshes

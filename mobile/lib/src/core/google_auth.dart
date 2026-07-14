@@ -24,17 +24,28 @@ class GoogleAuthService {
 
   bool get isConfigured => _serverClientId.isNotEmpty;
 
+  /// Initializes the Google Sign-In singleton exactly once. Safe to call from
+  /// both the login flow and the Drive-backup flow. Passes the Web client ID as
+  /// `serverClientId` when configured (needed for ID tokens); Drive
+  /// authorization on Android relies on the Android OAuth client (SHA-1) instead.
+  Future<void> ensureInitialized() async {
+    if (_initialized) return;
+    final signIn = GoogleSignIn.instance;
+    if (_serverClientId.isNotEmpty) {
+      await signIn.initialize(serverClientId: _serverClientId);
+    } else {
+      await signIn.initialize();
+    }
+    _initialized = true;
+  }
+
   Future<String> obtainIdToken() async {
     if (!isConfigured) {
       throw const GoogleAuthException('Google login is not configured');
     }
 
+    await ensureInitialized();
     final signIn = GoogleSignIn.instance;
-    if (!_initialized) {
-      await signIn.initialize(serverClientId: _serverClientId);
-      _initialized = true;
-    }
-
     final account = await signIn.authenticate();
     final idToken = account.authentication.idToken;
     if (idToken == null || idToken.isEmpty) {
