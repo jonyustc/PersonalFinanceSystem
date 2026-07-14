@@ -226,11 +226,12 @@ class SettingsPage extends ConsumerWidget {
               context,
               title: 'Sign out?',
               message:
-                  'Your local data will be cleared from this device. It stays '
-                  'safe on the server and re-syncs when you sign back in.',
+                  'Your data stays on this device. Sign back in with the same '
+                  'account to continue where you left off. Signing in with a '
+                  'different account will replace it.',
               confirmLabel: 'Sign out',
               icon: Icons.logout,
-              destructive: true,
+              destructive: false,
             );
             if (confirmed) {
               await ref.read(appControllerProvider.notifier).logout();

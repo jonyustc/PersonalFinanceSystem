@@ -382,10 +382,11 @@ class AppController extends AsyncNotifier<AppSnapshot>
   }
 
   Future<void> logout() async {
-    await _session.clear();
-    // Drop all cached data + queued local changes so the next account does not
-    // inherit this user's rows or a stuck queue.
-    await _db.clearAll();
+    // Keep local data on the device: signing out just returns to the login
+    // screen. Signing back in with the SAME account is then instant and works
+    // offline; if a DIFFERENT account signs in, `_onAuthenticated` clears the
+    // mismatched data (it compares the stored profile email).
+    await _session.clear(keepTheme: true);
     state = AsyncData(await _readLocal(session: null));
   }
 
